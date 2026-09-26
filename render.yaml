@@ -14,6 +14,8 @@ services:
         sync: false
       - key: ETSY_REFRESH_TOKEN
         sync: false
+      - key: ETSY_CALLBACK_URL
+        value: https://silvia-sensaria-bridge.onrender.com/etsy/callback
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ACCESS_KEY_ID
@@ -25,6 +27,6 @@ services:
       - key: R2_ENDPOINT
         sync: false
       - key: R2_REGION
-        sync: false
+        value: auto
       - key: ADMIN_PASSWORD
         sync: false
