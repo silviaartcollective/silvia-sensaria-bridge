@@ -1,0 +1,42 @@
+{
+  "source": {
+    "name": "Sensaria GO Shipping",
+    "url": "https://go.sensaria.com/shipping/",
+    "capturedAt": "2026-09-17T20:43:49.414Z",
+    "currency": "USD",
+    "chargeBasis": "per item"
+  },
+  "policy": {
+    "customerShipping": "free_shipping_absorbed",
+    "note": "Silvia Etsy listings use free shipping in the managed profile. Sensaria Basic shipping is absorbed by Silvia and reduces profit."
+  },
+  "canvasTierThresholdsInches": {
+    "defaultMaxExclusive": 132,
+    "mediumMinInclusive": 132,
+    "mediumMaxExclusive": 170,
+    "largeMinInclusive": 170,
+    "largeMaxInclusive": 220,
+    "oversizedMinExclusive": 220
+  },
+  "basicRatesUsd": {
+    "Default": {"1A":0,"1B":0,"1C":0,"2A":5,"2B":5,"3A":10,"3B":10,"4":15,"4NZ":15,"5":45,"ROW":100},
+    "Rolled Substrates": {"1A":0,"1B":0,"1C":0,"2A":5,"2B":5,"3A":5,"3B":5,"4":5,"4NZ":5,"5":25,"ROW":25},
+    "Canvas Medium": {"1A":0,"1B":0,"1C":30,"2A":30,"2B":5,"3A":30,"3B":100,"4":30,"4NZ":30,"5":45,"ROW":100},
+    "Canvas Large": {"1A":0,"1B":0,"1C":75,"2A":75,"2B":5,"3A":150,"3B":300,"4":150,"4NZ":150,"5":150,"ROW":600},
+    "Canvas Oversized": {"1A":50,"1B":50,"1C":125,"2A":125,"2B":50,"3A":null,"3B":null,"4":null,"4NZ":null,"5":null,"ROW":null}
+  },
+  "zones": {
+    "1A": {"countries":["US"],"excludeUsStates":["AK","HI"],"label":"United States (mainland)"},
+    "1B": {"countries":["GB"],"label":"United Kingdom"},
+    "1C": {"countries":["AT","BE","FR","DE","IT","NL","PT","ES"],"label":"Core Western Europe"},
+    "2A": {"countries":["CA","CZ","DK","FI","IE","LU","NO"],"label":"Canada + selected Europe"},
+    "2B": {"countries":["AU"],"label":"Australia / Norfolk Island"},
+    "3A": {"countries":["CY","EE","HU","MT","PL","CH"],"usStates":["AK","HI"],"label":"Alaska/Hawaii + selected Europe"},
+    "3B": {"countries":["AS","GU","FM","MH","MP","PR","PW","VI"],"label":"US territories / Pacific territories"},
+    "4": {"countries":["AD","AZ","GE","GI","GL","GR","HR","IS","LI","LT","LV","MC","RO","SE","SI","SK","SM","UA","VA"],"label":"Zone 4 countries"},
+    "4NZ": {"countries":["NZ"],"label":"New Zealand"},
+    "5": {"countries":["AG","AI","AM","AN","AW","BA","BB","BD","BG","BL","BN","BQ","BS","BT","BY","BZ","CI","CK","CN","CR","CV","CW","DM","FJ","GD","GP","GT","GY","HN","HT","JM","KG","KH","KN","KY","LA","LC","LK","MD","ME","MF","MK","MN","MO","MQ","MV","MX","NI","NP","NU","PF","PG","PK","PN","PS","SV","SX","TC","TL","TO","TT","TV","UZ","VC","VG","VN","VU","WF","WS","XZ"],"label":"Zone 5 countries"},
+    "ROW": {"countries":["AE","AL","AO","AR","BF","BH","BI","BJ","BM","BO","BR","BW","CL","CO","DJ","DO","DZ","EC","EG","ER","ET","FO","GA","GF","GH","GQ","GW","HK","ID","IL","IN","JO","JP","KE","KR","KW","KZ","LB","LR","LS","MA","MG","ML","MR","MS","MU","MW","MY","MZ","NA","NC","NE","NG","OM","PA","PE","PH","PY","QA","RE","RS","RW","SA","SC","SG","SN","SR","ST","SZ","TG","TH","TN","TR","TW","TZ","UG","UY","VE","YE","ZA","ZM","ZW"],"label":"Rest of world supported"},
+    "UNDELIVERABLE": {"countries":["AF","CF","KM","CU","GM","GN","IR","IQ","RU","SL","SD","SY","TJ","TM","FK","KI","LY","MM","NR","SH","PM","SB","SO"],"label":"Undeliverable"}
+  }
+}

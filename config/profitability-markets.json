@@ -1,0 +1,28 @@
+{
+  "policy": {
+    "customerShipping": "free",
+    "note": "Silvia Etsy listings use free shipping in the managed Etsy profile. Sensaria Basic shipping is absorbed by Silvia and reduces profit."
+  },
+  "markets": [
+    {"key":"CA","label":"Canada","country":"CA","zone":"2A","planningTaxRate":0.05,"taxStatus":"BC_VERIFIED_CANADA_BASELINE","taxNote":"5% supplier tax was verified on an actual British Columbia Sensaria GO checkout. Other Canadian destinations may differ."},
+    {"key":"US","label":"United States","country":"US","zone":"1A","planningTaxRate":0.0753,"taxStatus":"US_PLANNING_AVERAGE","taxNote":"Uses the 2026 population-weighted average combined US sales-tax rate for planning. Exact destination tax can differ."},
+    {"key":"GB","label":"United Kingdom","country":"GB","zone":"1B","planningTaxRate":0.20,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses the standard UK VAT rate for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"AU","label":"Australia","country":"AU","zone":"2B","planningTaxRate":0.10,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses Australia GST for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"NL","label":"Netherlands","country":"NL","zone":"1C","planningTaxRate":0.21,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"DE","label":"Germany","country":"DE","zone":"1C","planningTaxRate":0.19,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"DK","label":"Denmark","country":"DK","zone":"2A","planningTaxRate":0.25,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"IE","label":"Ireland","country":"IE","zone":"2A","planningTaxRate":0.23,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"NO","label":"Norway","country":"NO","zone":"2A","planningTaxRate":0.25,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses Norway's standard VAT rate for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"AT","label":"Austria","country":"AT","zone":"1C","planningTaxRate":0.20,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"BE","label":"Belgium","country":"BE","zone":"1C","planningTaxRate":0.21,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"FR","label":"France","country":"FR","zone":"1C","planningTaxRate":0.20,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"IT","label":"Italy","country":"IT","zone":"1C","planningTaxRate":0.22,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"PT","label":"Portugal","country":"PT","zone":"1C","planningTaxRate":0.23,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"ES","label":"Spain","country":"ES","zone":"1C","planningTaxRate":0.21,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"CZ","label":"Czech Republic","country":"CZ","zone":"2A","planningTaxRate":0.21,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"FI","label":"Finland","country":"FI","zone":"2A","planningTaxRate":0.255,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"LU","label":"Luxembourg","country":"LU","zone":"2A","planningTaxRate":0.17,"taxStatus":"STANDARD_TAX_PLANNING","taxNote":"Uses standard VAT for conservative planning. Actual Sensaria supplier tax can differ."},
+    {"key":"US-AK","label":"United States — Alaska (shipping exception)","country":"US","state":"AK","zone":"3A","planningTaxRate":0.0182,"taxStatus":"US_PLANNING_AVERAGE","taxNote":"Same Etsy US market. Included as a profitability exception because Sensaria uses Zone 3A for Alaska; tax is a planning average."},
+    {"key":"US-HI","label":"United States — Hawaii (shipping exception)","country":"US","state":"HI","zone":"3A","planningTaxRate":0.045,"taxStatus":"US_PLANNING_AVERAGE","taxNote":"Same Etsy US market. Included as a profitability exception because Sensaria uses Zone 3A for Hawaii; tax is a planning average."}
+  ]
+}

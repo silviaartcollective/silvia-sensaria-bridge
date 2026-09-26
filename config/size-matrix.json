@@ -1,0 +1,62 @@
+{
+  "8x10": {
+    "fineArtPrint": true,
+    "canvas": false,
+    "framedCanvas": false,
+    "status": "Matte Poster Paper mapped"
+  },
+  "11x14": {
+    "fineArtPrint": true,
+    "canvas": false,
+    "framedCanvas": false,
+    "status": "Matte Poster Paper mapped"
+  },
+  "12x16": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "mapped"
+  },
+  "12x18": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "mapped"
+  },
+  "16x20": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "mapped"
+  },
+  "16x24": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "mapped"
+  },
+  "18x24": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "mapped"
+  },
+  "24x36": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "mapped"
+  },
+  "30x40": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "mapped"
+  },
+  "40x60": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Canvas and Framed Canvas mapped"
+  }
+}
