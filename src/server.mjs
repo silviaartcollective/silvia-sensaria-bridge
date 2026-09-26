@@ -25,6 +25,7 @@ import {
   saveArtworkManifest
 } from './artwork-storage.mjs';
 import { buildOwnSilviaInventory } from './variants.mjs';
+import { podProviderStatus, testPodProvider } from './pod-providers.mjs';
 import {
   chooseRecentMockupReference,
   getEtsyListingImages,
@@ -1130,8 +1131,30 @@ const server = http.createServer(async (req, res) => {
       ),
       sensariaMappings: mappingCount,
       mappedSizes: mappedSizeCount,
-      unresolvedSizes
+      unresolvedSizes,
+      podProviders: podProviderStatus()
     });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/providers/status') {
+    if (!requireAdminApi(req, res)) return;
+    return sendJson(res, 200, {
+      ok: true,
+      fulfillmentMode: String(process.env.FULFILLMENT_MODE || 'shadow'),
+      masterLiveSubmissionEnabled: String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED || '').toLowerCase() === 'true',
+      providers: podProviderStatus()
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/providers/test') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const body = await readJsonBody(req);
+      const result = await testPodProvider(body?.provider);
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/r2/status') {
