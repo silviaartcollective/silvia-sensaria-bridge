@@ -1,0 +1,20 @@
+export const SILVIA_CURRENT_MARKETS = Object.freeze([
+  { code: 'CA', label: 'Canada' },
+  { code: 'US', label: 'United States' },
+  { code: 'GB', label: 'United Kingdom' },
+  { code: 'AU', label: 'Australia' },
+  { code: 'NL', label: 'Netherlands' },
+  { code: 'DE', label: 'Germany' },
+  { code: 'DK', label: 'Denmark' },
+  { code: 'IE', label: 'Ireland' },
+  { code: 'NO', label: 'Norway' },
+  { code: 'AT', label: 'Austria' },
+  { code: 'BE', label: 'Belgium' },
+  { code: 'FR', label: 'France' },
+  { code: 'IT', label: 'Italy' },
+  { code: 'PT', label: 'Portugal' },
+  { code: 'ES', label: 'Spain' },
+  { code: 'CZ', label: 'Czech Republic' },
+  { code: 'FI', label: 'Finland' },
+  { code: 'LU', label: 'Luxembourg' }
+]);
