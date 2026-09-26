@@ -1,0 +1,31 @@
+name: patch-pricing-page
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/patch-pricing-page.mjs'
+      - '.github/workflows/patch-pricing-page.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node scripts/patch-pricing-page.mjs
+      - run: |
+          git config user.name "artsilvia"
+          git config user.email "artsilvia@gmail.com"
+          git add src/server.mjs src/dashboard.mjs
+          if git diff --cached --quiet; then
+            echo "No patch changes needed"
+          else
+            git commit -m "Wire pricing and shipping page into app"
+            git push
+          fi
