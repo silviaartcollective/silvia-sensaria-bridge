@@ -1,0 +1,21 @@
+{
+  "source": {
+    "name": "Sensaria GO checkout observations",
+    "capturedAt": "2026-09-17",
+    "currency": "USD",
+    "basis": "product_plus_shipping",
+    "note": "Sensaria tax is account- and destination-specific. Do not infer it from the shipping zone alone."
+  },
+  "policy": {
+    "unknownTaxBehavior": "null",
+    "note": "Only use a stored rate when it has been verified against Sensaria GO for the relevant destination/account. Otherwise require a manual tax-rate override and do not present after-tax profit as exact."
+  },
+  "observedRates": {
+    "CA-BC": {
+      "rate": 0.05,
+      "status": "verified_checkout",
+      "note": "Verified on Sensaria GO checkout for a British Columbia destination: tax equals 5% of product plus shipping."
+    }
+  },
+  "countryRates": {}
+}
