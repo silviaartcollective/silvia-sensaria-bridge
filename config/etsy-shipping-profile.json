@@ -1,0 +1,34 @@
+{
+  "title": "Silvia Sensaria Free Shipping",
+  "originCountryIso": "CA",
+  "primaryCost": 0,
+  "secondaryCost": 0,
+  "domesticDelivery": {
+    "minDays": 3,
+    "maxDays": 7
+  },
+  "internationalDelivery": {
+    "minDays": 5,
+    "maxDays": 14
+  },
+  "destinations": [
+    { "countryIso": "CA", "name": "Canada" },
+    { "countryIso": "US", "name": "United States" },
+    { "countryIso": "GB", "name": "United Kingdom" },
+    { "countryIso": "AU", "name": "Australia" },
+    { "countryIso": "NL", "name": "Netherlands" },
+    { "countryIso": "DE", "name": "Germany" },
+    { "countryIso": "DK", "name": "Denmark" },
+    { "countryIso": "IE", "name": "Ireland" },
+    { "countryIso": "NO", "name": "Norway" },
+    { "countryIso": "AT", "name": "Austria" },
+    { "countryIso": "BE", "name": "Belgium" },
+    { "countryIso": "FR", "name": "France" },
+    { "countryIso": "IT", "name": "Italy" },
+    { "countryIso": "PT", "name": "Portugal" },
+    { "countryIso": "ES", "name": "Spain" },
+    { "countryIso": "CZ", "name": "Czech Republic" },
+    { "countryIso": "FI", "name": "Finland" },
+    { "countryIso": "LU", "name": "Luxembourg" }
+  ]
+}

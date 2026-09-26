@@ -1,0 +1,233 @@
+{
+  "dpi": 300,
+  "canvasMirrorBleedInches": 1.5,
+  "safeInsetInches": 0.5,
+  "poster": {
+    "8x10": {
+      "finished": {
+        "widthIn": 8,
+        "heightIn": 10
+      },
+      "portraitPx": {
+        "width": 2400,
+        "height": 3000
+      },
+      "template": "nobleed-8x10-portrait.psd"
+    },
+    "11x14": {
+      "finished": {
+        "widthIn": 11,
+        "heightIn": 14
+      },
+      "portraitPx": {
+        "width": 3300,
+        "height": 4200
+      },
+      "template": "nobleed-11x14-portrait.psd"
+    },
+    "12x16": {
+      "finished": {
+        "widthIn": 12,
+        "heightIn": 16
+      },
+      "portraitPx": {
+        "width": 3600,
+        "height": 4800
+      },
+      "template": "nobleed-12x16-portrait.psd"
+    },
+    "12x18": {
+      "finished": {
+        "widthIn": 12,
+        "heightIn": 18
+      },
+      "portraitPx": {
+        "width": 3600,
+        "height": 5400
+      },
+      "template": null,
+      "note": "No 12x18 file is present in Sensaria No Bleed.zip; exact no-bleed size is derived at 300 DPI."
+    },
+    "16x20": {
+      "finished": {
+        "widthIn": 16,
+        "heightIn": 20
+      },
+      "portraitPx": {
+        "width": 4800,
+        "height": 6000
+      },
+      "template": "nobleed-16x20-portrait.psd"
+    },
+    "16x24": {
+      "finished": {
+        "widthIn": 16,
+        "heightIn": 24
+      },
+      "portraitPx": {
+        "width": 4800,
+        "height": 7200
+      },
+      "template": "nobleed-16x24-portrait.psd"
+    },
+    "18x24": {
+      "finished": {
+        "widthIn": 18,
+        "heightIn": 24
+      },
+      "portraitPx": {
+        "width": 5400,
+        "height": 7200
+      },
+      "template": "nobleed-18x24-portrait.psd"
+    },
+    "24x36": {
+      "finished": {
+        "widthIn": 24,
+        "heightIn": 36
+      },
+      "portraitPx": {
+        "width": 7200,
+        "height": 10800
+      },
+      "template": "nobleed-24x36-portrait.psd"
+    },
+    "30x40": {
+      "finished": {
+        "widthIn": 30,
+        "heightIn": 40
+      },
+      "portraitPx": {
+        "width": 9000,
+        "height": 12000
+      },
+      "template": "nobleed-30x40-portrait.psd"
+    }
+  },
+  "canvas": {
+    "12x16": {
+      "finished": {
+        "widthIn": 12,
+        "heightIn": 16
+      },
+      "facePortraitPx": {
+        "width": 3600,
+        "height": 4800
+      },
+      "productionPortraitPx": {
+        "width": 4500,
+        "height": 5700
+      },
+      "template": "canvas-1.25bar-12x16-portrait.psd"
+    },
+    "12x18": {
+      "finished": {
+        "widthIn": 12,
+        "heightIn": 18
+      },
+      "facePortraitPx": {
+        "width": 3600,
+        "height": 5400
+      },
+      "productionPortraitPx": {
+        "width": 4500,
+        "height": 6300
+      },
+      "template": "canvas-1.25bar-12x18-portrait.psd"
+    },
+    "16x20": {
+      "finished": {
+        "widthIn": 16,
+        "heightIn": 20
+      },
+      "facePortraitPx": {
+        "width": 4800,
+        "height": 6000
+      },
+      "productionPortraitPx": {
+        "width": 5700,
+        "height": 6900
+      },
+      "template": "canvas-1.25bar-16x20-portrait.psd"
+    },
+    "16x24": {
+      "finished": {
+        "widthIn": 16,
+        "heightIn": 24
+      },
+      "facePortraitPx": {
+        "width": 4800,
+        "height": 7200
+      },
+      "productionPortraitPx": {
+        "width": 5700,
+        "height": 8100
+      },
+      "template": "canvas-1.25bar-16x24-portrait.psd"
+    },
+    "18x24": {
+      "finished": {
+        "widthIn": 18,
+        "heightIn": 24
+      },
+      "facePortraitPx": {
+        "width": 5400,
+        "height": 7200
+      },
+      "productionPortraitPx": {
+        "width": 6300,
+        "height": 8100
+      },
+      "template": "canvas-1.25bar-18x24-portrait.psd"
+    },
+    "24x36": {
+      "finished": {
+        "widthIn": 24,
+        "heightIn": 36
+      },
+      "facePortraitPx": {
+        "width": 7200,
+        "height": 10800
+      },
+      "productionPortraitPx": {
+        "width": 8100,
+        "height": 11700
+      },
+      "template": "canvas-1.25bar-24x36-portrait.psd"
+    },
+    "30x40": {
+      "finished": {
+        "widthIn": 30,
+        "heightIn": 40
+      },
+      "facePortraitPx": {
+        "width": 9000,
+        "height": 12000
+      },
+      "productionPortraitPx": {
+        "width": 9900,
+        "height": 12900
+      },
+      "template": "canvas-1.25bar-30x40-portrait.psd"
+    },
+    "40x60": {
+      "finished": {
+        "widthIn": 40,
+        "heightIn": 60
+      },
+      "facePortraitPx": {
+        "width": 12000,
+        "height": 18000
+      },
+      "productionPortraitPx": {
+        "width": 12900,
+        "height": 18900
+      },
+      "template": "canvas-1.25bar-40x60-portrait.psd"
+    }
+  },
+  "framedCanvas": {
+    "sameArtworkFileAsCanvas": true,
+    "note": "Framed 1.25in bar PSDs have the same production pixel dimensions as unframed canvas for mapped sizes; the Sensaria FriendlySKU determines the frame."
+  }
+}

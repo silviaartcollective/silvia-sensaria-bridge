@@ -1,0 +1,359 @@
+{
+  "P|8x10|NONE": {
+    "friendlySku": "42010000001",
+    "costUsd": 14.78,
+    "description": "Matte Poster Paper Print - 8x10"
+  },
+  "P|11x14|NONE": {
+    "friendlySku": "42010000006",
+    "costUsd": 14.27,
+    "description": "Matte Poster Paper Print - 11x14"
+  },
+  "P|12x16|NONE": {
+    "friendlySku": "42010000009",
+    "costUsd": 17.06,
+    "description": "Matte Poster Paper Print - 12x16"
+  },
+  "P|12x18|NONE": {
+    "friendlySku": "42010000010",
+    "costUsd": 17.34,
+    "description": "Matte Poster Paper Print - 12x18"
+  },
+  "P|16x20|NONE": {
+    "friendlySku": "42010000014",
+    "costUsd": 18.36,
+    "description": "Matte Poster Paper Print - 16x20"
+  },
+  "P|16x24|NONE": {
+    "friendlySku": "42010000015",
+    "costUsd": 18.7,
+    "description": "Matte Poster Paper Print - 16x24"
+  },
+  "P|18x24|NONE": {
+    "friendlySku": "42010000016",
+    "costUsd": 19.04,
+    "description": "Matte Poster Paper Print - 18x24"
+  },
+  "P|24x36|NONE": {
+    "friendlySku": "42010000020",
+    "costUsd": 22.44,
+    "description": "Matte Poster Paper Print - 24x36"
+  },
+  "P|30x40|NONE": {
+    "friendlySku": "42010000023",
+    "costUsd": 32.26,
+    "description": "Matte Poster Paper Print - 30x40"
+  },
+  "C|12x16|NONE": {
+    "friendlySku": "19000200032",
+    "costUsd": 20.5,
+    "description": "Matte Canvas Print - 1.25in Bar - 12x16",
+    "barSize": "1.25in",
+    "wrapType": "Mirror"
+  },
+  "C|12x18|NONE": {
+    "friendlySku": "19000200033",
+    "costUsd": 23.19,
+    "description": "Matte Canvas Print - 1.25in Bar - 12x18",
+    "barSize": "1.25in",
+    "wrapType": "Mirror"
+  },
+  "C|16x20|NONE": {
+    "friendlySku": "19000200009",
+    "costUsd": 24.54,
+    "description": "Matte Canvas Print - 1.25in Bar - 16x20",
+    "barSize": "1.25in",
+    "wrapType": "Mirror"
+  },
+  "C|16x24|NONE": {
+    "friendlySku": "19000200003",
+    "costUsd": 28.58,
+    "description": "Matte Canvas Print - 1.25in Bar - 16x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror"
+  },
+  "C|18x24|NONE": {
+    "friendlySku": "19000200011",
+    "costUsd": 29.12,
+    "description": "Matte Canvas Print - 1.25in Bar - 18x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror"
+  },
+  "C|24x36|NONE": {
+    "friendlySku": "19000200002",
+    "costUsd": 42.06,
+    "description": "Matte Canvas Print - 1.25in Bar - 24x36",
+    "barSize": "1.25in",
+    "wrapType": "Mirror"
+  },
+  "C|30x40|NONE": {
+    "friendlySku": "19000200038",
+    "costUsd": 64.98,
+    "description": "Matte Canvas Print - 1.25in Bar - 30x40",
+    "barSize": "1.25in",
+    "wrapType": "Mirror"
+  },
+  "C|40x60|NONE": {
+    "friendlySku": "19000200027",
+    "costUsd": 184.18,
+    "description": "Matte Canvas Print - 1.25in Bar - 40x60",
+    "barSize": "1.25in",
+    "wrapType": "Mirror"
+  },
+  "FC|12x16|BLK": {
+    "friendlySku": "19010200030",
+    "costUsd": 36.82,
+    "description": "Matte Canvas Print - 1.25in Bar - Black Floater Frame - 12x16",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|12x16|BRN": {
+    "friendlySku": "19013200012",
+    "costUsd": 36.82,
+    "description": "Matte Canvas Print - 1.25in Bar - Brown Floater Frame - 12x16",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|12x16|NAT": {
+    "friendlySku": "19010901004",
+    "costUsd": 36.82,
+    "description": "Matte Canvas Print - 1.25in Bar - Natural Floater Frame - 12x16",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|12x16|WHT": {
+    "friendlySku": "19010400037",
+    "costUsd": 34.45,
+    "description": "Matte Canvas Print - 1.25in Bar - White Floater Frame - 12x16",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|12x18|BLK": {
+    "friendlySku": "19010200031",
+    "costUsd": 40.29,
+    "description": "Matte Canvas Print - 1.25in Bar - Black Floater Frame - 12x18",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|12x18|BRN": {
+    "friendlySku": "19010500002",
+    "costUsd": 40.29,
+    "description": "Matte Canvas Print - 1.25in Bar - Brown Floater Frame - 12x18",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|12x18|NAT": {
+    "friendlySku": "19010901013",
+    "costUsd": 40.29,
+    "description": "Matte Canvas Print - 1.25in Bar - Natural Floater Frame - 12x18",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|12x18|WHT": {
+    "friendlySku": "19010400002",
+    "costUsd": 40.29,
+    "description": "Matte Canvas Print - 1.25in Bar - White Floater Frame - 12x18",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|16x20|BLK": {
+    "friendlySku": "19010200006",
+    "costUsd": 44.06,
+    "description": "Matte Canvas Print - 1.25in Bar - Black Floater Frame - 16x20",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|16x20|BRN": {
+    "friendlySku": "19010500020",
+    "costUsd": 44.06,
+    "description": "Matte Canvas Print - 1.25in Bar - Brown Floater Frame - 16x20",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|16x20|NAT": {
+    "friendlySku": "19010901007",
+    "costUsd": 44.06,
+    "description": "Matte Canvas Print - 1.25in Bar - Natural Floater Frame - 16x20",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|16x20|WHT": {
+    "friendlySku": "19010400031",
+    "costUsd": 44.06,
+    "description": "Matte Canvas Print - 1.25in Bar - White Floater Frame - 16x20",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|16x24|BLK": {
+    "friendlySku": "19010200035",
+    "costUsd": 49.56,
+    "description": "Matte Canvas Print - 1.25in Bar - Black Floater Frame - 16x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|16x24|BRN": {
+    "friendlySku": "19010500003",
+    "costUsd": 49.56,
+    "description": "Matte Canvas Print - 1.25in Bar - Brown Floater Frame - 16x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|16x24|NAT": {
+    "friendlySku": "19010901008",
+    "costUsd": 49.56,
+    "description": "Matte Canvas Print - 1.25in Bar - Natural Floater Frame - 16x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|16x24|WHT": {
+    "friendlySku": "19010400003",
+    "costUsd": 49.56,
+    "description": "Matte Canvas Print - 1.25in Bar - White Floater Frame - 16x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|18x24|BLK": {
+    "friendlySku": "19010200008",
+    "costUsd": 51.01,
+    "description": "Matte Canvas Print - 1.25in Bar - Black Floater Frame - 18x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|18x24|BRN": {
+    "friendlySku": "19010500006",
+    "costUsd": 51.01,
+    "description": "Matte Canvas Print - 1.25in Bar - Brown Floater Frame - 18x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|18x24|NAT": {
+    "friendlySku": "19010901111",
+    "costUsd": 51.01,
+    "description": "Matte Canvas Print - 1.25in Bar - Natural Floater Frame - 18x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|18x24|WHT": {
+    "friendlySku": "19010400006",
+    "costUsd": 51.01,
+    "description": "Matte Canvas Print - 1.25in Bar - White Floater Frame - 18x24",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|24x36|BLK": {
+    "friendlySku": "19010200016",
+    "costUsd": 71.6,
+    "description": "Matte Canvas Print - 1.25in Bar - Black Floater Frame - 24x36",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|24x36|BRN": {
+    "friendlySku": "19010500004",
+    "costUsd": 71.6,
+    "description": "Matte Canvas Print - 1.25in Bar - Brown Floater Frame - 24x36",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|24x36|NAT": {
+    "friendlySku": "19010901009",
+    "costUsd": 71.6,
+    "description": "Matte Canvas Print - 1.25in Bar - Natural Floater Frame - 24x36",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|24x36|WHT": {
+    "friendlySku": "19010400004",
+    "costUsd": 71.6,
+    "description": "Matte Canvas Print - 1.25in Bar - White Floater Frame - 24x36",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|30x40|BLK": {
+    "friendlySku": "19010200037",
+    "costUsd": 94.49,
+    "description": "Matte Canvas Print - 1.25in Bar - Black Floater Frame - 30x40",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|30x40|BRN": {
+    "friendlySku": "19010500009",
+    "costUsd": 94.49,
+    "description": "Matte Canvas Print - 1.25in Bar - Brown Floater Frame - 30x40",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|30x40|NAT": {
+    "friendlySku": "19010901115",
+    "costUsd": 94.49,
+    "description": "Matte Canvas Print - 1.25in Bar - Natural Floater Frame - 30x40",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|30x40|WHT": {
+    "friendlySku": "19010400009",
+    "costUsd": 94.49,
+    "description": "Matte Canvas Print - 1.25in Bar - White Floater Frame - 30x40",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|40x60|BLK": {
+    "friendlySku": "19010200025",
+    "costUsd": 233.31,
+    "description": "Matte Canvas Print - 1.25in Bar - Black Floater Frame - 40x60",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|40x60|BRN": {
+    "friendlySku": "19010500012",
+    "costUsd": 233.31,
+    "description": "Matte Canvas Print - 1.25in Bar - Brown Floater Frame - 40x60",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|40x60|NAT": {
+    "friendlySku": "19010901044",
+    "costUsd": 233.31,
+    "description": "Matte Canvas Print - 1.25in Bar - Natural Floater Frame - 40x60",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  },
+  "FC|40x60|WHT": {
+    "friendlySku": "19010400012",
+    "costUsd": 233.31,
+    "description": "Matte Canvas Print - 1.25in Bar - White Floater Frame - 40x60",
+    "barSize": "1.25in",
+    "wrapType": "Mirror",
+    "customerProduct": "Framed Canvas"
+  }
+}
