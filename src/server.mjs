@@ -120,7 +120,9 @@ function requireAdminApi(req, res) {
 }
 
 function callbackUrl() {
-  return process.env.ETSY_CALLBACK_URL || 'https://silvia-sensaria-bridge.onrender.com/etsy/callback';
+  return process.env.ETSY_REDIRECT_URI ||
+    process.env.ETSY_CALLBACK_URL ||
+    'https://silvia-sensaria-bridge.onrender.com/etsy/callback';
 }
 
 async function readJsonBody(req) {
@@ -1621,7 +1623,7 @@ const server = http.createServer(async (req, res) => {
         codeVerifier: pending.codeVerifier,
         keystring: process.env.ETSY_KEYSTRING,
         sharedSecret: process.env.ETSY_SHARED_SECRET,
-        callbackUrl: callbackUrl()
+        redirectUri: callbackUrl()
       });
 
       if (token.refresh_token) {
