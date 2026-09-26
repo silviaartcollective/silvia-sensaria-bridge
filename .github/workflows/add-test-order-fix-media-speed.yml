@@ -1,0 +1,35 @@
+name: add-test-order-fix-media-speed
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/add-test-order-fix-media-speed.mjs
+      - .github/workflows/add-test-order-fix-media-speed.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/add-test-order-fix-media-speed.mjs
+      - run: node --check src/server.mjs
+      - run: node --check src/dashboard.mjs
+      - run: node --check src/test-order.mjs
+      - run: node --check src/test-order-page.mjs
+      - run: |
+          git config user.name "artsilvia"
+          git config user.email "artsilvia@gmail.com"
+          git add src/server.mjs src/dashboard.mjs
+          if git diff --cached --quiet; then
+            echo "No patch changes were needed."
+          else
+            git commit -m "Add dry-run orders and fix mockup ordering speed"
+            git push origin HEAD:main
+          fi

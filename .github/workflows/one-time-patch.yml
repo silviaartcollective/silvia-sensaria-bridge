@@ -1,0 +1,30 @@
+name: one-time-patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/one-time-patch.mjs
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/one-time-patch.mjs
+      - run: |
+          git config user.name "artsilvia"
+          git config user.email "artsilvia@gmail.com"
+          git add src/server.mjs src/product-creator.mjs src/mockup-sorter.mjs config/listing-defaults.json
+          if git diff --cached --quiet; then
+            echo "No patch changes were needed."
+          else
+            git commit -m "Lock exact Etsy mockup template ordering"
+            git push origin HEAD:main
+          fi
