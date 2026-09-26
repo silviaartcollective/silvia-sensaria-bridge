@@ -14,8 +14,32 @@ services:
         sync: false
       - key: ETSY_REFRESH_TOKEN
         sync: false
+      - key: ETSY_WEBHOOK_SECRET
+        sync: false
       - key: ETSY_CALLBACK_URL
         value: https://silvia-sensaria-bridge.onrender.com/etsy/callback
+      - key: SILVIA_ETSY_SHOP_ID
+        sync: false
+      - key: FULFILLMENT_MODE
+        value: shadow
+      - key: FULFILLMENT_LIVE_SUBMISSION_ENABLED
+        value: "false"
+      - key: PRODIGI_FULFILLMENT_ENABLED
+        value: "false"
+      - key: ARTELO_FULFILLMENT_ENABLED
+        value: "false"
+      - key: ARTELO_TEST_ORDER_ENABLED
+        value: "false"
+      - key: PRINTSHRIMP_FULFILLMENT_ENABLED
+        value: "false"
+      - key: PRINTIFY_API_TOKEN
+        sync: false
+      - key: ARTELO_API_KEY
+        sync: false
+      - key: PRODIGI_API_KEY
+        sync: false
+      - key: PRINTSHRIMP_API_KEY
+        sync: false
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ACCESS_KEY_ID
