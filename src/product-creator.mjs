@@ -65,7 +65,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
         <div class="uploadbox">
           <div>
             <strong>Artwork + listing media</strong>
-            <div class="uploadmeta">The app assigns the next SAC artwork ID, renames the files from that ID, and uploads them directly to the private Cloudflare R2 bucket.</div>
+            <div class="uploadmeta">The app assigns the next SAC artwork ID, renames the files from that ID, uploads them to private Cloudflare R2, and generates 2:3, 3:4, 4:5, and 11:14 POD fulfillment ratios automatically.</div>
           </div>
           <div class="twocol">
             <label>Artwork ID <span class="hint">assigned automatically</span><input id="artwork_id" class="mono" readonly placeholder="Assigned after upload"></label>
@@ -438,9 +438,30 @@ async function uploadArtworkToR2(){
     const completed=await readJsonResponse(complete,'Artwork upload confirmation');
     if(!complete.ok)throw new Error(completed.error||'Could not complete artwork upload');
 
+    let ratioSummary='';
+    try{
+      uploadStatus.textContent='Generating POD aspect-ratio files…';
+      uploadProgress.style.width='92%';
+      const ratioResponse=await fetch('/api/artworks/'+encodeURIComponent(data.artworkId)+'/ratios',{
+        method:'POST',
+        headers:{}
+      });
+      const ratioData=await readJsonResponse(ratioResponse,'Fulfillment ratio generation');
+      if(ratioResponse.ok){
+        const readyRatios=Object.keys(ratioData.ratios||{});
+        const missingRatios=Object.keys(ratioData.insufficient||{});
+        ratioSummary='<br>POD ratios generated: '+(readyRatios.length?readyRatios.join(', '):'none')+
+          (missingRatios.length?'. Needs more source resolution: '+missingRatios.join(', ')+'.':'');
+      }else{
+        ratioSummary='<br>POD ratio generation needs attention: '+String(ratioData.error||'unknown error');
+      }
+    }catch(error){
+      ratioSummary='<br>POD ratio generation needs attention: '+String(error?.message||error);
+    }
+
     uploadProgress.style.width='100%';
     uploadStatus.className='status ok';
-    uploadStatus.innerHTML='<strong>'+data.artworkId+' uploaded.</strong><br>Master artwork and '+uploads.length+' media'+(uploads.length===1?'':'s')+' are stored in R2 and linked to this product.';
+    uploadStatus.innerHTML='<strong>'+data.artworkId+' uploaded.</strong><br>Master artwork and '+uploads.length+' media'+(uploads.length===1?'':'s')+' are stored in R2 and linked to this product.'+ratioSummary;
     return data.artworkId;
   }catch(err){
     uploadProgress.style.width='0%';
