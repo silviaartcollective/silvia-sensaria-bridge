@@ -1712,7 +1712,17 @@ const server = http.createServer(async (req, res) => {
 
     const configuredShopId = Number(process.env.SILVIA_ETSY_SHOP_ID || 0);
     if (configuredShopId && shopId !== configuredShopId) {
-      return sendJson(res, 403, { ok: false, error: 'Webhook shop does not match SilviaArtCollective.' });
+      // Etsy's Webhook Portal "Send Example" uses sample shop/receipt IDs.
+      // The delivery is still cryptographically verified above, so acknowledge
+      // signed non-Silvia examples without staging or processing them.
+      return sendJson(res, 200, {
+        ok: true,
+        accepted: true,
+        ignored: true,
+        reason: 'signed_non_silvia_test_or_event',
+        eventType,
+        shopId
+      });
     }
 
     let receiptRef;
