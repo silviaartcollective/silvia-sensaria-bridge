@@ -21,6 +21,7 @@ import {
   reserveArtworkUpload,
   completeArtworkUpload,
   cancelArtworkUpload,
+  generateArtworkFulfillmentRatios,
   loadArtworkManifest,
   saveArtworkManifest
 } from './artwork-storage.mjs';
@@ -1261,6 +1262,17 @@ const server = http.createServer(async (req, res) => {
     try {
       const manifest = await completeArtworkUpload(artworkCompleteMatch[1].toUpperCase());
       return sendJson(res, 200, { ok: true, artworkId: manifest.artworkId, manifest });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  const artworkRatiosMatch = url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/ratios$/i);
+  if (req.method === 'POST' && artworkRatiosMatch) {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const result = await generateArtworkFulfillmentRatios(artworkRatiosMatch[1].toUpperCase());
+      return sendJson(res, 200, { ok: true, ...result });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
     }
