@@ -26,6 +26,7 @@ import {
 } from './artwork-storage.mjs';
 import { buildOwnSilviaInventory } from './variants.mjs';
 import { podProviderStatus, testPodProvider } from './pod-providers.mjs';
+import { verifyEtsyWebhook, receiptReferenceFromEtsyResource } from './etsy-webhook.mjs';
 import {
   chooseRecentMockupReference,
   getEtsyListingImages,
@@ -61,7 +62,8 @@ import {
   uploadListingImage,
   uploadListingVideo,
   updateListing,
-  createDraftListing
+  createDraftListing,
+  getShopReceipt
 } from './etsy.mjs';
 
 const port = Number(process.env.PORT || 10000);
@@ -125,10 +127,19 @@ function callbackUrl() {
     'https://silvia-sensaria-bridge.onrender.com/etsy/callback';
 }
 
-async function readJsonBody(req) {
+async function readRawBody(req, maxBytes = 1024 * 1024) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  const raw = Buffer.concat(chunks).toString('utf8');
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > maxBytes) throw new Error('Request body is too large');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function readJsonBody(req) {
+  const raw = (await readRawBody(req)).toString('utf8');
   if (!raw) return {};
   return JSON.parse(raw);
 }
@@ -1639,10 +1650,150 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/etsy/webhook') {
-    return sendJson(res, 503, {
-      ok: false,
-      message: 'Webhook endpoint is reserved but not enabled until the Etsy webhook signing secret is configured.'
-    });
+    const signingSecret = String(process.env.ETSY_WEBHOOK_SECRET || '').trim();
+    if (!signingSecret) {
+      return sendJson(res, 503, {
+        ok: false,
+        error: 'ETSY_WEBHOOK_SECRET is not configured in Render.'
+      });
+    }
+
+    let rawBody;
+    try {
+      rawBody = (await readRawBody(req)).toString('utf8');
+    } catch (error) {
+      return sendJson(res, /too large/i.test(error?.message || '') ? 413 : 400, {
+        ok: false,
+        error: error?.message || String(error)
+      });
+    }
+
+    let verification;
+    try {
+      verification = verifyEtsyWebhook({
+        secret: signingSecret,
+        webhookId: req.headers['webhook-id'],
+        webhookTimestamp: req.headers['webhook-timestamp'],
+        webhookSignature: req.headers['webhook-signature'],
+        rawBody
+      });
+    } catch (error) {
+      return sendJson(res, 401, {
+        ok: false,
+        error: 'Invalid Etsy webhook authentication headers.'
+      });
+    }
+
+    if (!verification.ok) {
+      return sendJson(res, 401, {
+        ok: false,
+        error: verification.reason === 'stale_timestamp'
+          ? 'Stale Etsy webhook timestamp.'
+          : 'Invalid Etsy webhook signature.'
+      });
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(rawBody || '{}');
+    } catch {
+      return sendJson(res, 400, { ok: false, error: 'Etsy webhook body is not valid JSON.' });
+    }
+
+    const supportedEvents = new Set(['order.paid', 'order.canceled', 'order.shipped', 'order.delivered']);
+    const eventType = String(payload?.event_type || '').trim();
+    const shopId = Number(payload?.shop_id || 0);
+    if (!supportedEvents.has(eventType) || !shopId || !payload?.resource_url) {
+      return sendJson(res, 400, {
+        ok: false,
+        error: 'Etsy webhook payload is missing a supported event_type, shop_id, or resource_url.'
+      });
+    }
+
+    const configuredShopId = Number(process.env.SILVIA_ETSY_SHOP_ID || 0);
+    if (configuredShopId && shopId !== configuredShopId) {
+      return sendJson(res, 403, { ok: false, error: 'Webhook shop does not match SilviaArtCollective.' });
+    }
+
+    let receiptRef;
+    try {
+      receiptRef = receiptReferenceFromEtsyResource(payload.resource_url);
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+    if (receiptRef.shopId !== shopId) {
+      return sendJson(res, 400, { ok: false, error: 'Webhook resource shop does not match payload shop_id.' });
+    }
+
+    const safeWebhookId = String(verification.webhookId).replace(/[^A-Za-z0-9._-]/g, '_');
+    const deliveryKey = `webhooks/etsy/${safeWebhookId}.json`;
+
+    try {
+      if (await artworkObjectExists(deliveryKey)) {
+        return sendJson(res, 200, {
+          ok: true,
+          duplicate: true,
+          eventType,
+          receiptId: receiptRef.receiptId
+        });
+      }
+
+      const delivery = {
+        webhookId: verification.webhookId,
+        webhookTimestamp: verification.timestamp,
+        receivedAt: new Date().toISOString(),
+        signatureVerified: true,
+        eventType,
+        shopId,
+        receiptId: receiptRef.receiptId,
+        resourceUrl: payload.resource_url,
+        payload
+      };
+
+      if (eventType === 'order.paid') {
+        try {
+          const session = await getEtsySession();
+          if (Number(session.shop?.shop_id || 0) !== shopId) {
+            throw new Error('Authorized Etsy shop does not match webhook shop.');
+          }
+
+          const receipt = await getShopReceipt({
+            shopId,
+            receiptId: receiptRef.receiptId,
+            keystring: session.keystring,
+            sharedSecret: session.sharedSecret,
+            accessToken: session.accessToken
+          });
+
+          await putJsonObject(`orders/etsy/${receiptRef.receiptId}/receipt.json`, {
+            receivedAt: delivery.receivedAt,
+            source: 'etsy-webhook',
+            processingStatus: 'received',
+            eventType,
+            receipt
+          });
+          delivery.receiptStaged = true;
+        } catch (error) {
+          delivery.receiptStaged = false;
+          delivery.receiptFetchError = error?.message || String(error);
+        }
+      }
+
+      await putJsonObject(deliveryKey, delivery);
+
+      return sendJson(res, 200, {
+        ok: true,
+        accepted: true,
+        eventType,
+        receiptId: receiptRef.receiptId,
+        receiptStaged: Boolean(delivery.receiptStaged)
+      });
+    } catch (error) {
+      return sendJson(res, 500, {
+        ok: false,
+        error: error?.message || String(error)
+      });
+    }
   }
 
   return sendJson(res, 404, { ok: false, error: 'Not found' });
