@@ -21,6 +21,7 @@ import {
   productionSpecFor,
   renderProductionArtworkToFile
 } from './production.mjs';
+import { generateFulfillmentRatios } from './artwork-ratios.mjs';
 
 let productionRenderTail = Promise.resolve();
 
@@ -240,12 +241,37 @@ export async function ensureProductionAsset({
   };
 }
 
+export async function generateArtworkFulfillmentRatios(artworkId) {
+  const manifest = await loadArtworkManifest(artworkId);
+  if (!manifest?.master?.key) throw new Error(`Artwork ${artworkId} has no master file configured`);
+
+  const generated = await withProductionRenderSlot(() => generateFulfillmentRatios({
+    artworkId,
+    masterKey: manifest.master.key,
+    orientation: manifest.orientation
+  }));
+
+  manifest.fulfillmentRatios = generated.assets;
+  manifest.fulfillmentRatioInsufficient = generated.insufficient;
+  manifest.fulfillmentRatiosReady = generated.ready;
+  manifest.fulfillmentRatiosUpdatedAt = new Date().toISOString();
+  await saveArtworkManifest(manifest);
+
+  return {
+    artworkId,
+    ready: generated.ready,
+    ratios: generated.assets,
+    insufficient: generated.insufficient
+  };
+}
+
 export async function cancelArtworkUpload(artworkId) {
   const manifest = await loadArtworkManifest(artworkId);
   const keys = [
     manifest?.master?.key,
     ...(manifest?.mockups || []).map((item) => item.key),
     ...(Object.values(manifest?.production || {}).map((item) => item.key)),
+    ...(Object.values(manifest?.fulfillmentRatios || {}).map((item) => item.key)),
     manifestObjectKey(artworkId)
   ].filter(Boolean);
 
