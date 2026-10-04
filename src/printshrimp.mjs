@@ -2,16 +2,59 @@ import { SILVIA_CURRENT_MARKETS } from './markets.mjs';
 
 export const PRINTSHRIMP_API_BASE = 'https://api.printshrimp.com/functions/v1';
 
-export const PRINTSHRIMP_FRAMED_SIZES = Object.freeze([
-  '8x10','11x14','12x18','16x20','16x24','18x24','24x36'
+// PrintShrimp API order size enum; a live destination-specific price is still
+// required to establish actual print/frame availability.
+export const PRINTSHRIMP_PRINT_SIZES = Object.freeze([
+  '8x10','11x14','12x16','12x18','16x20','16x24','18x24','24x36','30x40'
 ]);
 
-// 12x16 is an Silvia storefront size, but it is not present in PrintShrimp's
-// documented API size enum. Live /api-get-pricing responses can be used to
-// detect future support without hard-coding it.
-export const PRINTSHRIMP_UNCONFIRMED_SILVIA_SIZES = Object.freeze(['12x16']);
+export const PRINTSHRIMP_FRAMED_SIZES = Object.freeze([
+  '8x10','11x14','12x16','12x18','16x20','16x24','18x24','24x36'
+]);
+
+// API explicitly accepts 12x16 as an order alias of 30x40cm. Whether a
+// destination supports the framed form is determined by the live frame quote.
+export const PRINTSHRIMP_UNCONFIRMED_SILVIA_SIZES = Object.freeze([]);
+
+export const PRINTSHRIMP_PRINT_PAPER_TYPE = 'Matte';
+export const PRINTSHRIMP_PAPER_TYPES = Object.freeze(['Matte', 'Satin', 'Gloss']);
+
+export function printShrimpPriceRow(pricing, size) {
+  const aliases = String(size) === '12x16' ? ['12x16', '30x40cm']
+    : String(size) === '20x28' ? ['20x28', '50x70cm'] : [String(size)];
+  return (pricing?.sizes || []).find(row => aliases.includes(String(row?.size || ''))) || null;
+}
 
 export const PRINTSHRIMP_FRAME_FINISHES = Object.freeze(['Black', 'White', 'Oak']);
+
+// Published policy: 20% off print production prices when 3+ prints go
+// to the same address. Frames do not qualify. This is a planning
+// estimate until the supplier confirms the discounted order total.
+export function estimatePrintShrimpBulkPrintDiscount(products = []) {
+  const printItems = (products || []).filter(item =>
+    String(item?.type || '').toLowerCase() === 'print'
+  );
+  const printQuantity = printItems.reduce(
+    (sum, item) => sum + Math.max(1, Number(item.quantity || 1)), 0
+  );
+  const eligible = printQuantity >= 3;
+  const subtotal = printItems.reduce((sum, item) => {
+    const unitPrice = Number(item.unitPrice);
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) return Number.NaN;
+    return sum + unitPrice * Math.max(1, Number(item.quantity || 1));
+  }, 0);
+  const discount = eligible && Number.isFinite(subtotal)
+    ? Math.round(subtotal * 0.2 * 100) / 100 : 0;
+  return {
+    eligible,
+    printQuantity,
+    discountRate: eligible ? 0.2 : 0,
+    printSubtotal: Number.isFinite(subtotal) ? Math.round(subtotal * 100) / 100 : null,
+    estimatedDiscount: Number.isFinite(subtotal) ? discount : null,
+    note: 'Published print-only quantity discount estimate; shipping, VAT and exact combined checkout total must be confirmed.'
+  };
+}
+
 
 function apiKey() {
   return String(process.env.PRINTSHRIMP_API_KEY || '').trim();
@@ -25,14 +68,16 @@ export function printShrimpConfigStatus() {
     authentication: 'x-api-key',
     frameFinishes: PRINTSHRIMP_FRAME_FINISHES,
     documentedFramedSizes: PRINTSHRIMP_FRAMED_SIZES,
+    publishedPrintSizes: PRINTSHRIMP_PRINT_SIZES,
+    printPaperType: PRINTSHRIMP_PRINT_PAPER_TYPE,
     unconfirmedSilviaSizes: PRINTSHRIMP_UNCONFIRMED_SILVIA_SIZES,
     currentMarkets: SILVIA_CURRENT_MARKETS,
     taxPolicy: {
-      mode: 'supplier-handled',
-      quoteBasis: 'Live API product price + shipping once per order',
+      mode: 'import-tariff-covered-sales-tax-unverified',
+      quoteBasis: 'API supplies both print and frame prices in GBP; use its returned currency for conversion',
       vat: 'VAT is already included in API price fields when returned',
-      duties: 'No extra import-duty buffer; PrintShrimp confirmed on 2026-09-22 that rare tax/tariff charges are covered by them',
-      profitBasis: 'Treat live API price + shipping as the working landed supplier cost'
+      duties: 'Supplier email on 2026-09-21 says rare import tariffs are covered by PrintShrimp; separately assessed local sales tax remains unverified',
+      profitBasis: 'Treat API price + one-order shipping as the quoted supplier cost; separately assessed local sales tax remains unverified'
     }
   };
 }
@@ -123,8 +168,11 @@ export async function getPrintShrimpPricing(country) {
     ok: Boolean(raw?.success ?? true),
     country: raw?.country || resolved,
     currency: raw?.currency || 'GBP',
+    printCurrency: raw?.currency || 'GBP',
+    frameCurrency: raw?.currency || 'GBP',
     sizes: rows,
     framedSizes: rows.filter(row => row.frame).map(row => row.size),
+    printSizes: rows.filter(row => row.print).map(row => row.size),
     raw
   };
 }
@@ -137,6 +185,7 @@ export async function testPrintShrimpConnection(country = 'CA') {
     currency: result.currency,
     sizeCount: result.sizes.length,
     framedSizeCount: result.framedSizes.length,
+    printSizeCount: result.printSizes.length,
     framedSizes: result.framedSizes
   };
 }
@@ -203,7 +252,10 @@ function validateOrderProduct(product = {}) {
       throw new Error('PrintShrimp frame variant must be Black, White, or Oak');
     }
   } else {
-    requireText(product.paper_type, 'print paper_type');
+    const paper = requireText(product.paper_type, 'print paper_type');
+    if (!PRINTSHRIMP_PAPER_TYPES.includes(paper)) {
+      throw new Error('PrintShrimp paper_type must be Matte, Satin, or Gloss');
+    }
   }
 }
 
@@ -230,19 +282,31 @@ export async function validatePrintShrimpOrderPreview(payload = {}) {
   const country = normalizeCountry(payload.customerInfo.country);
   const pricing = await getPrintShrimpPricing(country);
   const checks = payload.products.map(product => {
-    const row = pricing.sizes.find(item => String(item?.size || '') === String(product.size || ''));
-    const frame = row?.frame || null;
+    const row = printShrimpPriceRow(pricing, product.size);
+    const isFrame = String(product.type || 'Print').toLowerCase() === 'frame';
+    const item = isFrame ? row?.frame : row?.print;
     return {
       size: product.size,
-      variant: product.variant,
+      type: isFrame ? 'Frame' : 'Print',
+      variant: product.variant || '',
       quantity: Number(product.quantity || 1),
-      supported: Boolean(frame),
-      liveFramePrice: frame?.price ?? null,
-      liveShipping: frame?.shipping ?? null,
-      vatRate: frame?.vat_rate ?? null,
-      vatAmount: frame?.vat_amount ?? null
+      supported: Boolean(item) && item.price != null && item.shipping != null,
+      livePrice: item?.price ?? null,
+      liveFramePrice: isFrame ? item?.price ?? null : null,
+      liveShipping: item?.shipping ?? null,
+      currency: item?.currency || (isFrame ? pricing.frameCurrency : pricing.printCurrency) || pricing.currency,
+      vatRate: item?.vat_rate ?? null,
+      vatAmount: item?.vat_amount ?? null
     };
   });
+
+  const bulkPrintDiscount = estimatePrintShrimpBulkPrintDiscount(
+    payload.products.map((product, index) => ({
+      type: String(product.type || 'Print'),
+      quantity: product.quantity,
+      unitPrice: checks[index]?.livePrice
+    }))
+  );
 
   const unsupported = checks.filter(item => !item.supported);
   if (unsupported.length) {
@@ -254,12 +318,13 @@ export async function validatePrintShrimpOrderPreview(payload = {}) {
     country: pricing.country,
     currency: pricing.currency,
     checks,
+    bulkPrintDiscount,
     multiItem: {
       lineCount: payload.products.length,
       totalQuantity: payload.products.reduce((sum, product) => sum + Math.max(1, Number(product.quantity || 1)), 0),
-      combinedShippingConfirmed: false,
+      combinedShippingConfirmed: true,
       createOrderCalled: false,
-      note: 'Live validation confirms supported sizes and current per-size pricing only. Combined multi-item shipping is not treated as verified until PrintShrimp documents a non-production order preview/hold flow.'
+      note: 'Authenticated API docs state shipping is charged once per order (only the first item pays it). This preview validates per-item support/pricing but does not reconstruct the final combined basket total; the published 3+ print discount remains planning-only until confirmed on the complete order.'
     }
   };
 }

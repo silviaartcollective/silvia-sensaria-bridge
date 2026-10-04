@@ -18,4 +18,9 @@ jobs:
       - run: node --check src/product-creator.mjs
       - run: node --check src/mockup-sorter.mjs
       - run: node --check src/variants.mjs
+      - run: node --check src/printshrimp.mjs
+      - run: node --check src/prodigi.mjs
+      - run: node --check src/supplier-comparison.mjs
+      - run: node --check src/supplier-comparison-page.mjs
+      - run: node --check src/routing-proposal.mjs
       - run: npm test

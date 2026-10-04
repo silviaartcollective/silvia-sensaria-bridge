@@ -60,3 +60,14 @@ Examples:
 ## Next implementation step
 
 Connect the Silvia Etsy Seller App with `transactions_r` and `transactions_w`, then test one real listing/receipt end-to-end before changing the rest of the catalog.
+
+
+## Supplier comparison planning
+
+The admin-only `/compare` page compares the current Etsy catalog across Sensaria, Prodigi and PrintShrimp by destination. Artelo remains visible as ineligible because the current Artelo mapping is framed-poster-only and this shop currently sells Poster, Canvas and Framed Canvas.
+
+The comparison uses quoted supplier cost plus a separate configurable planning contingency. PrintShrimp uses its authenticated API assumptions: GBP pricing, Matte paper, the documented 12x16/30x40cm alias, VAT already included when returned, and shipping charged once per order. The supplier's rare-import-tariff policy does not establish whether a local sales tax may be assessed separately.
+
+Margin checks use the shop's existing 20% Etsy sale price and free-shipping policy. A configurable Etsy fee reserve is included for planning; it is not a statutory fee quote. Defaults can be overridden with `SAC_ETSY_FEE_RESERVE_PERCENT`, `SAC_MIN_MARGIN_USD`, and `SAC_MIN_MARGIN_PERCENT`.
+
+A supplier scan is read-only. It does not submit supplier orders, alter Etsy listings, or enable live fulfillment. `scripts/build-routing-proposal.mjs` only creates an **unapproved proposal** after a complete scan passes validation; it never changes live routing automatically.

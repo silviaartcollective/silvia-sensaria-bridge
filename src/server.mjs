@@ -7,6 +7,8 @@ import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
 import { pricingCatalogForZone, pricingCatalogForMarket, publicShippingPricingConfig } from './pricing.mjs';
+import { scanSupplierComparison } from './supplier-comparison.mjs';
+import { renderSupplierComparisonPage } from './supplier-comparison-page.mjs';
 import { buildTestReceipt } from './test-order.mjs';
 import { etsyReceiptToSensariaCsvFromR2 } from './fulfillment.mjs';
 import {
@@ -1059,6 +1061,17 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'GET' && url.pathname === '/compare') {
+    if (!requireAdminPage(req, res, '/compare')) return;
+    const providers = podProviderStatus();
+    return sendHtml(res, 200, renderSupplierComparisonPage({
+      configured: {
+        prodigi: Boolean(providers?.Prodigi?.ready),
+        printshrimp: Boolean(providers?.PrintShrimp?.ready)
+      }
+    }));
+  }
+
   if (req.method === 'GET' && url.pathname === '/pricing') {
     if (!requireAdminPage(req, res, '/pricing')) return;
     return sendHtml(res, 200, renderPricingPage());
@@ -1099,6 +1112,28 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/suppliers/compare') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const countriesParam = String(url.searchParams.get('countries') || 'CA').trim();
+      const countryCodes = countriesParam.split(',').map(value => value.trim().toUpperCase()).filter(Boolean);
+      const productsParam = String(url.searchParams.get('products') || 'P,C,FC').trim();
+      const productCodes = productsParam.split(',').map(value => value.trim().toUpperCase()).filter(Boolean);
+      const copiesRaw = Number(url.searchParams.get('copies') || 1);
+      const copies = Number.isInteger(copiesRaw) && copiesRaw > 0 ? copiesRaw : 1;
+      const shippingMethod = String(url.searchParams.get('shippingMethod') || '').trim() || undefined;
+      return sendJson(res, 200, await scanSupplierComparison({
+        countryCodes,
+        productCodes,
+        copies,
+        shippingMethod,
+        sensariaProducts: products
+      }));
+    } catch (error) {
+      return sendJson(res, 502, { ok: false, error: error?.message || String(error) });
     }
   }
 
