@@ -1011,6 +1011,6 @@ export async function testProdigiConnection() {
   return {
     ok: true,
     products,
-    fullArteVariantCount: PRODIGI_SILVIA_ENTRIES.length
+    catalogVariantCount: PRODIGI_SILVIA_ENTRIES.length
   };
 }
