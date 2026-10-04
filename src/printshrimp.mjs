@@ -322,9 +322,9 @@ export async function validatePrintShrimpOrderPreview(payload = {}) {
     multiItem: {
       lineCount: payload.products.length,
       totalQuantity: payload.products.reduce((sum, product) => sum + Math.max(1, Number(product.quantity || 1)), 0),
-      combinedShippingConfirmed: false,
+      combinedShippingConfirmed: true,
       createOrderCalled: false,
-      note: 'Live validation confirms per-item prices and supported types/sizes. Combined multi-item shipping and any bulk print discount are unverified until supplier confirms the complete basket.'
+      note: 'Authenticated API docs state shipping is charged once per order (only the first item pays it). This preview validates per-item support/pricing but does not reconstruct the final combined basket total; the published 3+ print discount remains planning-only until confirmed on the complete order.'
     }
   };
 }
