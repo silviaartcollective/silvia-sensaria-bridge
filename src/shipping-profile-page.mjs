@@ -25,8 +25,8 @@ main{padding:34px 38px 48px;max-width:1180px;width:100%;margin:auto}h1,h2{font-f
 .top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:24px}.badge{border:1px solid var(--line);background:var(--panel);padding:8px 12px;border-radius:999px;font-size:12px}
 .grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:22px;box-shadow:0 10px 28px rgba(40,40,30,.05)}
 .section-sub{color:var(--muted);font-size:13px;margin:0 0 18px}.form{display:grid;gap:15px}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-label{display:grid;gap:7px;font-size:12px;font-weight:650}.hint{font-weight:400;color:var(--muted)}input{width:100%;border:1px solid var(--line);border-radius:10px;background:#fff;padding:11px 12px;font:inherit;color:var(--ink)}
-input:focus{outline:2px solid #cfd9cf;border-color:#9bab9b}.btn{border:0;border-radius:10px;background:#30352e;color:#fff;padding:12px 15px;font-weight:700;cursor:pointer}.btn.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}.btn:disabled{opacity:.55;cursor:not-allowed}
+label{display:grid;gap:7px;font-size:12px;font-weight:650}.hint{font-weight:400;color:var(--muted)}input,select{width:100%;border:1px solid var(--line);border-radius:10px;background:#fff;padding:11px 12px;font:inherit;color:var(--ink)}
+input:focus,select:focus{outline:2px solid #cfd9cf;border-color:#9bab9b}.btn{border:0;border-radius:10px;background:#30352e;color:#fff;padding:12px 15px;font-weight:700;cursor:pointer}.btn.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}.btn:disabled{opacity:.55;cursor:not-allowed}
 .status{padding:12px;border-radius:10px;background:#f7f4ee;border:1px solid var(--line);font-size:12px;color:var(--muted);line-height:1.5}.status.ok{background:var(--green2);color:var(--green)}.status.warn{background:var(--amber2);color:var(--amber)}.status.error{background:var(--red2);color:var(--red)}
 .market-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.market{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:10px;padding:10px;background:#fff;font-size:13px}.market input{width:auto;margin:0}
 .actions{display:flex;gap:10px;flex-wrap:wrap}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.list{display:grid;gap:8px}.item{padding:10px;border-radius:9px;background:#f7f4ee;border:1px solid var(--line);font-size:12px;line-height:1.45}
@@ -97,6 +97,19 @@ input:focus{outline:2px solid #cfd9cf;border-color:#9bab9b}.btn{border:0;border-
         </div>
         <div class="status" id="result">Loading the Etsy profile status…</div>
       </form>
+
+      <div style="height:1px;background:var(--line);margin:24px 0"></div>
+      <h2 style="font-size:20px">Edit existing listing</h2>
+      <p class="section-sub">Choose an active or draft Etsy listing and change only its shipping profile to Silvia Sensaria Free Shipping.</p>
+      <div class="form">
+        <label>Etsy listing
+          <select id="existing-listing"><option value="">Loading listings…</option></select>
+        </label>
+        <div class="actions">
+          <button class="btn" id="apply-profile-btn" type="button" disabled>Use Silvia Shipping Profile</button>
+        </div>
+        <div class="status" id="listing-profile-result">Create the Silvia shipping profile first, then you can apply it to an existing listing here.</div>
+      </div>
     </section>
 
     <section class="card">
@@ -120,6 +133,9 @@ const createButton=document.getElementById('create-btn');
 const marketGrid=document.getElementById('market-grid');
 const titleInput=document.getElementById('title');
 const postalInput=document.getElementById('origin_postal_code');
+const existingListing=document.getElementById('existing-listing');
+const applyProfileButton=document.getElementById('apply-profile-btn');
+const listingProfileResult=document.getElementById('listing-profile-result');
 let preset=[];
 
 function escHtml(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]))}
@@ -129,6 +145,42 @@ function renderMarkets(items){
 }
 function selectedMarkets(){return Array.from(document.querySelectorAll('input[name="market"]:checked')).map(x=>x.value)}
 document.getElementById('select-all').addEventListener('click',()=>document.querySelectorAll('input[name="market"]').forEach(x=>x.checked=true));
+
+async function loadExistingListings(){
+  applyProfileButton.disabled=true;
+  existingListing.innerHTML='<option value="">Loading listings…</option>';
+  listingProfileResult.className='status';
+  listingProfileResult.textContent='Loading active and draft Etsy listings…';
+  try{
+    const r=await fetch('/api/shipping-profile/listings',{cache:'no-store'});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Could not load Etsy listings.');
+    if(!d.managedProfile){
+      existingListing.innerHTML='<option value="">Create Silvia shipping profile first</option>';
+      listingProfileResult.className='status warn';
+      listingProfileResult.textContent='Create the Silvia Sensaria Free Shipping profile first.';
+      return;
+    }
+    existingListing.innerHTML='<option value="">Choose a listing</option>';
+    for(const item of d.listings||[]){
+      const o=document.createElement('option');
+      o.value=String(item.listingId);
+      const current=item.shippingProfileTitle||('Profile '+String(item.shippingProfileId||'unknown'));
+      o.textContent=String(item.title||('Listing '+item.listingId))+' · '+String(item.state||'')+' · '+current;
+      o.dataset.profileId=String(item.shippingProfileId||'');
+      existingListing.appendChild(o);
+    }
+    listingProfileResult.className='status';
+    listingProfileResult.textContent=(d.listings||[]).length
+      ? 'Choose one listing. Only its shipping profile will be changed.'
+      : 'No active or draft Etsy listings were found.';
+    applyProfileButton.disabled=!(d.listings||[]).length;
+  }catch(error){
+    existingListing.innerHTML='<option value="">Could not load listings</option>';
+    listingProfileResult.className='status error';
+    listingProfileResult.textContent=error.message||String(error);
+  }
+}
 
 async function load(){
   try{
@@ -153,9 +205,12 @@ async function load(){
       result.innerHTML='<strong>Managed profile already exists.</strong><br>'+escHtml(d.managedProfile.title)+' · Profile ID '+escHtml(d.managedProfile.shipping_profile_id)+'. New Product Creator drafts will default to it.';
       createButton.textContent='Profile already exists';
       createButton.disabled=true;
+      await loadExistingListings();
     }else{
       result.className='status';
       result.textContent='Ready to create the profile in Etsy.';
+      existingListing.innerHTML='<option value="">Create Silvia shipping profile first</option>';
+      applyProfileButton.disabled=true;
     }
   }catch(error){
     badge.textContent='Etsy setup needs attention';
@@ -187,6 +242,7 @@ document.getElementById('profile-form').addEventListener('submit',async(event)=>
     result.className='status ok';
     result.innerHTML='<strong>Shipping profile created.</strong><br>Profile ID '+escHtml(d.shippingProfileId)+' · '+escHtml(d.destinationCount)+' destinations · free shipping. Product Creator will now select it automatically.';
     createButton.textContent='Created';
+    await loadExistingListings();
   }catch(error){
     result.className='status error';
     result.textContent=error.message||String(error);
@@ -194,6 +250,43 @@ document.getElementById('profile-form').addEventListener('submit',async(event)=>
     createButton.textContent='Create Etsy Shipping Profile';
   }
 });
+
+applyProfileButton.addEventListener('click',async()=>{
+  const listingId=Number(existingListing.value);
+  if(!listingId){
+    listingProfileResult.className='status warn';
+    listingProfileResult.textContent='Choose an Etsy listing first.';
+    return;
+  }
+  const selected=existingListing.options[existingListing.selectedIndex];
+  const title=selected?.textContent||('Listing '+listingId);
+  if(!confirm('Change the shipping profile for this listing to Silvia Sensaria Free Shipping?\n\n'+title))return;
+
+  applyProfileButton.disabled=true;
+  applyProfileButton.textContent='Updating Etsy…';
+  listingProfileResult.className='status';
+  listingProfileResult.textContent='Updating only the shipping profile for listing #'+listingId+'…';
+  try{
+    const r=await fetch('/api/shipping-profile/apply',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({listing_id:listingId})
+    });
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Could not update the Etsy listing.');
+    listingProfileResult.className='status ok';
+    listingProfileResult.innerHTML='<strong>Listing updated.</strong><br>Listing #'+escHtml(d.listingId)+' now uses '+escHtml(d.shippingProfileTitle)+'.';
+    await loadExistingListings();
+    existingListing.value=String(listingId);
+  }catch(error){
+    listingProfileResult.className='status error';
+    listingProfileResult.textContent=error.message||String(error);
+  }finally{
+    applyProfileButton.disabled=false;
+    applyProfileButton.textContent='Use Silvia Shipping Profile';
+  }
+});
+
 load();
 </script>
 </body>
