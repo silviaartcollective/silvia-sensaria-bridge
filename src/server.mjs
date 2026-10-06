@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { renderDashboard } from './dashboard.mjs';
@@ -14,6 +15,7 @@ import { etsyReceiptToSensariaCsvFromR2 } from './fulfillment.mjs';
 import {
   checkR2Connection,
   getArtworkObject,
+  signedArtworkUrl,
   signedArtworkUploadUrl,
   artworkObjectExists,
   getJsonObject,
@@ -28,6 +30,19 @@ import {
   saveArtworkManifest
 } from './artwork-storage.mjs';
 import { buildOwnSilviaInventory } from './variants.mjs';
+import {
+  FULFILLMENT_RATIOS,
+  FULFILLMENT_RATIO_MIN_PIXELS,
+  fulfillmentRatioObjectKey
+} from './artwork-ratios.mjs';
+import {
+  createCropJob,
+  getCropJob,
+  claimNextCropJob,
+  updateCropJobProgress,
+  completeCropJob,
+  failCropJob
+} from './crop-job-store.mjs';
 import { podProviderStatus, testPodProvider } from './pod-providers.mjs';
 import { verifyEtsyWebhook, receiptReferenceFromEtsyResource } from './etsy-webhook.mjs';
 import {
@@ -122,6 +137,74 @@ function requireAdminApi(req, res) {
   if (isAdminAuthenticated(req)) return true;
   sendJson(res, 401, { ok: false, error: 'Admin login required.' });
   return false;
+}
+
+const CROP_WORKER_HEARTBEAT_TTL_MS = 15 * 1000;
+let cropWorkerHeartbeat = {
+  workerId: '',
+  version: '',
+  busy: false,
+  jobId: '',
+  lastSeenAt: 0
+};
+
+function timingSafeTextEqual(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function isCropWorkerAuthorized(req) {
+  const expected = String(process.env.CROP_WORKER_TOKEN || '').trim();
+  if (!expected) return false;
+  const header = String(req.headers.authorization || '');
+  if (!header.startsWith('Bearer ')) return false;
+  return timingSafeTextEqual(header.slice(7).trim(), expected);
+}
+
+function requireCropWorker(req, res) {
+  if (isCropWorkerAuthorized(req)) return true;
+  sendJson(res, 401, { ok: false, error: 'Invalid crop worker token.' });
+  return false;
+}
+
+function recordCropWorkerHeartbeat(input = {}) {
+  cropWorkerHeartbeat = {
+    workerId: String(input.workerId || cropWorkerHeartbeat.workerId || '').trim(),
+    version: String(input.version || cropWorkerHeartbeat.version || '').trim(),
+    busy: input.busy === true,
+    jobId: String(input.jobId || '').trim(),
+    lastSeenAt: Date.now()
+  };
+  return cropWorkerHeartbeat;
+}
+
+function cropWorkerStatus() {
+  const configured = Boolean(String(process.env.CROP_WORKER_TOKEN || '').trim());
+  const online = configured &&
+    cropWorkerHeartbeat.lastSeenAt > 0 &&
+    Date.now() - cropWorkerHeartbeat.lastSeenAt <= CROP_WORKER_HEARTBEAT_TTL_MS;
+  return {
+    configured,
+    online,
+    workerId: online ? cropWorkerHeartbeat.workerId : '',
+    version: online ? cropWorkerHeartbeat.version : '',
+    busy: online ? cropWorkerHeartbeat.busy : false,
+    jobId: online ? cropWorkerHeartbeat.jobId : '',
+    lastSeenAt: cropWorkerHeartbeat.lastSeenAt
+      ? new Date(cropWorkerHeartbeat.lastSeenAt).toISOString()
+      : null
+  };
+}
+
+function cropTarget(ratio, orientation = 'portrait') {
+  const base = FULFILLMENT_RATIO_MIN_PIXELS[ratio];
+  if (!base) throw new Error(`Unsupported fulfillment ratio: ${ratio}`);
+  const landscape = String(orientation || '').trim().toLowerCase() === 'landscape';
+  return {
+    width: landscape ? base[1] : base[0],
+    height: landscape ? base[0] : base[1]
+  };
 }
 
 function callbackUrl() {
@@ -814,6 +897,220 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/health') {
     return sendJson(res, 200, { ok: true, service: 'silvia-sensaria-bridge' });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/crop-worker/heartbeat') {
+    if (!requireCropWorker(req, res)) return;
+    try {
+      const input = await readJsonBody(req);
+      if (!String(input.workerId || '').trim()) {
+        return sendJson(res, 400, { ok: false, error: 'workerId is required' });
+      }
+      return sendJson(res, 200, {
+        ok: true,
+        worker: recordCropWorkerHeartbeat(input)
+      });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/crop-jobs/claim') {
+    if (!requireCropWorker(req, res)) return;
+    try {
+      const input = await readJsonBody(req);
+      const workerId = String(input.workerId || '').trim();
+      if (!workerId) return sendJson(res, 400, { ok: false, error: 'workerId is required' });
+      recordCropWorkerHeartbeat({ workerId, busy: false, version: input.version });
+
+      const job = await claimNextCropJob(workerId);
+      if (!job) return sendJson(res, 200, { ok: true, job: null });
+
+      const uploadUrls = {};
+      const targets = {};
+      for (const ratio of job.ratios || FULFILLMENT_RATIOS) {
+        const key = fulfillmentRatioObjectKey(job.artworkId, ratio);
+        targets[ratio] = cropTarget(ratio, job.orientation);
+        uploadUrls[ratio] = await signedArtworkUploadUrl(key, 'image/jpeg', 2 * 60 * 60);
+      }
+
+      recordCropWorkerHeartbeat({ workerId, busy: true, jobId: job.id });
+      return sendJson(res, 200, {
+        ok: true,
+        job: {
+          ...job,
+          masterDownloadUrl: await signedArtworkUrl(job.masterKey, 2 * 60 * 60),
+          uploadUrls,
+          targets
+        }
+      });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  {
+    const progressMatch = /^\/api\/crop-jobs\/([^/]+)\/progress$/.exec(url.pathname);
+    if (req.method === 'POST' && progressMatch) {
+      if (!requireCropWorker(req, res)) return;
+      try {
+        const input = await readJsonBody(req);
+        const workerId = String(input.workerId || '').trim();
+        const jobId = decodeURIComponent(progressMatch[1]);
+        recordCropWorkerHeartbeat({ workerId, busy: true, jobId, version: input.version });
+        const job = await updateCropJobProgress(jobId, workerId, input);
+        return sendJson(res, 200, { ok: true, job });
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+      }
+    }
+  }
+
+  {
+    const completeMatch = /^\/api\/crop-jobs\/([^/]+)\/complete$/.exec(url.pathname);
+    if (req.method === 'POST' && completeMatch) {
+      if (!requireCropWorker(req, res)) return;
+      try {
+        const input = await readJsonBody(req);
+        const workerId = String(input.workerId || '').trim();
+        const jobId = decodeURIComponent(completeMatch[1]);
+        const currentJob = await getCropJob(jobId);
+        if (!currentJob) return sendJson(res, 404, { ok: false, error: 'Crop job not found' });
+
+        const manifest = await loadArtworkManifest(currentJob.artworkId);
+        if (!manifest?.master?.key || manifest.master.key !== currentJob.masterKey) {
+          throw new Error('Artwork master changed while crop job was running');
+        }
+
+        const assets = {};
+        for (const ratio of currentJob.ratios || FULFILLMENT_RATIOS) {
+          const result = input.assets?.[ratio];
+          if (!result) throw new Error(`Worker did not return ${ratio} output metadata`);
+          const target = cropTarget(ratio, currentJob.orientation);
+          const width = Number(result.width || 0);
+          const height = Number(result.height || 0);
+          if (width !== target.width || height !== target.height) {
+            throw new Error(
+              `${ratio} output is ${width}×${height}; expected ${target.width}×${target.height}`
+            );
+          }
+          const key = fulfillmentRatioObjectKey(currentJob.artworkId, ratio);
+          if (!(await artworkObjectExists(key))) {
+            throw new Error(`Uploaded ${ratio} crop is missing from R2`);
+          }
+          assets[ratio] = {
+            ratio,
+            key,
+            width,
+            height,
+            requiredWidth: target.width,
+            requiredHeight: target.height,
+            orientation: currentJob.orientation,
+            productionReady: true,
+            generatedFromMaster: true,
+            cropMode: 'center',
+            sourceMasterKey: currentJob.masterKey,
+            density: Number(result.density || 300),
+            sizeBytes: Number(result.sizeBytes || 0) || null,
+            upscaled: result.upscaled === true,
+            updatedAt: new Date().toISOString()
+          };
+        }
+
+        manifest.fulfillmentRatios = assets;
+        manifest.fulfillmentRatioInsufficient = {};
+        manifest.fulfillmentRatiosReady = FULFILLMENT_RATIOS.every(
+          ratio => Boolean(assets[ratio]?.productionReady)
+        );
+        manifest.fulfillmentRatiosUpdatedAt = new Date().toISOString();
+        manifest.cropWorkerJobId = currentJob.id;
+        await saveArtworkManifest(manifest);
+
+        const job = await completeCropJob(jobId, workerId, assets);
+        recordCropWorkerHeartbeat({ workerId, busy: false });
+        return sendJson(res, 200, { ok: true, job });
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+      }
+    }
+  }
+
+  {
+    const failMatch = /^\/api\/crop-jobs\/([^/]+)\/fail$/.exec(url.pathname);
+    if (req.method === 'POST' && failMatch) {
+      if (!requireCropWorker(req, res)) return;
+      try {
+        const input = await readJsonBody(req);
+        const workerId = String(input.workerId || '').trim();
+        const job = await failCropJob(
+          decodeURIComponent(failMatch[1]),
+          workerId,
+          input.error
+        );
+        recordCropWorkerHeartbeat({ workerId, busy: false });
+        return sendJson(res, 200, { ok: true, job });
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+      }
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/crop-worker/status') {
+    if (!requireAdminApi(req, res)) return;
+    return sendJson(res, 200, { ok: true, worker: cropWorkerStatus() });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/crop-jobs') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const input = await readJsonBody(req);
+      const artworkId = String(input.artworkId || '').trim().toUpperCase();
+      const manifest = await loadArtworkManifest(artworkId);
+      if (!manifest?.master?.key || manifest.status !== 'ready') {
+        throw new Error(`Artwork ${artworkId} must be fully uploaded before queueing crops`);
+      }
+      const orientation = String(input.orientation || manifest.orientation || 'portrait').trim().toLowerCase();
+      const created = await createCropJob({
+        artworkId,
+        masterKey: manifest.master.key,
+        orientation
+      });
+      manifest.cropWorkerJobId = created.job.id;
+      manifest.cropWorkerQueuedAt = new Date().toISOString();
+      await saveArtworkManifest(manifest);
+      return sendJson(res, created.reused ? 200 : 201, {
+        ok: true,
+        ...created,
+        worker: cropWorkerStatus()
+      });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  {
+    const jobMatch = /^\/api\/crop-jobs\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'GET' && jobMatch) {
+      if (!requireAdminApi(req, res)) return;
+      try {
+        const job = await getCropJob(decodeURIComponent(jobMatch[1]));
+        if (!job) return sendJson(res, 404, { ok: false, error: 'Crop job not found' });
+        const previews = {};
+        if (job.status === 'completed') {
+          for (const [ratio, asset] of Object.entries(job.resultAssets || {})) {
+            if (asset?.key) previews[ratio] = await signedArtworkUrl(asset.key, 60 * 60);
+          }
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          job,
+          previews,
+          worker: cropWorkerStatus()
+        });
+      } catch (error) {
+        return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+      }
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/login') {
