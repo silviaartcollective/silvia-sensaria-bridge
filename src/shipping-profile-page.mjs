@@ -260,7 +260,7 @@ applyProfileButton.addEventListener('click',async()=>{
   }
   const selected=existingListing.options[existingListing.selectedIndex];
   const title=selected?.textContent||('Listing '+listingId);
-  if(!confirm('Change the shipping profile for this listing to Silvia Sensaria Free Shipping?\n\n'+title))return;
+  if(!confirm('Change the shipping profile for this listing to Silvia Sensaria Free Shipping?\\n\\n'+title))return;
 
   applyProfileButton.disabled=true;
   applyProfileButton.textContent='Updating Etsy…';
