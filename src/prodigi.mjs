@@ -1,6 +1,14 @@
 import { SILVIA_CURRENT_MARKETS } from './markets.mjs';
 
-const PRODIGI_API_BASE = 'https://api.prodigi.com/v4.0';
+const PRODIGI_API_BASE_DEFAULT = 'https://api.prodigi.com/v4.0';
+
+function apiBase() {
+  return String(
+    process.env.PRODIGI_API_URL ||
+    process.env.PRODIGI_LIVE_API_URL ||
+    PRODIGI_API_BASE_DEFAULT
+  ).trim().replace(/\/$/, '');
+}
 
 export const PRODIGI_FRAMED_POSTER_SIZES = Object.freeze([
   { label: '8x10', sku: 'GLOBAL-CFP-8X10' },
@@ -199,13 +207,18 @@ async function waitForProdigiRequestSlot() {
 }
 
 function apiKey() {
-  return String(process.env.PRODIGI_API_KEY || '').trim();
+  return String(
+    process.env.PRODIGI_API_KEY ||
+    process.env.PRODIGI_LIVE_API_KEY ||
+    ''
+  ).trim();
 }
 
 export function prodigiConfigStatus() {
   return {
     ready: Boolean(apiKey()),
     apiKeyConfigured: Boolean(apiKey()),
+    apiBaseUrl: apiBase(),
     product: {
       family: 'Classic framed print',
       skuPrefix: 'GLOBAL-CFP',
@@ -251,7 +264,7 @@ async function prodigiRequest(pathname, { method = 'GET', body } = {}) {
 
   const url = pathname.startsWith('http')
     ? pathname
-    : `${PRODIGI_API_BASE}${pathname.startsWith('/') ? '' : '/'}${pathname}`;
+    : `${apiBase()}${pathname.startsWith('/') ? '' : '/'}${pathname}`;
 
   for (let attempt = 0; ; attempt += 1) {
     await waitForProdigiRequestSlot();
