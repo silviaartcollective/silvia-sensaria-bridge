@@ -503,6 +503,20 @@ function cropTarget(ratio, orientation = 'portrait') {
   };
 }
 
+function fulfillmentStatusKey(artworkId) {
+  const id = String(artworkId || '').trim().toUpperCase();
+  return `artworks/${id}/fulfillment/status.json`;
+}
+
+async function writeFulfillmentStatus(artworkId, patch = {}) {
+  const id = String(artworkId || '').trim().toUpperCase();
+  await putJsonObject(fulfillmentStatusKey(id), {
+    artworkId: id,
+    updatedAt: new Date().toISOString(),
+    ...patch
+  });
+}
+
 function callbackUrl() {
   return process.env.ETSY_REDIRECT_URI ||
     process.env.ETSY_CALLBACK_URL ||
@@ -1231,6 +1245,13 @@ const server = http.createServer(async (req, res) => {
       }
 
       recordCropWorkerHeartbeat({ workerId, busy: true, jobId: job.id });
+      await writeFulfillmentStatus(job.artworkId, {
+        status: 'claimed',
+        jobId: job.id,
+        workerId,
+        progress: 0,
+        message: 'Crop job claimed by shared workstation'
+      }).catch(() => {});
       return sendJson(res, 200, {
         ok: true,
         job: {
@@ -1255,6 +1276,15 @@ const server = http.createServer(async (req, res) => {
         const jobId = decodeURIComponent(progressMatch[1]);
         recordCropWorkerHeartbeat({ workerId, busy: true, jobId, version: input.version });
         const job = await updateCropJobProgress(jobId, workerId, input);
+        await writeFulfillmentStatus(job.artworkId, {
+          status: job.status,
+          jobId: job.id,
+          workerId,
+          progress: job.progress,
+          currentRatio: job.currentRatio || '',
+          completedRatios: job.completedRatios || [],
+          message: job.message || ''
+        }).catch(() => {});
         return sendJson(res, 200, { ok: true, job });
       } catch (error) {
         return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
@@ -1323,6 +1353,14 @@ const server = http.createServer(async (req, res) => {
         await saveArtworkManifest(manifest);
 
         const job = await completeCropJob(jobId, workerId, assets);
+        await writeFulfillmentStatus(currentJob.artworkId, {
+          status: 'completed',
+          jobId: currentJob.id,
+          workerId,
+          progress: 100,
+          completedRatios: currentJob.ratios || FULFILLMENT_RATIOS,
+          assets
+        }).catch(() => {});
         recordCropWorkerHeartbeat({ workerId, busy: false });
         return sendJson(res, 200, { ok: true, job });
       } catch (error) {
@@ -1343,6 +1381,14 @@ const server = http.createServer(async (req, res) => {
           workerId,
           input.error
         );
+        await writeFulfillmentStatus(job.artworkId, {
+          status: 'failed',
+          jobId: job.id,
+          workerId,
+          progress: job.progress || 0,
+          error: job.error || input.error || 'Crop worker failed',
+          message: job.message || ''
+        }).catch(() => {});
         recordCropWorkerHeartbeat({ workerId, busy: false });
         return sendJson(res, 200, { ok: true, job });
       } catch (error) {
@@ -1374,6 +1420,13 @@ const server = http.createServer(async (req, res) => {
       manifest.cropWorkerJobId = created.job.id;
       manifest.cropWorkerQueuedAt = new Date().toISOString();
       await saveArtworkManifest(manifest);
+      await writeFulfillmentStatus(artworkId, {
+        status: created.job.status || 'pending',
+        jobId: created.job.id,
+        progress: created.job.progress || 0,
+        completedRatios: created.job.completedRatios || [],
+        message: created.job.message || 'Waiting for shared crop workstation'
+      }).catch(() => {});
       return sendJson(res, created.reused ? 200 : 201, {
         ok: true,
         ...created,
