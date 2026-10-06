@@ -65,7 +65,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
         <div class="uploadbox">
           <div>
             <strong>Artwork + listing media</strong>
-            <div class="uploadmeta">The app assigns the next SAC artwork ID, renames the files from that ID, uploads them to private Cloudflare R2, and generates 2:3, 3:4, 4:5, and 11:14 POD fulfillment ratios automatically.</div>
+            <div class="uploadmeta">The app assigns the next SAC artwork ID, renames the files from that ID, uploads them to private Cloudflare R2, and queues 2:3, 3:4, 4:5, and 11:14 production crops for the Silvia workstation.</div>
           </div>
           <div class="twocol">
             <label>Artwork ID <span class="hint">assigned automatically</span><input id="artwork_id" class="mono" readonly placeholder="Assigned after upload"></label>
@@ -84,6 +84,8 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
           <div class="uploadmeta">Upload only the artwork-specific mockups here. The 3 reusable shop mockups and 1 listing video are appended automatically from the preset library.</div>
           <div class="progress"><span id="upload-progress"></span></div>
           <div class="status" id="upload-status">Choose the master artwork and artwork mockups. They upload to R2 automatically, then attach to the Etsy draft with the preset media.</div>
+          <div class="actions"><button class="btn secondary" id="launch-crop-worker" type="button">Launch Silvia Crop Worker</button></div>
+          <div class="status" id="crop-worker-status">Production crops will be queued after the master artwork finishes uploading.</div>
         </div>
 
         <div class="uploadbox" id="preset-media-box">
@@ -207,6 +209,8 @@ const seoGeneratorOutput=document.getElementById('seo_generator_output');
 const presetFilesInput=document.getElementById('preset_files');
 const installPresetsButton=document.getElementById('install-presets-btn');
 const presetMediaStatus=document.getElementById('preset-media-status');
+const launchCropWorkerButton=document.getElementById('launch-crop-worker');
+const cropWorkerStatus=document.getElementById('crop-worker-status');
 
 async function readJsonResponse(response,context){
   const raw=await response.text();
@@ -365,6 +369,81 @@ async function putFile(url,file,contentType){
   }
 }
 
+function launchCropWorker(){
+  window.location.href='silvia-worker://start';
+}
+
+launchCropWorkerButton?.addEventListener('click',()=>{
+  launchCropWorker();
+  cropWorkerStatus.className='status';
+  cropWorkerStatus.textContent='Crop Worker launch requested. It will claim any queued Silvia crop jobs.';
+});
+
+async function readCropJob(jobId){
+  const r=await fetch('/api/crop-jobs/'+encodeURIComponent(jobId),{cache:'no-store'});
+  return readJsonResponse(r,'Crop job status');
+}
+
+async function watchCropJob(jobId){
+  for(let attempt=0;attempt<80;attempt++){
+    try{
+      const d=await readCropJob(jobId);
+      const job=d.job||{};
+      const worker=d.worker||{};
+      if(job.status==='completed'){
+        cropWorkerStatus.className='status ok';
+        cropWorkerStatus.textContent='POD production crops ready: '+Object.keys(job.resultAssets||{}).join(', ')+'.';
+        return;
+      }
+      if(job.status==='failed'){
+        cropWorkerStatus.className='status warn';
+        cropWorkerStatus.textContent='POD crop job failed: '+String(job.error||job.message||'unknown error');
+        return;
+      }
+      if(job.status==='pending'&&!worker.configured){
+        cropWorkerStatus.className='status warn';
+        cropWorkerStatus.textContent='Crop job queued, but CROP_WORKER_TOKEN is not configured in Render yet.';
+        return;
+      }
+      if(job.status==='pending'&&!worker.online){
+        cropWorkerStatus.className='status warn';
+        cropWorkerStatus.textContent='Crop job queued. Launch the Silvia Crop Worker on your PC to generate the ratio files.';
+      }else{
+        cropWorkerStatus.className='status';
+        cropWorkerStatus.textContent=String(job.message||'Generating POD production crops…')+' '+String(job.progress||0)+'%';
+      }
+    }catch{}
+    await new Promise(resolve=>setTimeout(resolve,3000));
+  }
+}
+
+async function queueCropJob(artworkId){
+  const r=await fetch('/api/crop-jobs',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({
+      artworkId,
+      orientation:document.getElementById('orientation').value
+    })
+  });
+  const d=await readJsonResponse(r,'Crop job queue');
+  if(!r.ok)throw new Error(d.error||'Could not queue POD production crops');
+  const job=d.job||{};
+  const worker=d.worker||{};
+  if(worker.online){
+    cropWorkerStatus.className='status';
+    cropWorkerStatus.textContent='Silvia Crop Worker connected. Production crops queued.';
+  }else if(worker.configured){
+    cropWorkerStatus.className='status warn';
+    cropWorkerStatus.textContent='Production crops queued. Launch the Silvia Crop Worker on your PC.';
+  }else{
+    cropWorkerStatus.className='status warn';
+    cropWorkerStatus.textContent='Production crops queued, but CROP_WORKER_TOKEN still needs to be configured in Render.';
+  }
+  if(job.id) watchCropJob(job.id);
+  return d;
+}
+
 async function uploadArtworkToR2(){
   let existingId=document.getElementById('artwork_id').value.trim();
 
@@ -440,23 +519,14 @@ async function uploadArtworkToR2(){
 
     let ratioSummary='';
     try{
-      uploadStatus.textContent='Generating POD aspect-ratio files…';
+      uploadStatus.textContent='Queueing POD production crops…';
       uploadProgress.style.width='92%';
-      const ratioResponse=await fetch('/api/artworks/'+encodeURIComponent(data.artworkId)+'/ratios',{
-        method:'POST',
-        headers:{}
-      });
-      const ratioData=await readJsonResponse(ratioResponse,'Fulfillment ratio generation');
-      if(ratioResponse.ok){
-        const readyRatios=Object.keys(ratioData.ratios||{});
-        const missingRatios=Object.keys(ratioData.insufficient||{});
-        ratioSummary='<br>POD ratios generated: '+(readyRatios.length?readyRatios.join(', '):'none')+
-          (missingRatios.length?'. Needs more source resolution: '+missingRatios.join(', ')+'.':'');
-      }else{
-        ratioSummary='<br>POD ratio generation needs attention: '+String(ratioData.error||'unknown error');
-      }
+      const queued=await queueCropJob(data.artworkId);
+      const job=queued.job||{};
+      ratioSummary='<br>POD crop job: '+String(job.status||'queued')+
+        (job.id?' · '+String(job.id):'')+'.';
     }catch(error){
-      ratioSummary='<br>POD ratio generation needs attention: '+String(error?.message||error);
+      ratioSummary='<br>POD crop queue needs attention: '+String(error?.message||error);
     }
 
     uploadProgress.style.width='100%';
