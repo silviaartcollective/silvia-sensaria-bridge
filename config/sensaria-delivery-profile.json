@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "status": "provisional",
+  "effectiveDate": "2026-10-05",
+  "provider": "Sensaria",
+  "shippingType": "Basic",
+  "customerPromiseSafe": false,
+  "production": {
+    "benchmark": "average manufacturing lead time under 3 days",
+    "source": "https://www.sensaria.com/manufacturing/",
+    "note": "Supplier-published network-wide average; not a product-specific SLA or guaranteed maximum."
+  },
+  "routes": {
+    "US": {
+      "estimateAvailable": true,
+      "planningBusinessDays": [
+        3,
+        5
+      ],
+      "transitBusinessDays": [
+        1,
+        2
+      ],
+      "confidence": "medium",
+      "coverage": "Sensaria states 80% of U.S. households are reached in 1-2 days by ground shipping.",
+      "source": "https://www.sensaria.com/manufacturing/"
+    },
+    "CA": {
+      "estimateAvailable": true,
+      "planningBusinessDays": [
+        3,
+        5
+      ],
+      "transitBusinessDays": [
+        1,
+        2
+      ],
+      "confidence": "medium",
+      "coverage": "Vancouver and Toronto facilities provide 1-2 day transit to the top 5 population centres for over 80% of ground shipments.",
+      "source": "https://www.sensaria.com/global/"
+    },
+    "AU": {
+      "estimateAvailable": true,
+      "planningBusinessDays": [
+        3,
+        5
+      ],
+      "transitBusinessDays": [
+        1,
+        2
+      ],
+      "confidence": "medium",
+      "coverage": "Over 80% of ground shipments to Australia's top 5 population centres arrive in 1-2 days.",
+      "source": "https://www.sensaria.com/global/"
+    },
+    "EUROPE": {
+      "estimateAvailable": false,
+      "planningBusinessDays": null,
+      "transitBusinessDays": null,
+      "confidence": "low",
+      "coverage": "Sensaria publishes regional facilities in the UK and Spain but no numeric Europe-wide transit range.",
+      "source": "https://www.sensaria.com/global/"
+    },
+    "OTHER": {
+      "estimateAvailable": false,
+      "planningBusinessDays": null,
+      "transitBusinessDays": null,
+      "confidence": "low",
+      "coverage": "No verified destination-specific transit range is stored yet.",
+      "source": ""
+    }
+  },
+  "assumptions": [
+    "3-5 business days is an internal planning window, not a Sensaria guarantee.",
+    "The temporary profile combines Sensaria's under-3-day average manufacturing benchmark with published 1-2 day ground transit coverage in US/CA/AU.",
+    "GO Basic is treated as the standard/basic service for planning only; its exact mapping to specific ground carrier services still needs Sensaria confirmation.",
+    "Do not use this provisional profile as a customer-facing guaranteed delivery promise."
+  ]
+}
