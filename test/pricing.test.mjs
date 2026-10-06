@@ -51,13 +51,13 @@ test('uses verified BC Sensaria checkout tax', () => {
 test('Silvia free shipping absorbs Sensaria shipping', () => {
   const row = pricingForZone({ format: 'C', size: '40x60', zone: '2A' });
   assert.equal(row.regularPriceCad, 669.95);
-  assert.equal(row.salePriceCad, 535.96);
-  assert.equal(row.salePriceUsd, 385.58);
+  assert.equal(row.salePriceCad, 502.46);
+  assert.equal(row.salePriceUsd, 361.49);
   assert.equal(row.productCostUsd, 184.18);
   assert.equal(row.shippingCostUsd, 75);
   assert.equal(row.customerShippingUsd, 0);
   assert.equal(row.totalFulfillmentCostBeforeTaxUsd, 259.18);
-  assert.equal(row.profitBeforeTaxUsd, 126.40);
+  assert.equal(row.profitBeforeTaxUsd, 102.31);
   assert.equal(row.profitAfterTaxUsd, null);
 });
 
@@ -75,7 +75,7 @@ test('BC framed 40x60 matches verified Sensaria checkout totals', () => {
   assert.equal(row.taxRate, 0.05);
   assert.equal(row.sensariaTaxUsd, 15.42);
   assert.equal(row.trueFulfillmentCostUsd, 323.73);
-  assert.equal(row.profitAfterTaxUsd, 136.67);
+  assert.equal(row.profitAfterTaxUsd, 107.89);
 });
 
 
@@ -87,7 +87,7 @@ test('Italy market uses free shipping and the planning tax rate', () => {
   assert.ok(canvas);
   assert.equal(canvas.shippingCostUsd, 75);
   assert.equal(canvas.customerShippingUsd, 0);
-  assert.equal(canvas.salePriceUsd, 385.58);
+  assert.equal(canvas.salePriceUsd, 361.49);
   assert.equal(canvas.sensariaTaxUsd, 57.02);
-  assert.equal(canvas.profitAfterTaxUsd, 69.38);
+  assert.equal(canvas.profitAfterTaxUsd, 45.29);
 });
