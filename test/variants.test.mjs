@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SILVIA_REFERENCE_CAD_PER_USD,
+  SILVIA_POSTER_ETSY_CAD_PER_USD,
   SILVIA_RETAIL_PRICE_LADDER_CAD,
   SILVIA_RETAIL_PRICE_LADDER_USD,
   SILVIA_SALE_DISCOUNT_PERCENT,
@@ -29,8 +30,9 @@ test('uses Matte Paper Poster product style name', () => {
   assert.equal(SILVIA_STYLES[0].label, 'Matte Paper Poster');
 });
 
-test('keeps the approved CAD-to-USD planning rate and 25% shop sale explicit', () => {
+test('keeps the approved planning rate, poster Etsy conversion and 25% shop sale explicit', () => {
   assert.equal(SILVIA_REFERENCE_CAD_PER_USD, 1.39);
+  assert.equal(SILVIA_POSTER_ETSY_CAD_PER_USD, 1.486);
   assert.equal(SILVIA_SALE_DISCOUNT_PERCENT, 25);
 });
 
@@ -51,13 +53,13 @@ test('includes mapped 8x10 poster with exact converted USD retail price', () => 
   assert.equal(eightByTen.sku, 'SAC0042-P-810');
   assert.equal(eightByTen.offerings[0].is_enabled, true);
   assert.equal(eightByTen.offerings[0].quantity, 999);
-  assert.equal(eightByTen.offerings[0].price, 39.53);
+  assert.equal(eightByTen.offerings[0].price, 35.63);
 });
 
 test('poster prices rise with size despite supplier cost anomalies', () => {
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_CAD.P['8x10'], 54.95);
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10'], 39.53);
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'], 43.13);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_CAD.P['8x10'], 52.95);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10'], 35.63);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'], 39);
   assert.ok(
     SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'] >
     SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10']
