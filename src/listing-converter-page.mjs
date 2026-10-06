@@ -24,7 +24,7 @@ export function renderListingConverterPage() {
 
   <div class="statusbar">
     <div><strong>Shared crop worker</strong><div class="status" id="worker-status">Checking worker…</div></div>
-    <button class="btn primary" id="launch-worker" type="button">Launch Shared Crop Worker</button>
+    <a class="btn primary" id="launch-worker" href="pod-crop-worker://start">Launch Shared Crop Worker</a>
   </div>
 
   <div class="statusbar">
@@ -100,8 +100,15 @@ async function refreshWorker(){
 }
 
 launchWorker.addEventListener('click',()=>{
-  window.location.href='pod-crop-worker://start';
-  setTimeout(refreshWorker,1800);
+  workerStatus.className='status';
+  workerStatus.textContent='Launch requested from Windows…';
+  setTimeout(async()=>{
+    await refreshWorker();
+    if(workerStatus.textContent.includes('Offline')){
+      workerStatus.className='status warn';
+      workerStatus.textContent='Still offline. Re-run the latest Arté Antica worker/setup-worker.cmd once to register pod-crop-worker:// on this PC.';
+    }
+  },3000);
 });
 
 function renderCards(){
@@ -115,7 +122,9 @@ function renderCards(){
     card.className='card';
     const mapped=item.artworkId?'<span class="pill done">'+esc(item.artworkId)+'</span>':'<span class="pill warn">Gelato / not linked</span>';
     const state='<span class="pill">'+esc(item.state||'')+'</span>';
-    const image=item.firstImageUrl?'<img src="'+esc(item.firstImageUrl)+'" alt="">':'<div class="empty">No listing image</div>';
+    const image=item.firstImageUrl
+      ?'<img src="'+esc(item.firstImageUrl)+'" alt="">'
+      :'<div class="empty">'+(item.imageError?'Image preview unavailable — click Refresh listings':'No listing image')+'</div>';
 
     card.innerHTML=
       '<div class="preview">'+image+'</div>'+
