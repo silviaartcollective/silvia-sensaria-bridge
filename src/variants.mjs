@@ -184,7 +184,7 @@ function styleKey(size, style) {
   return `${style.code}|${size}|${style.frame}`;
 }
 
-function retailPriceForProductKey(productKey) {
+export function retailPriceForProductKey(productKey) {
   const [format, size] = String(productKey || '').split('|');
   const price = SILVIA_RETAIL_PRICE_LADDER_USD[format]?.[size];
   return Number.isFinite(Number(price)) ? Number(price) : null;
