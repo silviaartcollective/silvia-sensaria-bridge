@@ -1935,6 +1935,283 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'GET' && url.pathname === '/listing-converter') {
+    if (!requireAdminPage(req, res, '/listing-converter')) return;
+    return sendHtml(res, 200, renderListingConverterPage());
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/listing-converter/listings') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_r')) {
+        return sendJson(res, 403, {
+          ok: false,
+          needsReauthorization: true,
+          error: 'Reconnect Etsy with listings_r before loading converter listings.'
+        });
+      }
+      const data = await converterListingRows(session);
+      return sendJson(res, 200, {
+        ok: true,
+        listingCount: data.listings.length,
+        convertedCount: data.listings.filter(item => item.converted).length,
+        listings: data.listings
+      });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/listing-converter/reserve') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const body = await readJsonBody(req);
+      const listingId = Number(body.listingId);
+      if (!Number.isInteger(listingId) || listingId <= 0) {
+        return sendJson(res, 400, { ok: false, error: 'A valid Etsy listing ID is required.' });
+      }
+      if (!body.master?.filename) {
+        return sendJson(res, 400, { ok: false, error: 'Choose a master artwork file first.' });
+      }
+
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_r') || !scopes.has('listings_w')) {
+        return sendJson(res, 403, {
+          ok: false,
+          needsReauthorization: true,
+          error: 'Reconnect Etsy with listings_r and listings_w before converting listings.'
+        });
+      }
+
+      const listings = await allShopListingsForPriceSync(session);
+      const listing = listings.find(item => Number(item.listing_id) === listingId);
+      if (!listing) {
+        return sendJson(res, 404, { ok: false, error: 'That Etsy listing was not found in the Silvia shop.' });
+      }
+
+      const converterMap = await loadListingConverterMap();
+      const existing = converterMap.listings?.[String(listingId)];
+      if (existing?.status === 'converted') {
+        return sendJson(res, 409, {
+          ok: false,
+          error: `Listing #${listingId} is already linked to ${existing.artworkId}.`
+        });
+      }
+
+      const reservation = await reserveArtworkUpload({
+        title: listing.title || '',
+        orientation: String(body.orientation || 'portrait').toLowerCase(),
+        master: body.master,
+        mockups: []
+      });
+
+      const manifest = reservation.manifest;
+      manifest.sourceEtsyListingId = listingId;
+      manifest.sourceEtsyListingTitle = String(listing.title || '');
+      manifest.sourceSystem = 'gelato-listing-converter';
+      await saveArtworkManifest(manifest);
+
+      converterMap.listings ||= {};
+      converterMap.listings[String(listingId)] = {
+        listingId,
+        title: String(listing.title || ''),
+        artworkId: reservation.artworkId,
+        status: 'reserved',
+        orientation: manifest.orientation,
+        reservedAt: new Date().toISOString()
+      };
+      await saveListingConverterMap(converterMap);
+
+      return sendJson(res, 201, {
+        ok: true,
+        listingId,
+        artworkId: reservation.artworkId,
+        orientation: manifest.orientation,
+        upload: reservation.uploads.master
+      });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/listing-converter/convert') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const body = await readJsonBody(req);
+      const listingId = Number(body.listingId);
+      const artworkId = String(body.artworkId || '').trim().toUpperCase();
+      if (!Number.isInteger(listingId) || listingId <= 0 || !/^SAC\d+$/.test(artworkId)) {
+        return sendJson(res, 400, { ok: false, error: 'A valid listing ID and SAC artwork ID are required.' });
+      }
+
+      const manifest = await loadArtworkManifest(artworkId);
+      if (!manifest?.master?.key || manifest.status !== 'ready') {
+        return sendJson(res, 400, { ok: false, error: `${artworkId} has not finished uploading to Cloudflare R2.` });
+      }
+      if (Number(manifest.sourceEtsyListingId) !== listingId) {
+        return sendJson(res, 409, {
+          ok: false,
+          error: `${artworkId} is linked to a different Etsy listing. Conversion stopped before changing Etsy.`
+        });
+      }
+
+      const cropJobId = String(manifest.cropWorkerJobId || '');
+      const cropJob = cropJobId ? await getCropJob(cropJobId) : null;
+      if (!cropJob || cropJob.status !== 'completed') {
+        return sendJson(res, 409, {
+          ok: false,
+          error: 'The production crop job must finish before the Etsy listing can be converted.'
+        });
+      }
+
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_r') || !scopes.has('listings_w')) {
+        return sendJson(res, 403, {
+          ok: false,
+          needsReauthorization: true,
+          error: 'Reconnect Etsy with listings_r and listings_w before converting listings.'
+        });
+      }
+
+      const listings = await allShopListingsForPriceSync(session);
+      const listing = listings.find(item => Number(item.listing_id) === listingId);
+      if (!listing) {
+        return sendJson(res, 404, { ok: false, error: 'The Etsy listing is no longer active or draft.' });
+      }
+
+      const currentInventory = await getListingInventory({
+        listingId,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      });
+
+      const readinessStateId = Number(listing.readiness_state_id)
+        || readinessStateFromInventory(currentInventory)
+        || Number(mostCommonValue(listings, item => item.readiness_state_id));
+
+      if (!Number.isInteger(readinessStateId) || readinessStateId <= 0) {
+        throw new Error('Could not determine the Etsy readiness state for this listing.');
+      }
+
+      const shipping = await getShopShippingProfiles({
+        shopId: session.shop.shop_id,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      });
+      const managedShippingProfile = (shipping.results || shipping || []).find(profile =>
+        String(profile?.title || '').trim() === String(shippingProfileDefaults.title || '').trim()
+      ) || null;
+
+      // Apply Silvia's structural listing settings first, then replace the full
+      // variation inventory. Existing SEO copy and existing listing media are preserved.
+      await withEtsyListingRetry(() => updateListing({
+        shopId: session.shop.shop_id,
+        listingId,
+        listing: {
+          taxonomy_id: listingDefaults.taxonomyId,
+          shipping_profile_id: managedShippingProfile?.shipping_profile_id || undefined,
+          readiness_state_id: readinessStateId,
+          should_auto_renew: listingDefaults.autoRenew,
+          type: 'physical'
+        },
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      }));
+
+      const variantInventory = buildOwnSilviaInventory({
+        artworkId,
+        catalog: products,
+        readinessStateId,
+        defaultQuantity: 999
+      });
+
+      await withEtsyListingRetry(() => updateListingInventory({
+        listingId,
+        inventory: variantInventory,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      }));
+
+      const verifiedInventory = await getListingInventory({
+        listingId,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      });
+      const priceVerification = priceSyncPlanForInventory(verifiedInventory);
+      if (priceVerification.changed) {
+        throw new Error(
+          `Etsy still reports ${priceVerification.changes.length} Silvia variant price mismatch(es) after conversion.`
+        );
+      }
+
+      const enabledProducts = enabledInventoryProducts(verifiedInventory);
+      const badSkus = enabledProducts
+        .map(product => String(product?.sku || ''))
+        .filter(sku => !sku.startsWith(`${artworkId}-`));
+      if (badSkus.length) {
+        throw new Error(`Etsy conversion verification found ${badSkus.length} enabled variant(s) without ${artworkId} SKUs.`);
+      }
+
+      const properties = await getCachedTaxonomyProperties(session, listingDefaults.taxonomyId);
+      const attributes = await applyAllListingAttributes({
+        session,
+        listingId,
+        body: {},
+        properties
+      });
+
+      manifest.etsyConfiguredAt = new Date().toISOString();
+      manifest.etsyConfiguration = {
+        listingId,
+        sourceSystem: 'gelato-listing-converter',
+        variants: variantInventory.products.length,
+        enabledVariants: variantInventory.enabledCount,
+        materials: listingDefaults.fixedAttributes?.Materials || [],
+        attributes: attributes.results,
+        existingMediaPreserved: true,
+        existingSeoPreserved: true
+      };
+      await saveArtworkManifest(manifest);
+
+      const converterMap = await loadListingConverterMap();
+      converterMap.listings ||= {};
+      converterMap.listings[String(listingId)] = {
+        listingId,
+        title: String(listing.title || manifest.sourceEtsyListingTitle || ''),
+        artworkId,
+        status: 'converted',
+        orientation: manifest.orientation,
+        convertedAt: new Date().toISOString(),
+        cropJobId,
+        enabledVariants: variantInventory.enabledCount
+      };
+      await saveListingConverterMap(converterMap);
+
+      return sendJson(res, 200, {
+        ok: true,
+        listingId,
+        artworkId,
+        enabledVariants: variantInventory.enabledCount,
+        totalVariants: variantInventory.products.length,
+        pricing: variantInventory.pricing,
+        shippingProfileId: managedShippingProfile?.shipping_profile_id || null,
+        attributeWarnings: attributes.warnings,
+        verified: true
+      });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
   if (req.method === 'GET' && url.pathname === '/product-creator') {
     if (!requireAdminPage(req, res, '/product-creator')) return;
     return sendHtml(res, 200, renderProductCreator());
