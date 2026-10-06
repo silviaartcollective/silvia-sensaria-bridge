@@ -1772,6 +1772,19 @@ const server = http.createServer(async (req, res) => {
             accessToken: session.accessToken
           }));
 
+          const verifiedInventory = await getListingInventory({
+            listingId: listing.listing_id,
+            keystring: session.keystring,
+            sharedSecret: session.sharedSecret,
+            accessToken: session.accessToken
+          });
+          const verification = priceSyncPlanForInventory(verifiedInventory);
+          if (verification.changed) {
+            throw new Error(
+              `Etsy accepted the inventory request, but ${verification.changes.length} mapped prices still do not match the current ladder.`
+            );
+          }
+
           updatedListings += 1;
           updatedVariants += plan.changes.length;
           results.push({
@@ -1779,6 +1792,7 @@ const server = http.createServer(async (req, res) => {
             title: String(listing.title || ''),
             state: String(listing.state || ''),
             updatedVariants: plan.changes.length,
+            verified: true,
             changes: plan.changes
           });
         } catch (error) {
@@ -1796,6 +1810,7 @@ const server = http.createServer(async (req, res) => {
         requestedListings: requestedListingIds.length,
         updatedListings,
         updatedVariants,
+        failedListings: results.filter(item => item.error).length,
         missingListingIds,
         saleDiscountPercent: SILVIA_SALE_DISCOUNT_PERCENT,
         referenceCadPerUsd: SILVIA_REFERENCE_CAD_PER_USD,
