@@ -52,7 +52,9 @@ export function renderPricingPage() {
   <p class="sub" style="margin-bottom:12px">Preview which active and draft Silvia listings differ from the current app price ladder. Nothing changes until you explicitly apply the sync.</p>
   <div class="sync-actions">
     <button class="btn secondary" id="preview-prices" type="button">Preview existing listings</button>
-    <button class="btn" id="apply-prices" type="button" disabled>Apply current price ladder</button>
+    <button class="btn secondary" id="select-all-prices" type="button" disabled>Select all needing changes</button>
+    <button class="btn secondary" id="clear-prices" type="button" disabled>Clear selection</button>
+    <button class="btn" id="apply-prices" type="button" disabled>Update selected listings</button>
     <div class="status" id="price-sync-status">No live Etsy prices have been changed.</div>
   </div>
   <div class="sync-list" id="price-sync-list"></div>
@@ -72,6 +74,8 @@ const saleCadHead=document.getElementById('sale-cad-head');
 const saleUsdHead=document.getElementById('sale-usd-head');
 const previewPrices=document.getElementById('preview-prices');
 const applyPrices=document.getElementById('apply-prices');
+const selectAllPrices=document.getElementById('select-all-prices');
+const clearPrices=document.getElementById('clear-prices');
 const priceSyncStatus=document.getElementById('price-sync-status');
 const priceSyncList=document.getElementById('price-sync-list');
 
@@ -134,30 +138,80 @@ function render(data){
   }).join('');
 }
 
+function selectedPriceListingIds(){
+  return Array.from(document.querySelectorAll('input[name="price-listing"]:checked'))
+    .map(input=>Number(input.value))
+    .filter(Number.isFinite);
+}
+
+function updatePriceSelectionControls(){
+  const enabled=Array.from(document.querySelectorAll('input[name="price-listing"]:not(:disabled)'));
+  const selected=selectedPriceListingIds();
+  applyPrices.disabled=selected.length===0;
+  selectAllPrices.disabled=enabled.length===0;
+  clearPrices.disabled=selected.length===0;
+  applyPrices.textContent=selected.length
+    ? 'Update selected listings ('+selected.length+')'
+    : 'Update selected listings';
+}
+
 function renderPricePreview(d){
   priceSyncList.innerHTML='';
   const listings=d.listings||[];
   priceSyncStatus.className='status';
-  priceSyncStatus.innerHTML='<strong>'+String(d.listingsWithChanges||0)+'</strong> listings need updates · <strong>'+String(d.variantChangeCount||0)+'</strong> variant prices would change · '+String(d.skippedVariantCount||0)+' variants skipped.';
+  priceSyncStatus.innerHTML=
+    '<strong>'+String(d.shopListingCount??d.listingCount??listings.length)+'</strong> Etsy listings found · '+
+    '<strong>'+String(d.listingsWithChanges||0)+'</strong> need price updates · '+
+    '<strong>'+String(d.variantChangeCount||0)+'</strong> variant prices would change · '+
+    String(d.unrecognizedListingCount||0)+' listings could not be mapped automatically.';
 
   for(const item of listings){
-    if(!item.changeCount&&!item.error)continue;
     const div=document.createElement('div');
     div.className='sync-item';
 
+    const checkbox=document.createElement('input');
+    checkbox.type='checkbox';
+    checkbox.name='price-listing';
+    checkbox.value=String(item.listingId);
+    checkbox.disabled=!item.canUpdate;
+    checkbox.checked=Boolean(item.canUpdate);
+    checkbox.style.marginRight='10px';
+    checkbox.addEventListener('change',updatePriceSelectionControls);
+
+    const wrapper=document.createElement('label');
+    wrapper.style.display='flex';
+    wrapper.style.alignItems='flex-start';
+    wrapper.style.gap='2px';
+    wrapper.style.fontWeight='400';
+    wrapper.appendChild(checkbox);
+
+    const content=document.createElement('span');
     if(item.error){
-      div.innerHTML='<b>#'+String(item.listingId)+' · '+String(item.title||'Untitled')+'</b><br><span class="bad">'+String(item.error)+'</span>';
-    }else{
-      const examples=(item.changes||[]).slice(0,4).map(x=>
-        String(x.size)+' '+String(x.style)+' · $'+Number(x.currentUsd).toFixed(2)+' → $'+Number(x.targetUsd).toFixed(2)
+      content.innerHTML='<b>#'+String(item.listingId)+' · '+String(item.title||'Untitled')+'</b> · '+String(item.state||'')+
+        '<br><span class="bad">'+String(item.error)+'</span>';
+    }else if(!item.recognized){
+      const reasons=(item.skipped||[]).slice(0,3).map(x=>String(x.reason||'Unrecognized variation')).join(' · ');
+      content.innerHTML='<b>#'+String(item.listingId)+' · '+String(item.title||'Untitled')+'</b> · '+String(item.state||'')+
+        '<br><span class="bad">Not mapped automatically.</span> '+String(item.note||'')+
+        (reasons?'<br>'+reasons:'');
+    }else if(item.changeCount>0){
+      const examples=(item.changes||[]).slice(0,5).map(x=>
+        String(x.size||'')+' '+String(x.style||'')+' · $'+Number(x.currentUsd).toFixed(2)+' → $'+Number(x.targetUsd).toFixed(2)
       ).join('<br>');
-      div.innerHTML='<b>#'+String(item.listingId)+' · '+String(item.title||'Untitled')+'</b> · '+String(item.state)+'<br>'+String(item.changeCount)+' variant prices would change'+(examples?'<br>'+examples:'');
+      content.innerHTML='<b>#'+String(item.listingId)+' · '+String(item.title||'Untitled')+'</b> · '+String(item.state||'')+
+        '<br><strong>'+String(item.changeCount)+' variant prices need changes</strong>'+
+        (examples?'<br>'+examples:'');
+    }else{
+      content.innerHTML='<b>#'+String(item.listingId)+' · '+String(item.title||'Untitled')+'</b> · '+String(item.state||'')+
+        '<br><span class="good">Already matches the current price ladder.</span>';
     }
 
+    wrapper.appendChild(content);
+    div.appendChild(wrapper);
     priceSyncList.appendChild(div);
   }
 
-  applyPrices.disabled=!(Number(d.variantChangeCount||0)>0);
+  updatePriceSelectionControls();
 }
 
 async function previewExistingPrices(){
@@ -182,8 +236,20 @@ async function previewExistingPrices(){
 
 previewPrices.addEventListener('click',previewExistingPrices);
 
+selectAllPrices.addEventListener('click',()=>{
+  document.querySelectorAll('input[name="price-listing"]:not(:disabled)').forEach(input=>{input.checked=true});
+  updatePriceSelectionControls();
+});
+
+clearPrices.addEventListener('click',()=>{
+  document.querySelectorAll('input[name="price-listing"]').forEach(input=>{input.checked=false});
+  updatePriceSelectionControls();
+});
+
 applyPrices.addEventListener('click',async()=>{
-  const confirmed=confirm('Update all recognized active and draft Silvia Etsy variant prices to the current app price ladder?\\n\\nThis changes live Etsy listing prices. The 25% Etsy sale remains separate.');
+  const listingIds=selectedPriceListingIds();
+  if(!listingIds.length)return;
+  const confirmed=confirm('Update '+listingIds.length+' selected Silvia Etsy listing'+(listingIds.length===1?'':'s')+' to the current app price ladder?\\n\\nOnly the checked listings will be changed. The 25% Etsy sale remains separate.');
   if(!confirmed)return;
 
   applyPrices.disabled=true;
@@ -195,13 +261,13 @@ applyPrices.addEventListener('click',async()=>{
     const r=await fetch('/api/pricing/sync-listings',{
       method:'POST',
       headers:{'content-type':'application/json'},
-      body:JSON.stringify({confirm:'UPDATE SILVIA PRICES'})
+      body:JSON.stringify({confirm:'UPDATE SILVIA PRICES',listingIds})
     });
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Could not update Etsy prices');
 
     priceSyncStatus.className='status ok';
-    priceSyncStatus.innerHTML='<strong>Price sync complete.</strong> '+String(d.updatedListings||0)+' listings · '+String(d.updatedVariants||0)+' variant prices updated.';
+    priceSyncStatus.innerHTML='<strong>Price sync complete.</strong> '+String(d.updatedListings||0)+' of '+String(d.requestedListings||listingIds.length)+' selected listings updated · '+String(d.updatedVariants||0)+' variant prices changed.';
     await previewExistingPrices();
   }catch(error){
     priceSyncStatus.className='status bad';
