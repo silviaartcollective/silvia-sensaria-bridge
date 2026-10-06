@@ -75,10 +75,10 @@ input:focus{outline:2px solid #cfd9cf;border-color:#9bab9b}.btn{border:0;border-
 
         <div class="twocol">
           <label>Canada delivery time <span class="hint">transit only</span>
-            <input id="domestic_days" value="3–7 business days" readonly>
+            <input id="domestic_days" value="2–6 business days" readonly>
           </label>
           <label>International delivery time <span class="hint">transit only</span>
-            <input id="international_days" value="5–14 business days" readonly>
+            <input id="international_days" value="2–6 business days" readonly>
           </label>
         </div>
 
@@ -149,14 +149,20 @@ async function load(){
     }
     badge.textContent='Etsy shop access ready';
     createButton.disabled=false;
+    const domestic=d.defaults?.domesticDelivery||{minDays:2,maxDays:6};
+    const international=d.defaults?.internationalDelivery||{minDays:2,maxDays:6};
+    document.getElementById('domestic_days').value=domestic.minDays+'–'+domestic.maxDays+' business days';
+    document.getElementById('international_days').value=international.minDays+'–'+international.maxDays+' business days';
+
     if(d.managedProfile){
       result.className='status ok';
-      result.innerHTML='<strong>Managed profile already exists.</strong><br>'+escHtml(d.managedProfile.title)+' · Profile ID '+escHtml(d.managedProfile.shipping_profile_id)+'. New Product Creator drafts will default to it.';
-      createButton.textContent='Profile already exists';
-      createButton.disabled=true;
+      result.innerHTML='<strong>Managed profile already exists.</strong><br>'+escHtml(d.managedProfile.title)+' · Profile ID '+escHtml(d.managedProfile.shipping_profile_id)+'. Press Update to sync the existing Etsy profile to the current Silvia shipping settings.';
+      createButton.textContent='Update Etsy Shipping Profile';
+      createButton.disabled=false;
     }else{
       result.className='status';
       result.textContent='Ready to create the profile in Etsy.';
+      createButton.textContent='Create Etsy Shipping Profile';
     }
   }catch(error){
     badge.textContent='Etsy setup needs attention';
@@ -170,9 +176,10 @@ document.getElementById('profile-form').addEventListener('submit',async(event)=>
   const destinations=selectedMarkets();
   if(!destinations.length){result.className='status error';result.textContent='Select at least one destination.';return;}
   createButton.disabled=true;
-  createButton.textContent='Creating in Etsy…';
+  const updating=createButton.textContent.includes('Update');
+  createButton.textContent=updating?'Updating Etsy…':'Creating in Etsy…';
   result.className='status';
-  result.textContent='Creating the shipping profile and '+destinations.length+' destinations…';
+  result.textContent=(updating?'Updating the existing shipping profile for ':'Creating the shipping profile and ')+destinations.length+' destinations…';
   try{
     const r=await fetch('/api/shipping-profile',{
       method:'POST',
@@ -186,13 +193,18 @@ document.getElementById('profile-form').addEventListener('submit',async(event)=>
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Could not create Etsy shipping profile.');
     result.className='status ok';
-    result.innerHTML='<strong>Shipping profile created.</strong><br>Profile ID '+escHtml(d.shippingProfileId)+' · '+escHtml(d.destinationCount)+' destinations · free shipping. Product Creator will now select it automatically.';
-    createButton.textContent='Created';
+    if(d.updatedExisting){
+      result.innerHTML='<strong>Existing shipping profile updated.</strong><br>Profile ID '+escHtml(d.shippingProfileId)+' · '+escHtml(d.destinationCount)+' destinations · free shipping · 2–6 business day transit.';
+      createButton.textContent='Updated';
+    }else{
+      result.innerHTML='<strong>Shipping profile created.</strong><br>Profile ID '+escHtml(d.shippingProfileId)+' · '+escHtml(d.destinationCount)+' destinations · free shipping. Product Creator will now select it automatically.';
+      createButton.textContent='Created';
+    }
   }catch(error){
     result.className='status error';
     result.textContent=error.message||String(error);
     createButton.disabled=false;
-    createButton.textContent='Create Etsy Shipping Profile';
+    createButton.textContent=updating?'Update Etsy Shipping Profile':'Create Etsy Shipping Profile';
   }
 });
 
