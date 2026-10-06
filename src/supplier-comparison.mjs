@@ -1,3 +1,4 @@
+import { sensariaDeliveryEstimate } from './delivery-estimates.mjs';
 import { scanProdigiSilviaCatalog } from './prodigi.mjs';
 import { estimateSupplierLandedCost, landedCostPolicy } from './landed-cost.mjs';
 import { loadRetailCatalogLookup, withEstimatedMargin, profitScenarioPolicy } from './retail-margin.mjs';
@@ -81,7 +82,8 @@ function sensariaRecord(row) {
     meta: {
       productKey: item.productKey || '',
       friendlySku: item.friendlySku || '',
-      shippingGroup: item.shippingGroup || ''
+      shippingGroup: item.shippingGroup || '',
+      deliveryEstimate: sensariaDeliveryEstimate(row?.countryCode, { shippingType: 'Basic' })
     }
   });
 }

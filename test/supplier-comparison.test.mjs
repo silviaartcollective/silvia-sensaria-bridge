@@ -34,3 +34,17 @@ test('PrintShrimp is intentionally ineligible for canvas', () => {
   assert.equal(merged.suppliers.printshrimp.eligible, false);
   assert.equal(merged.suppliers.printshrimp.status, 'not-offered');
 });
+
+
+test('Sensaria comparison record includes the provisional delivery profile', () => {
+  const input = typeof baseRow === 'function' ? baseRow({}) : base;
+  const [row] = mergeSupplierComparisonRows({
+    prodigiRows: [input],
+    printShrimpPricing: null,
+    gbpUsd: null
+  });
+  const estimate = row.suppliers.sensaria.meta.deliveryEstimate;
+  assert.equal(estimate.destination, 'CA');
+  assert.deepEqual(estimate.planningBusinessDays, [3, 5]);
+  assert.equal(estimate.customerPromiseSafe, false);
+});
