@@ -284,7 +284,7 @@ export async function sortCustomMockupsByReference({
     !String(item?.contentType || '').startsWith('image/')
   );
 
-  if (customImages.length < 2 || (referenceImages || []).length < customImages.length) {
+  if (customImages.length < 2 || !(referenceImages || []).length) {
     return {
       items: [...customMedia],
       applied: false,
@@ -297,15 +297,15 @@ export async function sortCustomMockupsByReference({
   const refs = (referenceImages || [])
     .slice()
     .sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0))
-    .slice(0, customImages.length)
+    .slice(0, Math.min((referenceImages || []).length, customImages.length))
     .map((image) => ({ ...image, url: referenceImageUrl(image) }))
     .filter((image) => image.url);
 
-  if (refs.length !== customImages.length) {
+  if (!refs.length) {
     return {
       items: [...customMedia],
       applied: false,
-      reason: 'template mockup slot count does not match the uploaded mockups',
+      reason: 'template does not contain usable mockup slots',
       averageScore: null,
       matches: []
     };
@@ -338,23 +338,48 @@ export async function sortCustomMockupsByReference({
       )
     );
 
-    const assignment = bestGlobalAssignment(scoreMatrix);
-    if (!assignment) {
-      return {
-        items: [...customMedia],
-        applied: false,
-        reason: 'could not assign every mockup to a unique template slot',
-        averageScore: null,
-        matches: [],
-        preparedBuffers
-      };
+    let matches;
+    if (customPrepared.length <= referencePrepared.length) {
+      const assignment = bestGlobalAssignment(scoreMatrix);
+      if (!assignment) {
+        return {
+          items: [...customMedia],
+          applied: false,
+          reason: 'could not assign every mockup to a unique template slot',
+          averageScore: null,
+          matches: [],
+          preparedBuffers
+        };
+      }
+      matches = assignment.map((referenceIndex, customIndex) => ({
+        customIndex,
+        referenceIndex,
+        score: scoreMatrix[customIndex][referenceIndex]
+      }));
+    } else {
+      // More uploaded mockups than template slots: match every template slot
+      // to its best unique uploaded image, then append any extra mockups in
+      // their original upload order.
+      const transposed = referencePrepared.map((_, referenceIndex) =>
+        customPrepared.map((_, customIndex) => scoreMatrix[customIndex][referenceIndex])
+      );
+      const assignment = bestGlobalAssignment(transposed);
+      if (!assignment) {
+        return {
+          items: [...customMedia],
+          applied: false,
+          reason: 'could not assign every template slot to a unique uploaded mockup',
+          averageScore: null,
+          matches: [],
+          preparedBuffers
+        };
+      }
+      matches = assignment.map((customIndex, referenceIndex) => ({
+        customIndex,
+        referenceIndex,
+        score: scoreMatrix[customIndex][referenceIndex]
+      }));
     }
-
-    const matches = assignment.map((referenceIndex, customIndex) => ({
-      customIndex,
-      referenceIndex,
-      score: scoreMatrix[customIndex][referenceIndex]
-    }));
     const averageScore = matches.reduce((sum, match) => sum + match.score, 0) / matches.length;
     const weakestScore = Math.min(...matches.map((match) => match.score));
 
@@ -370,13 +395,19 @@ export async function sortCustomMockupsByReference({
     }
 
     const byReference = matches.slice().sort((a, b) => a.referenceIndex - b.referenceIndex);
+    const matchedCustomIndexes = new Set(byReference.map((match) => match.customIndex));
     const sorted = byReference.map((match) => customPrepared[match.customIndex].item);
+    const extras = customPrepared
+      .filter((_, index) => !matchedCustomIndexes.has(index))
+      .map((entry) => entry.item);
 
     return {
-      items: [...sorted, ...nonImages],
+      items: [...sorted, ...extras, ...nonImages],
       applied: true,
-      reason: null,
+      reason: extras.length ? `${extras.length} extra mockup(s) appended after the matched template slots` : null,
       averageScore,
+      matchedCount: byReference.length,
+      extraCount: extras.length,
       matches: byReference.map((match) => ({
         originalIndex: match.customIndex,
         targetRank: match.referenceIndex + 1,
