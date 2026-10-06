@@ -956,6 +956,130 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/shipping-profile/listings') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_r')) {
+        return sendJson(res, 403, {
+          ok: false,
+          needsReauthorization: true,
+          error: 'Reconnect Etsy to grant listings_r before loading listings.'
+        });
+      }
+
+      const shopArgs = {
+        shopId: session.shop.shop_id,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      };
+
+      const [profilesResponse, activeResponse, draftResponse] = await Promise.all([
+        getShopShippingProfiles(shopArgs),
+        getShopListings({ ...shopArgs, state: 'active', limit: 100 }),
+        getShopListings({ ...shopArgs, state: 'draft', limit: 100 })
+      ]);
+
+      const profiles = profilesResponse.results || profilesResponse || [];
+      const managedProfile = profiles.find((profile) =>
+        String(profile?.title || '').trim() === String(shippingProfileDefaults.title || '').trim()
+      ) || null;
+
+      const profileNames = new Map(
+        profiles.map((profile) => [Number(profile.shipping_profile_id), String(profile.title || '')])
+      );
+      const combined = [
+        ...(activeResponse.results || activeResponse || []).map((listing) => ({ ...listing, state: 'active' })),
+        ...(draftResponse.results || draftResponse || []).map((listing) => ({ ...listing, state: 'draft' }))
+      ];
+      const seen = new Set();
+      const listings = combined
+        .filter((listing) => {
+          const id = Number(listing.listing_id);
+          if (!id || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        })
+        .map((listing) => ({
+          listingId: Number(listing.listing_id),
+          title: String(listing.title || ''),
+          state: String(listing.state || ''),
+          shippingProfileId: Number(listing.shipping_profile_id || 0) || null,
+          shippingProfileTitle: profileNames.get(Number(listing.shipping_profile_id || 0)) || ''
+        }));
+
+      return sendJson(res, 200, {
+        ok: true,
+        managedProfile: managedProfile ? {
+          shippingProfileId: Number(managedProfile.shipping_profile_id),
+          title: String(managedProfile.title || '')
+        } : null,
+        listings
+      });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/shipping-profile/apply') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_w')) {
+        return sendJson(res, 403, {
+          ok: false,
+          needsReauthorization: true,
+          error: 'Reconnect Etsy to grant listings_w before changing a listing shipping profile.'
+        });
+      }
+
+      const body = await readJsonBody(req);
+      const listingId = Number(body.listing_id);
+      if (!Number.isInteger(listingId) || listingId <= 0) {
+        return sendJson(res, 400, { ok: false, error: 'A valid Etsy listing is required.' });
+      }
+
+      const shopArgs = {
+        shopId: session.shop.shop_id,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      };
+      const profilesResponse = await getShopShippingProfiles(shopArgs);
+      const profiles = profilesResponse.results || profilesResponse || [];
+      const managedProfile = profiles.find((profile) =>
+        String(profile?.title || '').trim() === String(shippingProfileDefaults.title || '').trim()
+      ) || null;
+      if (!managedProfile?.shipping_profile_id) {
+        return sendJson(res, 409, {
+          ok: false,
+          error: 'Create the Silvia Sensaria Free Shipping profile first.'
+        });
+      }
+
+      const updated = await withEtsyListingRetry(() => updateListing({
+        ...shopArgs,
+        listingId,
+        listing: {
+          shipping_profile_id: Number(managedProfile.shipping_profile_id)
+        }
+      }));
+
+      return sendJson(res, 200, {
+        ok: true,
+        listingId,
+        shippingProfileId: Number(managedProfile.shipping_profile_id),
+        shippingProfileTitle: String(managedProfile.title || ''),
+        listing: updated
+      });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/shipping-profile') {
     if (!requireAdminApi(req, res)) return;
     let createdProfileId = null;
