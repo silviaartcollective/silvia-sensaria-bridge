@@ -84,7 +84,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
           <div class="uploadmeta">Upload only the artwork-specific mockups here. The 3 reusable shop mockups and 1 listing video are appended automatically from the preset library.</div>
           <div class="progress"><span id="upload-progress"></span></div>
           <div class="status" id="upload-status">Choose the master artwork and artwork mockups. They upload to R2 automatically, then attach to the Etsy draft with the preset media.</div>
-          <div class="actions"><button class="btn secondary" id="launch-crop-worker" type="button">Launch Silvia Crop Worker</button></div>
+          <div class="actions"><button class="btn secondary" id="launch-crop-worker" type="button">Launch Shared Crop Worker</button></div>
           <div class="status" id="crop-worker-status">Production crops will be queued after the master artwork finishes uploading.</div>
         </div>
 
@@ -370,7 +370,7 @@ async function putFile(url,file,contentType){
 }
 
 function launchCropWorker(){
-  window.location.href='silvia-worker://start';
+  window.location.href='pod-crop-worker://start';
 }
 
 launchCropWorkerButton?.addEventListener('click',()=>{
@@ -407,7 +407,7 @@ async function watchCropJob(jobId){
       }
       if(job.status==='pending'&&!worker.online){
         cropWorkerStatus.className='status warn';
-        cropWorkerStatus.textContent='Crop job queued. Launch the Silvia Crop Worker on your PC to generate the ratio files.';
+        cropWorkerStatus.textContent='Crop job queued. Launch the Shared POD Crop Worker on your PC to generate the ratio files.';
       }else{
         cropWorkerStatus.className='status';
         cropWorkerStatus.textContent=String(job.message||'Generating POD production crops…')+' '+String(job.progress||0)+'%';
@@ -432,10 +432,10 @@ async function queueCropJob(artworkId){
   const worker=d.worker||{};
   if(worker.online){
     cropWorkerStatus.className='status';
-    cropWorkerStatus.textContent='Silvia Crop Worker connected. Production crops queued.';
+    cropWorkerStatus.textContent='Shared POD Crop Worker connected. Production crops queued.';
   }else if(worker.configured){
     cropWorkerStatus.className='status warn';
-    cropWorkerStatus.textContent='Production crops queued. Launch the Silvia Crop Worker on your PC.';
+    cropWorkerStatus.textContent='Production crops queued. Launch the Shared POD Crop Worker on your PC.';
   }else{
     cropWorkerStatus.className='status warn';
     cropWorkerStatus.textContent='Production crops queued, but CROP_WORKER_TOKEN still needs to be configured in Render.';
