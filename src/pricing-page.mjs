@@ -8,7 +8,7 @@ export function renderPricingPage() {
 <title>Silvia Pricing</title>
 <style>
 :root{--bg:#f4f1eb;--panel:#fffdfa;--ink:#20221e;--muted:#74776f;--line:#dfdcd4;--green:#536454;--green2:#e8eee7;--amber:#946b35;--amber2:#f5ead9;--red:#9b4439}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}.shell{max-width:1650px;margin:0 auto;padding:34px 22px 50px}h1{font-family:Georgia,serif;font-weight:500;font-size:38px;margin:0 0 8px}.sub{color:var(--muted);font-size:14px;margin:0 0 22px}.toplink{display:inline-block;margin-bottom:18px;color:var(--muted);font-size:13px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:20px;box-shadow:0 10px 28px rgba(40,40,30,.05);margin-bottom:18px}.controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap}label{display:grid;gap:7px;font-size:12px;font-weight:650}select{min-width:330px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px;font:inherit}.notice{padding:12px 14px;border-radius:10px;background:var(--amber2);color:var(--amber);font-size:12px;line-height:1.5;margin-bottom:18px}.status{font-size:12px;color:var(--muted);line-height:1.5;max-width:760px}.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:16px 0}.kpi{background:#f7f4ee;border:1px solid var(--line);border-radius:10px;padding:13px}.kpi b{display:block;font-family:Georgia,serif;font-size:22px;margin-top:4px}.muted{color:var(--muted);font-size:11px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}th{background:#f1eee8;position:sticky;top:0;z-index:1}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2),th:nth-child(7),td:nth-child(7){text-align:left}.scroll{overflow:auto;max-height:690px}.good{color:#496b51}.bad{color:var(--red)}.market-note{padding:10px 12px;background:#f7f4ee;border:1px solid var(--line);border-radius:10px;margin-top:12px;font-size:12px;line-height:1.5;color:var(--muted)}.btn{border:0;border-radius:10px;background:#30352e;color:#fff;padding:11px 14px;font-weight:700;cursor:pointer}.btn.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}.btn:disabled{opacity:.55;cursor:not-allowed}.sync-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}.sync-list{margin-top:12px;display:grid;gap:8px}.sync-item{padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#f7f4ee;font-size:12px;line-height:1.5}.sync-item b{font-weight:700}.ok{color:var(--green)}@media(max-width:800px){.kpis{grid-template-columns:1fr 1fr}h1{font-size:32px}select{min-width:260px}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}.shell{max-width:1650px;margin:0 auto;padding:34px 22px 50px}h1{font-family:Georgia,serif;font-weight:500;font-size:38px;margin:0 0 8px}h2{font-family:Georgia,serif;font-weight:500}.sub{color:var(--muted);font-size:14px;margin:0 0 22px}.toplink{display:inline-block;margin-bottom:18px;color:var(--muted);font-size:13px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:20px;box-shadow:0 10px 28px rgba(40,40,30,.05);margin-bottom:18px}.controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap}label{display:grid;gap:7px;font-size:12px;font-weight:650}select{min-width:330px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px;font:inherit}.notice{padding:12px 14px;border-radius:10px;background:var(--amber2);color:var(--amber);font-size:12px;line-height:1.5;margin-bottom:18px}.status{font-size:12px;color:var(--muted);line-height:1.5;max-width:900px}.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:16px 0}.kpi{background:#f7f4ee;border:1px solid var(--line);border-radius:10px;padding:13px}.kpi b{display:block;font-family:Georgia,serif;font-size:22px;margin-top:4px}.muted{color:var(--muted);font-size:11px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}th{background:#f1eee8;position:sticky;top:0;z-index:1}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2),th:nth-child(7),td:nth-child(7){text-align:left}.scroll{overflow:auto;max-height:690px}.good,.ok{color:#496b51}.bad{color:var(--red)}.market-note{padding:10px 12px;background:#f7f4ee;border:1px solid var(--line);border-radius:10px;margin-top:12px;font-size:12px;line-height:1.5;color:var(--muted)}.btn{border:0;border-radius:10px;background:#30352e;color:#fff;padding:11px 14px;font-weight:700;cursor:pointer}.btn.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}.btn:disabled{opacity:.55;cursor:not-allowed}.sync-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}.sync-list{margin-top:12px;display:grid;gap:8px}.sync-item{padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#f7f4ee;font-size:12px;line-height:1.5}.sync-item b{font-weight:700}@media(max-width:800px){.kpis{grid-template-columns:1fr 1fr}h1{font-size:32px}select{min-width:260px}}
 </style>
 </head>
 <body><main class="shell">
@@ -48,7 +48,7 @@ export function renderPricingPage() {
 </section>
 
 <section class="card">
-  <h2 style="font-family:Georgia,serif;font-weight:500;margin:0 0 6px">Existing Etsy listing prices</h2>
+  <h2 style="margin:0 0 6px">Existing Etsy listing prices</h2>
   <p class="sub" style="margin-bottom:12px">Preview which active and draft Silvia listings differ from the current app price ladder. Nothing changes until you explicitly apply the sync.</p>
   <div class="sync-actions">
     <button class="btn secondary" id="preview-prices" type="button">Preview existing listings</button>
@@ -137,65 +137,36 @@ function render(data){
 function renderPricePreview(d){
   priceSyncList.innerHTML='';
   const listings=d.listings||[];
+  priceSyncStatus.className='status';
   priceSyncStatus.innerHTML='<strong>'+String(d.listingsWithChanges||0)+'</strong> listings need updates · <strong>'+String(d.variantChangeCount||0)+'</strong> variant prices would change · '+String(d.skippedVariantCount||0)+' variants skipped.';
+
   for(const item of listings){
-    if(!item.changeCount && !item.error)continue;
+    if(!item.changeCount&&!item.error)continue;
     const div=document.createElement('div');
     div.className='sync-item';
+
     if(item.error){
       div.innerHTML='<b>#'+String(item.listingId)+' · '+String(item.title||'Untitled')+'</b><br><span class="bad">'+String(item.error)+'</span>';
     }else{
       const examples=(item.changes||[]).slice(0,4).map(x=>
-        String(x.size)+' '+String(x.style)+' · 
-  rows.innerHTML='<tr><td colspan="17">Loading…</td></tr>';
-  try{
-    const r=await fetch('/api/pricing?market='+encodeURIComponent(market.value||'CA'),{cache:'no-store'});
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Pricing failed');
-    render(d);
-  }catch(error){
-    rows.innerHTML='<tr><td colspan="17" class="bad">'+String(error.message||error)+'</td></tr>';
-  }
-}
-
-market.addEventListener('change',load);
-load();
-</script>
-</body>
-</html>`;
-}
-+Number(x.currentUsd).toFixed(2)+' → 
-  rows.innerHTML='<tr><td colspan="17">Loading…</td></tr>';
-  try{
-    const r=await fetch('/api/pricing?market='+encodeURIComponent(market.value||'CA'),{cache:'no-store'});
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Pricing failed');
-    render(d);
-  }catch(error){
-    rows.innerHTML='<tr><td colspan="17" class="bad">'+String(error.message||error)+'</td></tr>';
-  }
-}
-
-market.addEventListener('change',load);
-load();
-</script>
-</body>
-</html>`;
-}
-+Number(x.targetUsd).toFixed(2)
+        String(x.size)+' '+String(x.style)+' · $'+Number(x.currentUsd).toFixed(2)+' → $'+Number(x.targetUsd).toFixed(2)
       ).join('<br>');
       div.innerHTML='<b>#'+String(item.listingId)+' · '+String(item.title||'Untitled')+'</b> · '+String(item.state)+'<br>'+String(item.changeCount)+' variant prices would change'+(examples?'<br>'+examples:'');
     }
+
     priceSyncList.appendChild(div);
   }
+
   applyPrices.disabled=!(Number(d.variantChangeCount||0)>0);
 }
 
 async function previewExistingPrices(){
   previewPrices.disabled=true;
   applyPrices.disabled=true;
+  priceSyncStatus.className='status';
   priceSyncStatus.textContent='Checking active and draft Etsy listings…';
   priceSyncList.innerHTML='';
+
   try{
     const r=await fetch('/api/pricing/listings-preview',{cache:'no-store'});
     const d=await r.json();
@@ -214,10 +185,12 @@ previewPrices.addEventListener('click',previewExistingPrices);
 applyPrices.addEventListener('click',async()=>{
   const confirmed=confirm('Update all recognized active and draft Silvia Etsy variant prices to the current app price ladder?\\n\\nThis changes live Etsy listing prices. The 25% Etsy sale remains separate.');
   if(!confirmed)return;
+
   applyPrices.disabled=true;
   previewPrices.disabled=true;
   priceSyncStatus.className='status';
   priceSyncStatus.textContent='Updating existing Etsy listing prices…';
+
   try{
     const r=await fetch('/api/pricing/sync-listings',{
       method:'POST',
@@ -226,6 +199,7 @@ applyPrices.addEventListener('click',async()=>{
     });
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Could not update Etsy prices');
+
     priceSyncStatus.className='status ok';
     priceSyncStatus.innerHTML='<strong>Price sync complete.</strong> '+String(d.updatedListings||0)+' listings · '+String(d.updatedVariants||0)+' variant prices updated.';
     await previewExistingPrices();
@@ -239,6 +213,7 @@ applyPrices.addEventListener('click',async()=>{
 
 async function load(){
   rows.innerHTML='<tr><td colspan="17">Loading…</td></tr>';
+
   try{
     const r=await fetch('/api/pricing?market='+encodeURIComponent(market.value||'CA'),{cache:'no-store'});
     const d=await r.json();
