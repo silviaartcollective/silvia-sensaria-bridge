@@ -266,9 +266,22 @@ applyPrices.addEventListener('click',async()=>{
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Could not update Etsy prices');
 
-    priceSyncStatus.className='status ok';
-    priceSyncStatus.innerHTML='<strong>Price sync complete.</strong> '+String(d.updatedListings||0)+' of '+String(d.requestedListings||listingIds.length)+' selected listings updated · '+String(d.updatedVariants||0)+' variant prices changed.';
     await previewExistingPrices();
+
+    const failures=(d.results||[]).filter(item=>item.error);
+    if(failures.length){
+      priceSyncStatus.className='status bad';
+      priceSyncStatus.innerHTML='<strong>Some Etsy price updates failed.</strong> '+String(d.updatedListings||0)+' of '+String(d.requestedListings||listingIds.length)+' selected listings were verified updated. '+String(failures.length)+' failed.';
+      const failureBox=document.createElement('div');
+      failureBox.className='sync-item';
+      failureBox.innerHTML='<strong>Update errors</strong><br>'+failures.map(item=>
+        '#'+String(item.listingId)+' · '+String(item.title||'Untitled')+' — '+String(item.error||'Unknown Etsy error')
+      ).join('<br>');
+      priceSyncList.prepend(failureBox);
+    }else{
+      priceSyncStatus.className='status ok';
+      priceSyncStatus.innerHTML='<strong>Verified price sync complete.</strong> '+String(d.updatedListings||0)+' of '+String(d.requestedListings||listingIds.length)+' selected listings updated · '+String(d.updatedVariants||0)+' variant prices changed.';
+    }
   }catch(error){
     priceSyncStatus.className='status bad';
     priceSyncStatus.textContent=String(error.message||error);
