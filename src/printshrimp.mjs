@@ -1,4 +1,5 @@
 import { SILVIA_CURRENT_MARKETS } from './markets.mjs';
+import { printShrimpQuotedBasketTotal } from './printshrimp-basket-cost.mjs';
 
 export const PRINTSHRIMP_API_BASE = 'https://api.printshrimp.com/functions/v1';
 
@@ -313,6 +314,8 @@ export async function validatePrintShrimpOrderPreview(payload = {}) {
     throw new Error(`PrintShrimp live pricing does not support: ${unsupported.map(item => item.size).join(', ')}`);
   }
 
+  const basketQuote = printShrimpQuotedBasketTotal(checks);
+
   return {
     ok: true,
     country: pricing.country,
@@ -320,11 +323,10 @@ export async function validatePrintShrimpOrderPreview(payload = {}) {
     checks,
     bulkPrintDiscount,
     multiItem: {
-      lineCount: payload.products.length,
-      totalQuantity: payload.products.reduce((sum, product) => sum + Math.max(1, Number(product.quantity || 1)), 0),
+      ...basketQuote,
       combinedShippingConfirmed: true,
       createOrderCalled: false,
-      note: 'Authenticated API docs state shipping is charged once per order (only the first item pays it). This preview validates per-item support/pricing but does not reconstruct the final combined basket total; the published 3+ print discount remains planning-only until confirmed on the complete order.'
+      note: 'Authenticated API docs state shipping is charged once per order and only the first item pays it. The published 3+ print discount remains planning-only and is not automatically deducted from this quoted basket total.'
     }
   };
 }

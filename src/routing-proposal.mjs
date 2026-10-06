@@ -1,3 +1,5 @@
+import { printShrimpCandidateCostBreakdown } from './printshrimp-basket-cost.mjs';
+
 // Converts a COMPLETE fresh comparison export to a PROPOSAL.
 // It never edits live fulfillment settings or submits supplier orders.
 export const ROUTING_PROVIDER_CODES = Object.freeze({
@@ -111,7 +113,9 @@ export function buildRoutingProposal({ rows = [], countryCodes = [], sourceFile 
       savings,
       threshold,
       nearTie,
-      ordered.length
+      ordered.length,
+      printShrimpCandidateCostBreakdown(winner),
+      runner ? printShrimpCandidateCostBreakdown(runner) : null
     ];
   }
 
@@ -128,7 +132,7 @@ export function buildRoutingProposal({ rows = [], countryCodes = [], sourceFile 
         costBasis: 'risk-adjusted planning estimates, not supplier-invoiced landed costs',
         switchThreshold: 'max(2 USD, 3% of preferred cost)',
         approved: false,
-        note: 'PROPOSAL ONLY. This file does not change Etsy listings, supplier routing, or live submission settings.'
+        note: 'PROPOSAL ONLY. This file does not change Etsy listings, supplier routing, or live submission settings. PrintShrimp winner/runner rows preserve USD product + shipping components so future basket routing can apply its documented once-per-order shipping correctly.'
       },
       providers,
       winnerCounts,

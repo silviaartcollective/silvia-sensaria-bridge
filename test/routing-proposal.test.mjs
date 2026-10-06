@@ -53,3 +53,39 @@ test('review margin blocks proposal', () => {
   rows[0].profitScenario.qualified = false;
   assert.equal(buildRoutingProposal({ rows, countryCodes: ['CA'] }).ok, false);
 });
+
+
+test('routing proposal preserves PrintShrimp USD product and shipping components', () => {
+  const rows = completeCountry();
+  rows[0] = {
+    ...rows[0],
+    winner: 'PrintShrimp',
+    winnerTotalUsd: 8.16,
+    suppliers: {
+      printshrimp: {
+        provider: 'PrintShrimp',
+        eligible: true,
+        totalUsd: 8,
+        modeledLandedUsd: 8.16,
+        productCost: 6,
+        shippingCost: 2,
+        currency: 'USD',
+        contingencyRate: 0.02
+      },
+      sensaria: { provider: 'Sensaria', eligible: true, modeledLandedUsd: 10 }
+    }
+  };
+
+  const result = buildRoutingProposal({ rows, countryCodes: ['CA'] });
+  assert.equal(result.ok, true);
+
+  const packed = result.proposal.countries.CA.P['8x10|NONE'];
+  assert.equal(packed[0], 'R');
+  assert.deepEqual(packed[8], {
+    quotedProductUsd: 6,
+    quotedShippingUsd: 2,
+    contingencyRate: 0.02,
+    shippingScope: 'order-once-first-item',
+    sourceCurrency: 'USD'
+  });
+});
