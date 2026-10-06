@@ -683,7 +683,8 @@ form.addEventListener('submit',async(e)=>{
       const suffix=d.draftCreated&&d.listingId
         ? ' Etsy already created draft '+String(d.listingId)+' before this step failed.'
         : '';
-      throw new Error((d.error||'Draft creation failed')+suffix);
+      const detail=d.error||d.message||d.reason||('Draft creation failed (HTTP '+String(r.status)+')');
+      throw new Error(String(detail)+suffix);
     }
     result.className='result show';
     const variantSummary=d.variants
