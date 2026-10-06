@@ -1,0 +1,7 @@
+{
+  "appUrl": "https://silvia-sensaria-bridge.onrender.com",
+  "workerToken": "REPLACE_WITH_THE_SAME_LONG_RANDOM_TOKEN_SET_AS_CROP_WORKER_TOKEN_ON_RENDER",
+  "workerId": "silvia-main-pc",
+  "pollIntervalMs": 3000,
+  "idleExitMs": 600000
+}
