@@ -1471,7 +1471,11 @@ const server = http.createServer(async (req, res) => {
 
       const taxonomyPromise = getCachedTaxonomyProperties(session, body.taxonomy_id);
       const mediaPrepStartedAt = Date.now();
-      const mediaPlanPromise = prepareMediaPlan({ session, manifest });
+      // Validate preset media before Etsy creates or mutates a draft. This keeps
+      // missing one-time preset files from creating a partial listing or causing
+      // an unhandled rejected promise while other Etsy writes are in progress.
+      const mediaPlan = await prepareMediaPlan({ session, manifest });
+      const mediaPrepMs = Date.now() - mediaPrepStartedAt;
 
       let draft;
       const draftStartedAt = Date.now();
@@ -1536,8 +1540,6 @@ const server = http.createServer(async (req, res) => {
       });
       const attributesMs = Date.now() - attributesStartedAt;
 
-      const mediaPlan = await mediaPlanPromise;
-      const mediaPrepMs = Date.now() - mediaPrepStartedAt;
       const media = await uploadPreparedMediaToEtsy({
         session,
         listingId: draft.listing_id,
