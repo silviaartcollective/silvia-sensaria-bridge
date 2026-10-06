@@ -314,6 +314,41 @@ export async function createShopShippingProfileDestination({
   return response.json();
 }
 
+export async function updateShopShippingProfileDestination({
+  shopId,
+  shippingProfileId,
+  shippingProfileDestinationId,
+  primaryCost = 0,
+  secondaryCost = 0,
+  minDeliveryDays,
+  maxDeliveryDays,
+  keystring,
+  sharedSecret,
+  accessToken
+}) {
+  const body = new URLSearchParams({
+    primary_cost: String(Number(primaryCost)),
+    secondary_cost: String(Number(secondaryCost)),
+    min_delivery_days: String(Number(minDeliveryDays)),
+    max_delivery_days: String(Number(maxDeliveryDays))
+  });
+
+  const response = await fetch(
+    `${ETSY_API_BASE}/application/shops/${encodeURIComponent(shopId)}/shipping-profiles/${encodeURIComponent(shippingProfileId)}/destinations/${encodeURIComponent(shippingProfileDestinationId)}`,
+    {
+      method: 'PUT',
+      headers: apiHeaders({ keystring, sharedSecret, accessToken, form: true }),
+      body
+    }
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Etsy shipping destination update failed (${response.status}): ${await response.text()}`
+    );
+  }
+  return response.json();
+}
+
 export async function deleteShopShippingProfile({
   shopId,
   shippingProfileId,
