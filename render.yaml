@@ -54,3 +54,5 @@ services:
         value: auto
       - key: ADMIN_PASSWORD
         sync: false
+      - key: CROP_WORKER_TOKEN
+        sync: false
