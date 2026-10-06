@@ -1708,8 +1708,12 @@ const server = http.createServer(async (req, res) => {
 
       if (token.refresh_token) {
         // The Render environment remains the source of truth for persistence.
-        // Surface the token once so the administrator can store it there.
-        return sendHtml(res, 200, `<!doctype html><html><body style="font-family:system-ui;padding:32px"><h1>Etsy connected</h1><p>Save this refresh token in Render as <code>ETSY_REFRESH_TOKEN</code>:</p><textarea style="width:100%;height:120px">${escapeHtml(token.refresh_token)}</textarea><p><a href="/">Return to dashboard</a></p></body></html>`);
+        // Surface the token once so the administrator can store it there, and
+        // show the granted scopes so permission changes can be verified before
+        // the token is saved.
+        const grantedScopes = String(token.scope || '').trim();
+        const hasShopsWrite = new Set(grantedScopes.split(/\s+/).filter(Boolean)).has('shops_w');
+        return sendHtml(res, 200, `<!doctype html><html><body style="font-family:system-ui;padding:32px;max-width:900px"><h1>Etsy connected</h1><p><strong>Granted scopes:</strong> <code>${escapeHtml(grantedScopes || 'not returned')}</code></p>${hasShopsWrite ? '<p style="color:#2f6b3f"><strong>shops_w granted.</strong> This token can create the Silvia shipping profile.</p>' : '<p style="color:#9a4a3a"><strong>shops_w was NOT granted.</strong> Do not save this token yet; revoke the Etsy app authorization and reconnect.</p>'}<p>Save this refresh token in Render as <code>ETSY_REFRESH_TOKEN</code>:</p><textarea style="width:100%;height:120px">${escapeHtml(token.refresh_token)}</textarea><p><a href="/">Return to dashboard</a></p></body></html>`);
       }
 
       return sendHtml(res, 200, '<h1>Etsy connected.</h1><p><a href="/">Return to dashboard</a></p>');
