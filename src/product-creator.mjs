@@ -118,7 +118,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
         <label>SEO tags <span class="hint">13 comma-separated Etsy tags</span><input id="tags" placeholder="silvia wall art, neutral wall art, ..."></label>
         <div class="status ok">
           <strong>Variants are automatic and owned by this app.</strong><br>
-          Etsy uses <strong>Size</strong> first and <strong>Product - Style</strong> second. Product names are Matte Paper Poster, Canvas, and Framed Canvas by frame finish. Pricing uses the approved Silvia regular CAD ladder converted to USD at 1 USD = 1.39 CAD. The whole shop's 20% Etsy sale is applied separately, and each valid variant gets a new SAC SKU. No previous Etsy listing is used as the variant template.
+          Etsy uses <strong>Size</strong> first and <strong>Product - Style</strong> second. Product names are Matte Paper Poster, Canvas, and Framed Canvas by frame finish. Pricing uses the approved Silvia regular CAD ladder converted to USD at 1 USD = 1.39 CAD. The whole shop's 25% Etsy sale is applied separately, and each valid variant gets a new SAC SKU. No previous Etsy listing is used as the variant template.
         </div>
         <div class="twocol">
           <label>Etsy category <span class="hint">preset</span><input id="category_name" value="Wall Decor" readonly></label>
@@ -445,7 +445,12 @@ async function uploadArtworkToR2(){
   if(existingId){
     try{
       const check=await fetch('/api/artworks/'+encodeURIComponent(existingId)+'/complete',{method:'POST'});
-      if(check.ok)return existingId;
+      if(check.ok){
+        // Re-queue idempotently so an earlier upload whose crop queue failed
+        // can repair itself without forcing the artwork to be uploaded again.
+        try{ await queueCropJob(existingId); }catch{}
+        return existingId;
+      }
     }catch{}
     try{
       await fetch('/api/artworks/'+encodeURIComponent(existingId)+'/cancel',{method:'POST'});
@@ -692,7 +697,7 @@ async function loadOptions(){
     if(summary){
       summary.innerHTML='<strong>Silvia listing defaults loaded</strong><br>'+
         'Category: '+String(fixed.categoryName||'Wall Decor')+' · Materials: '+String(materials.join(', '))+
-        '<br>Variants: app-owned Size × Product - Style · Pricing: Silvia CAD ladder → USD · whole-shop sale: 20%'+
+        '<br>Variants: app-owned Size × Product - Style · Pricing: Silvia CAD ladder → USD · whole-shop sale: 25%'+
         mockupReferenceLine+
         '<br>Processing target: '+String(fixed.processingLabel||'Made to order')+
         ' · Renewal: Automatic';
@@ -706,6 +711,11 @@ loadOptions();
 
 form.addEventListener('submit',async(e)=>{
   e.preventDefault();
+
+  // This runs directly from the user's click, so browsers are much more likely
+  // to allow the custom Windows protocol than if we wait until after uploads.
+  try{ window.location.href='pod-crop-worker://start'; }catch{}
+
   button.disabled=true;
   result.className='result';
 
