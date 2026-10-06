@@ -41,18 +41,21 @@ export const SILVIA_STYLES = [
 // to Etsy USD at the planning rate 1 USD = 1.39 CAD. Etsy applies the whole-shop
 // 25% promotion separately, so the inventory payload keeps regular/base USD prices.
 export const SILVIA_REFERENCE_CAD_PER_USD = 1.39;
+// Poster listings are sold by Etsy in USD and then shown to Canadian buyers in CAD.
+// Calibrated from the current Etsy display shown on 2026-10-06 (~CA$1.486 per US$1).
+export const SILVIA_POSTER_ETSY_CAD_PER_USD = 1.486;
 export const SILVIA_SALE_DISCOUNT_PERCENT = 25;
 export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
   P: {
-    '8x10': 54.95,
-    '11x14': 59.95,
-    '12x16': 64.95,
-    '12x18': 67.95,
-    '16x20': 74.95,
-    '16x24': 82.95,
-    '18x24': 89.95,
-    '24x36': 104.95,
-    '30x40': 124.95
+    '8x10': 52.95,
+    '11x14': 57.95,
+    '12x16': 62.95,
+    '12x18': 65.95,
+    '16x20': 72.95,
+    '16x24': 80.95,
+    '18x24': 87.95,
+    '24x36': 102.95,
+    '30x40': 122.95
   },
   C: {
     '12x16': 139.95,
@@ -76,15 +79,18 @@ export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
   }
 };
 
-function cadRetailToUsd(value) {
-  return Number((Number(value) / SILVIA_REFERENCE_CAD_PER_USD).toFixed(2));
+function cadRetailToUsd(value, format) {
+  const rate = format === 'P'
+    ? SILVIA_POSTER_ETSY_CAD_PER_USD
+    : SILVIA_REFERENCE_CAD_PER_USD;
+  return Number((Number(value) / rate).toFixed(2));
 }
 
 export const SILVIA_RETAIL_PRICE_LADDER_USD = Object.fromEntries(
   Object.entries(SILVIA_RETAIL_PRICE_LADDER_CAD).map(([format, ladder]) => [
     format,
     Object.fromEntries(
-      Object.entries(ladder).map(([size, cadPrice]) => [size, cadRetailToUsd(cadPrice)])
+      Object.entries(ladder).map(([size, cadPrice]) => [size, cadRetailToUsd(cadPrice, format)])
     )
   ])
 );
@@ -266,8 +272,9 @@ export function buildOwnSilviaInventory({
     pricing: {
       currency: 'USD',
       saleDiscountPercent: SILVIA_SALE_DISCOUNT_PERCENT,
-      basis: 'Silvia approved CAD regular retail ladder converted to USD',
+      basis: 'Silvia approved CAD regular retail ladder converted to Etsy USD',
       referenceCadPerUsd: SILVIA_REFERENCE_CAD_PER_USD,
+      posterEtsyCadPerUsd: SILVIA_POSTER_ETSY_CAD_PER_USD,
       costBasis: 'Sensaria USD product cost',
       framePricing: 'All framed-canvas colours use the same retail price per size'
     }
