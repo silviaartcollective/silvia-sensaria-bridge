@@ -381,8 +381,12 @@ const SILVIA_CANONICAL_CUSTOM_REMAP_15 = [1, 10, 0, 11, 7, 9, 8, 6, 5, 3, 2, 4];
 
 function canonicalCustomMockupOrder(items) {
   const values = Array.from(items || []);
-  if (values.length !== SILVIA_CANONICAL_CUSTOM_REMAP_15.length) return values;
-  return SILVIA_CANONICAL_CUSTOM_REMAP_15.map((index) => values[index]).filter(Boolean);
+  const canonicalCount = SILVIA_CANONICAL_CUSTOM_REMAP_15.length;
+  if (values.length < canonicalCount) return values;
+  const canonical = SILVIA_CANONICAL_CUSTOM_REMAP_15
+    .map((index) => values[index])
+    .filter(Boolean);
+  return [...canonical, ...values.slice(canonicalCount)];
 }
 
 async function optimizeEtsyImageObject(object) {
@@ -582,12 +586,13 @@ async function prepareMediaPlan({ session, manifest }) {
         matches: []
       };
 
+  const requiredMatchedSlots = Math.min(customImages.length, referenceCustomImages.length);
   if (customImages.length >= 2 && (
     !sortResult.applied ||
-    (sortResult.matches || []).length !== customImages.length
+    (sortResult.matches || []).length !== requiredMatchedSlots
   )) {
     throw new Error(
-      `Exact mockup ordering could not be matched to #${reference.listingId}. ${sortResult.reason || 'Every uploaded mockup must match one template slot.'}`
+      `Exact mockup ordering could not be matched to #${reference.listingId}. ${sortResult.reason || 'The available template slots could not be matched reliably.'}`
     );
   }
 
