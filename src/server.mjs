@@ -932,7 +932,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/shipping-profile') {
     if (!requireAdminApi(req, res)) return;
     try {
-      const session = await getEtsySession();
+      const session = await getEtsySession({ forceRefresh: true });
       const profilesResponse = await getShopShippingProfiles({
         shopId: session.shop.shop_id,
         keystring: session.keystring,
@@ -960,7 +960,7 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdminApi(req, res)) return;
     let createdProfileId = null;
     try {
-      const session = await getEtsySession();
+      const session = await getEtsySession({ forceRefresh: true });
       const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
       if (!scopes.has('shops_w')) {
         return sendJson(res, 403, {
