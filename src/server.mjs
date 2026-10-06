@@ -68,6 +68,7 @@ import {
   getShopShippingProfiles,
   createShopShippingProfile,
   createShopShippingProfileDestination,
+  updateShopShippingProfileDestination,
   deleteShopShippingProfile,
   getShopReadinessStateDefinitions,
   getShopListings,
@@ -1300,20 +1301,62 @@ const server = http.createServer(async (req, res) => {
       const profilesResponse = await getShopShippingProfiles(shopArgs);
       const profiles = profilesResponse.results || profilesResponse || [];
       const existing = profiles.find((profile) => String(profile?.title || '').trim() === profileTitle);
+
+      const domestic = shippingProfileDefaults.domesticDelivery || { minDays: 2, maxDays: 6 };
+      const international = shippingProfileDefaults.internationalDelivery || { minDays: 2, maxDays: 6 };
+
       if (existing) {
+        const currentDestinations = Array.isArray(existing.shipping_profile_destinations)
+          ? existing.shipping_profile_destinations
+          : [];
+        const byCountry = new Map(
+          currentDestinations
+            .filter((item) => item?.destination_country_iso)
+            .map((item) => [String(item.destination_country_iso).toUpperCase(), item])
+        );
+
+        const updatedDestinations = [];
+        const createdDestinations = [];
+        for (const countryIso of requested) {
+          const timing = countryIso === 'CA' ? domestic : international;
+          const current = byCountry.get(countryIso);
+          if (current?.shipping_profile_destination_id) {
+            await updateShopShippingProfileDestination({
+              ...shopArgs,
+              shippingProfileId: existing.shipping_profile_id,
+              shippingProfileDestinationId: current.shipping_profile_destination_id,
+              primaryCost: shippingProfileDefaults.primaryCost ?? 0,
+              secondaryCost: shippingProfileDefaults.secondaryCost ?? 0,
+              minDeliveryDays: timing.minDays,
+              maxDeliveryDays: timing.maxDays
+            });
+            updatedDestinations.push(countryIso);
+          } else {
+            await createShopShippingProfileDestination({
+              ...shopArgs,
+              shippingProfileId: existing.shipping_profile_id,
+              destinationCountryIso: countryIso,
+              primaryCost: shippingProfileDefaults.primaryCost ?? 0,
+              secondaryCost: shippingProfileDefaults.secondaryCost ?? 0,
+              minDeliveryDays: timing.minDays,
+              maxDeliveryDays: timing.maxDays
+            });
+            createdDestinations.push(countryIso);
+          }
+        }
+
         return sendJson(res, 200, {
           ok: true,
-          alreadyExists: true,
+          updatedExisting: true,
           shippingProfileId: existing.shipping_profile_id,
-          destinationCount: Array.isArray(existing.shipping_profile_destinations)
-            ? existing.shipping_profile_destinations.length
-            : requested.length,
+          destinationCount: requested.length,
+          updatedDestinations,
+          createdDestinations,
+          minDeliveryDays: 2,
+          maxDeliveryDays: 6,
           profile: existing
         });
       }
-
-      const domestic = shippingProfileDefaults.domesticDelivery || { minDays: 3, maxDays: 7 };
-      const international = shippingProfileDefaults.internationalDelivery || { minDays: 5, maxDays: 14 };
       const firstIso = requested[0];
       const firstTiming = firstIso === 'CA' ? domestic : international;
 
