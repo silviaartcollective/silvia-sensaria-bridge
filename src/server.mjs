@@ -363,9 +363,10 @@ async function converterListingRows(session) {
   const listings = await allShopListingsForPriceSync(session);
   const converterMap = await loadListingConverterMap();
 
-  const rows = await mapWithConcurrency(listings, 5, async listing => {
+  const rows = await mapWithConcurrency(listings, 2, async listing => {
     let firstImageUrl = null;
     let imageCount = 0;
+    let imageError = null;
     try {
       const images = await getEtsyListingImages({
         listingId: listing.listing_id,
@@ -375,8 +376,8 @@ async function converterListingRows(session) {
       });
       imageCount = images.length;
       firstImageUrl = firstListingImageUrl(images[0]);
-    } catch {
-      // Keep the listing visible even if Etsy's image endpoint fails temporarily.
+    } catch (error) {
+      imageError = error?.message || String(error);
     }
 
     const mapping = converterMap.listings?.[String(listing.listing_id)] || null;
@@ -386,6 +387,7 @@ async function converterListingRows(session) {
       state: String(listing.state || ''),
       firstImageUrl,
       imageCount,
+      imageError,
       artworkId: mapping?.artworkId || null,
       converted: mapping?.status === 'converted',
       conversionStatus: mapping?.status || 'not-linked',
