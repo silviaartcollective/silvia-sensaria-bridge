@@ -1,0 +1,49 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const LOCAL_CONFIG_PATH = path.join(HERE, 'config.local.json');
+
+let local = {};
+try {
+  local = JSON.parse(fs.readFileSync(LOCAL_CONFIG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+} catch {}
+
+export const APP_URL = String(
+  process.env.SILVIA_APP_URL ||
+  local.appUrl ||
+  ''
+).trim().replace(/\/$/, '');
+
+export const WORKER_TOKEN = String(
+  process.env.SILVIA_WORKER_TOKEN ||
+  local.workerToken ||
+  ''
+).trim();
+
+export const WORKER_ID = String(
+  process.env.SILVIA_WORKER_ID ||
+  local.workerId ||
+  'silvia-main-pc'
+).trim();
+
+export const POLL_INTERVAL_MS = Math.max(
+  2000,
+  Number(process.env.SILVIA_WORKER_POLL_MS || local.pollIntervalMs || 3000)
+);
+
+export const IDLE_EXIT_MS = Math.max(
+  60_000,
+  Number(process.env.SILVIA_WORKER_IDLE_EXIT_MS || local.idleExitMs || 10 * 60_000)
+);
+
+export function validateWorkerConfig() {
+  if (!APP_URL) throw new Error('Set appUrl in worker/config.local.json or SILVIA_APP_URL.');
+  if (!/^https:\/\//i.test(APP_URL) && !/^http:\/\/localhost(?::\d+)?$/i.test(APP_URL)) {
+    throw new Error('Silvia app URL must be HTTPS, except localhost during development.');
+  }
+  if (!WORKER_TOKEN || WORKER_TOKEN.length < 24) {
+    throw new Error('Set workerToken in worker/config.local.json or SILVIA_WORKER_TOKEN.');
+  }
+}
