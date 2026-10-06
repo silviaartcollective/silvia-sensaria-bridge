@@ -142,7 +142,7 @@ async function load(){
     if(!scopes.has('shops_w')){
       badge.textContent='Reconnect Etsy · shops_w needed';
       result.className='status warn';
-      result.innerHTML='Etsy is connected, but the current token does not include <strong>shops_w</strong>. Reconnect Etsy, save the new refresh token in Render, then return here.';
+      result.innerHTML='Etsy is connected, but the current token does not include <strong>shops_w</strong>.<br><br><strong>Current token scopes:</strong> <span class="mono">'+escHtml(d.scopes||'(none returned)')+'</span><br><br>Reconnect Etsy, save the new refresh token in Render, then return here.';
       createButton.disabled=true;
       return;
     }
