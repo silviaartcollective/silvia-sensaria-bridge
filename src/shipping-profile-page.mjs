@@ -138,7 +138,7 @@ async function load(){
     titleInput.value=d.defaults?.title||titleInput.value;
     if(d.shopPostalCode)postalInput.value=d.shopPostalCode;
     renderMarkets(d.defaults?.destinations||[]);
-    const scopes=new Set(String(d.scopes||'').split(/\s+/).filter(Boolean));
+    const scopes=new Set(String(d.scopes||'').trim().split(' ').map(x=>x.trim()).filter(Boolean));
     if(!scopes.has('shops_w')){
       badge.textContent='Reconnect Etsy · shops_w needed';
       result.className='status warn';
