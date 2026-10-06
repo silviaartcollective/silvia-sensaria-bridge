@@ -146,6 +146,10 @@ function renderCards(){
 }
 
 async function convertListing(item,card){
+  // Keep this synchronous with the user's button click so Windows can open the
+  // registered pod-crop-worker:// protocol without a second manual action.
+  try{ window.location.href='pod-crop-worker://start'; }catch{}
+
   const input=card.querySelector('.master');
   const button=card.querySelector('.convert');
   const status=card.querySelector('.cardstatus');
