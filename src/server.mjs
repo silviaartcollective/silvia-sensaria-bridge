@@ -2590,6 +2590,38 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      // Repair/ensure the production crop queue independently of Etsy draft creation.
+      // A crop failure must never block creation of the Etsy draft.
+      let cropQueue = null;
+      let cropQueueWarning = '';
+      if (!manifest.fulfillmentRatiosReady) {
+        try {
+          const created = await createCropJob({
+            artworkId: body.artwork_id,
+            masterKey: manifest.master.key,
+            orientation: body.orientation || manifest.orientation || 'portrait'
+          });
+          manifest.cropWorkerJobId = created.job.id;
+          manifest.cropWorkerQueuedAt = manifest.cropWorkerQueuedAt || new Date().toISOString();
+          await saveArtworkManifest(manifest);
+          await writeFulfillmentStatus(body.artwork_id, {
+            status: created.job.status || 'pending',
+            jobId: created.job.id,
+            progress: created.job.progress || 0,
+            completedRatios: created.job.completedRatios || [],
+            message: created.job.message || 'Waiting for shared crop workstation'
+          }).catch(() => {});
+          cropQueue = {
+            jobId: created.job.id,
+            status: created.job.status || 'pending',
+            reused: Boolean(created.reused),
+            worker: cropWorkerStatus()
+          };
+        } catch (error) {
+          cropQueueWarning = error?.message || String(error);
+        }
+      }
+
       const variantInventory = buildOwnSilviaInventory({
         artworkId: body.artwork_id,
         catalog: products,
@@ -2601,11 +2633,14 @@ const server = http.createServer(async (req, res) => {
 
       const taxonomyPromise = getCachedTaxonomyProperties(session, body.taxonomy_id);
       const mediaPrepStartedAt = Date.now();
-      // Validate preset media before Etsy creates or mutates a draft. This keeps
-      // missing one-time preset files from creating a partial listing or causing
-      // an unhandled rejected promise while other Etsy writes are in progress.
-      const mediaPlan = await prepareMediaPlan({ session, manifest });
-      const mediaPrepMs = Date.now() - mediaPrepStartedAt;
+      // Start image sorting/download/optimization immediately and let it run while
+      // Etsy creates/configures the draft. This removes media-prep time from the
+      // critical path without performing concurrent Etsy writes.
+      let mediaPrepMs = 0;
+      const mediaPlanPromise = prepareMediaPlan({ session, manifest }).then(
+        (plan) => ({ ok: true, plan, ms: Date.now() - mediaPrepStartedAt }),
+        (error) => ({ ok: false, error, ms: Date.now() - mediaPrepStartedAt })
+      );
 
       let draft;
       const draftStartedAt = Date.now();
@@ -2670,6 +2705,11 @@ const server = http.createServer(async (req, res) => {
       });
       const attributesMs = Date.now() - attributesStartedAt;
 
+      const mediaPrepared = await mediaPlanPromise;
+      mediaPrepMs = mediaPrepared.ms;
+      if (!mediaPrepared.ok) throw mediaPrepared.error;
+      const mediaPlan = mediaPrepared.plan;
+
       const media = await uploadPreparedMediaToEtsy({
         session,
         listingId: draft.listing_id,
@@ -2695,7 +2735,11 @@ const server = http.createServer(async (req, res) => {
         title: draft.title || body.title,
         resumed: Boolean(draft.resumed),
         url: draft.url || null,
-        attributeWarnings: attributes.warnings,
+        attributeWarnings: [
+          ...attributes.warnings,
+          ...(cropQueueWarning ? ['Production crop queue: ' + cropQueueWarning] : [])
+        ],
+        cropQueue,
         media,
         mockupSort: media.mockupSort,
         presetMedia: {
