@@ -6,6 +6,7 @@ import { renderDashboard } from './dashboard.mjs';
 import { renderProductCreator } from './product-creator.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
+import { renderListingConverterPage } from './listing-converter-page.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
 import { pricingCatalogForZone, pricingCatalogForMarket, publicShippingPricingConfig } from './pricing.mjs';
 import { scanSupplierComparison } from './supplier-comparison.mjs';
@@ -302,6 +303,97 @@ async function buildExistingPriceSyncPreview(session) {
     skippedVariantCount,
     listings: details
   };
+}
+
+
+const LISTING_CONVERTER_MAP_KEY = 'migrations/gelato-to-silvia-map-v1.json';
+
+async function loadListingConverterMap() {
+  try {
+    if (!(await artworkObjectExists(LISTING_CONVERTER_MAP_KEY))) {
+      return { version: 1, listings: {} };
+    }
+    const value = await getJsonObject(LISTING_CONVERTER_MAP_KEY);
+    return {
+      version: 1,
+      ...value,
+      listings: value?.listings && typeof value.listings === 'object' ? value.listings : {}
+    };
+  } catch {
+    return { version: 1, listings: {} };
+  }
+}
+
+async function saveListingConverterMap(map) {
+  const next = {
+    version: 1,
+    ...map,
+    updatedAt: new Date().toISOString(),
+    listings: map?.listings && typeof map.listings === 'object' ? map.listings : {}
+  };
+  await putJsonObject(LISTING_CONVERTER_MAP_KEY, next);
+  return next;
+}
+
+function firstListingImageUrl(image) {
+  return image?.url_570xN
+    || image?.url_fullxfull
+    || image?.url_300x300
+    || image?.url_170x135
+    || null;
+}
+
+function readinessStateFromInventory(inventory) {
+  for (const product of inventory?.products || []) {
+    for (const offering of product?.offerings || []) {
+      const value = Number(offering?.readiness_state_id);
+      if (Number.isInteger(value) && value > 0) return value;
+    }
+  }
+  return null;
+}
+
+function enabledInventoryProducts(inventory) {
+  return (inventory?.products || []).filter(product =>
+    (product?.offerings || []).some(offering => offering?.is_enabled)
+  );
+}
+
+async function converterListingRows(session) {
+  const listings = await allShopListingsForPriceSync(session);
+  const converterMap = await loadListingConverterMap();
+
+  const rows = await mapWithConcurrency(listings, 5, async listing => {
+    let firstImageUrl = null;
+    let imageCount = 0;
+    try {
+      const images = await getEtsyListingImages({
+        listingId: listing.listing_id,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      });
+      imageCount = images.length;
+      firstImageUrl = firstListingImageUrl(images[0]);
+    } catch {
+      // Keep the listing visible even if Etsy's image endpoint fails temporarily.
+    }
+
+    const mapping = converterMap.listings?.[String(listing.listing_id)] || null;
+    return {
+      listingId: Number(listing.listing_id),
+      title: String(listing.title || ''),
+      state: String(listing.state || ''),
+      firstImageUrl,
+      imageCount,
+      artworkId: mapping?.artworkId || null,
+      converted: mapping?.status === 'converted',
+      conversionStatus: mapping?.status || 'not-linked',
+      convertedAt: mapping?.convertedAt || null
+    };
+  });
+
+  return { listings: rows, converterMap };
 }
 
 function sendJson(res, status, value) {
