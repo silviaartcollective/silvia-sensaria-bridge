@@ -29,9 +29,9 @@ test('uses Matte Paper Poster product style name', () => {
   assert.equal(SILVIA_STYLES[0].label, 'Matte Paper Poster');
 });
 
-test('keeps the approved CAD-to-USD planning rate and 20% shop sale explicit', () => {
+test('keeps the approved CAD-to-USD planning rate and 25% shop sale explicit', () => {
   assert.equal(SILVIA_REFERENCE_CAD_PER_USD, 1.39);
-  assert.equal(SILVIA_SALE_DISCOUNT_PERCENT, 20);
+  assert.equal(SILVIA_SALE_DISCOUNT_PERCENT, 25);
 });
 
 test('includes mapped 8x10 poster with exact converted USD retail price', () => {
