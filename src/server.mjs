@@ -29,7 +29,13 @@ import {
   loadArtworkManifest,
   saveArtworkManifest
 } from './artwork-storage.mjs';
-import { buildOwnSilviaInventory } from './variants.mjs';
+import {
+  buildOwnSilviaInventory,
+  productKeyFromVariationValues,
+  retailPriceForProductKey,
+  SILVIA_REFERENCE_CAD_PER_USD,
+  SILVIA_SALE_DISCOUNT_PERCENT
+} from './variants.mjs';
 import {
   FULFILLMENT_RATIOS,
   FULFILLMENT_RATIO_MIN_PIXELS,
@@ -77,6 +83,7 @@ import {
   getShopProductionPartners,
   updateListingProperty,
   getPropertiesByTaxonomyId,
+  getListingInventory,
   updateListingInventory,
   uploadListingImage,
   uploadListingVideo,
@@ -102,6 +109,150 @@ const unresolvedSizes = Object.entries(sizeMatrix)
 let etsySessionCache = null;
 const taxonomyCache = new Map();
 const mockupReferenceCache = new Map();
+
+function moneyAmount(value) {
+  if (value && typeof value === 'object' && Number.isFinite(Number(value.amount))) {
+    const divisor = Number(value.divisor || 100);
+    return Number(value.amount) / divisor;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function firstPropertyValue(product, matcher) {
+  const property = (product?.property_values || []).find(item =>
+    matcher(String(item?.property_name || '').trim().toLowerCase())
+  );
+  return String(property?.values?.[0] || '').trim();
+}
+
+function priceSyncPlanForInventory(inventory) {
+  const cloned = JSON.parse(JSON.stringify(inventory || {}));
+  const changes = [];
+  const skipped = [];
+
+  for (const product of cloned.products || []) {
+    const sizeValue = firstPropertyValue(product, name => name === 'size' || name.includes('size'));
+    const styleValue = firstPropertyValue(product, name => name === 'product - style' || name.includes('style'));
+    const productKey = productKeyFromVariationValues(sizeValue, styleValue);
+
+    if (!productKey) {
+      skipped.push({ sku: String(product?.sku || ''), size: sizeValue, style: styleValue, reason: 'Unrecognized Silvia variation' });
+      continue;
+    }
+
+    const targetUsd = retailPriceForProductKey(productKey);
+    if (!(targetUsd > 0)) {
+      skipped.push({ sku: String(product?.sku || ''), size: sizeValue, style: styleValue, productKey, reason: 'No configured Silvia retail price' });
+      continue;
+    }
+
+    for (const offering of product.offerings || []) {
+      const currentUsd = moneyAmount(offering?.price);
+      if (currentUsd == null) continue;
+      if (Math.abs(currentUsd - targetUsd) < 0.005) continue;
+
+      changes.push({
+        sku: String(product?.sku || ''),
+        productKey,
+        size: sizeValue,
+        style: styleValue,
+        currentUsd: Number(currentUsd.toFixed(2)),
+        targetUsd: Number(targetUsd.toFixed(2)),
+        targetRegularCad: Number((targetUsd * SILVIA_REFERENCE_CAD_PER_USD).toFixed(2)),
+        targetSaleCad: Number((targetUsd * SILVIA_REFERENCE_CAD_PER_USD * (1 - SILVIA_SALE_DISCOUNT_PERCENT / 100)).toFixed(2))
+      });
+      offering.price = Number(targetUsd.toFixed(2));
+    }
+  }
+
+  return {
+    inventory: cloned,
+    changes,
+    skipped,
+    changed: changes.length > 0
+  };
+}
+
+async function allShopListingsForPriceSync(session) {
+  const shopArgs = {
+    shopId: session.shop.shop_id,
+    keystring: session.keystring,
+    sharedSecret: session.sharedSecret,
+    accessToken: session.accessToken
+  };
+  const combined = [];
+  for (const state of ['active', 'draft']) {
+    for (let offset = 0; offset < 500; offset += 100) {
+      const page = await getShopListings({ ...shopArgs, state, limit: 100, offset });
+      const items = page?.results || page || [];
+      combined.push(...items.map(item => ({ ...item, state })));
+      if (!Array.isArray(items) || items.length < 100) break;
+    }
+  }
+  const seen = new Set();
+  return combined.filter(item => {
+    const id = Number(item?.listing_id);
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+async function buildExistingPriceSyncPreview(session) {
+  const listings = await allShopListingsForPriceSync(session);
+  const details = [];
+  let variantChangeCount = 0;
+  let skippedVariantCount = 0;
+
+  for (const listing of listings) {
+    try {
+      const inventory = await getListingInventory({
+        listingId: listing.listing_id,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      });
+      const plan = priceSyncPlanForInventory(inventory);
+      const recognizable = plan.changes.length > 0 ||
+        (inventory?.products || []).some(product => {
+          const sizeValue = firstPropertyValue(product, name => name === 'size' || name.includes('size'));
+          const styleValue = firstPropertyValue(product, name => name === 'product - style' || name.includes('style'));
+          return Boolean(productKeyFromVariationValues(sizeValue, styleValue));
+        });
+
+      if (!recognizable) continue;
+      variantChangeCount += plan.changes.length;
+      skippedVariantCount += plan.skipped.length;
+      details.push({
+        listingId: Number(listing.listing_id),
+        title: String(listing.title || ''),
+        state: String(listing.state || ''),
+        changeCount: plan.changes.length,
+        skippedCount: plan.skipped.length,
+        changes: plan.changes,
+        skipped: plan.skipped
+      });
+    } catch (error) {
+      details.push({
+        listingId: Number(listing.listing_id),
+        title: String(listing.title || ''),
+        state: String(listing.state || ''),
+        changeCount: 0,
+        skippedCount: 0,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  return {
+    listingCount: details.length,
+    listingsWithChanges: details.filter(item => item.changeCount > 0).length,
+    variantChangeCount,
+    skippedVariantCount,
+    listings: details
+  };
+}
 
 function sendJson(res, status, value) {
   const body = JSON.stringify(value, null, 2);
@@ -1472,6 +1623,107 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/pricing/listings-preview') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_r')) {
+        return sendJson(res, 403, {
+          ok: false,
+          needsReauthorization: true,
+          error: 'Reconnect Etsy to grant listings_r before previewing existing listing prices.'
+        });
+      }
+      const preview = await buildExistingPriceSyncPreview(session);
+      return sendJson(res, 200, {
+        ok: true,
+        saleDiscountPercent: SILVIA_SALE_DISCOUNT_PERCENT,
+        referenceCadPerUsd: SILVIA_REFERENCE_CAD_PER_USD,
+        ...preview
+      });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/pricing/sync-listings') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const body = await readJsonBody(req);
+      if (String(body.confirm || '') !== 'UPDATE SILVIA PRICES') {
+        return sendJson(res, 400, {
+          ok: false,
+          error: 'Explicit confirmation is required before changing live Etsy listing prices.'
+        });
+      }
+
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_r') || !scopes.has('listings_w')) {
+        return sendJson(res, 403, {
+          ok: false,
+          needsReauthorization: true,
+          error: 'Reconnect Etsy with listings_r and listings_w before syncing prices.'
+        });
+      }
+
+      const listings = await allShopListingsForPriceSync(session);
+      const results = [];
+      let updatedListings = 0;
+      let updatedVariants = 0;
+
+      for (const listing of listings) {
+        try {
+          const inventory = await getListingInventory({
+            listingId: listing.listing_id,
+            keystring: session.keystring,
+            sharedSecret: session.sharedSecret,
+            accessToken: session.accessToken
+          });
+          const plan = priceSyncPlanForInventory(inventory);
+          if (!plan.changed) continue;
+
+          await withEtsyListingRetry(() => updateListingInventory({
+            listingId: listing.listing_id,
+            inventory: plan.inventory,
+            keystring: session.keystring,
+            sharedSecret: session.sharedSecret,
+            accessToken: session.accessToken
+          }));
+
+          updatedListings += 1;
+          updatedVariants += plan.changes.length;
+          results.push({
+            listingId: Number(listing.listing_id),
+            title: String(listing.title || ''),
+            state: String(listing.state || ''),
+            updatedVariants: plan.changes.length,
+            changes: plan.changes
+          });
+        } catch (error) {
+          results.push({
+            listingId: Number(listing.listing_id),
+            title: String(listing.title || ''),
+            state: String(listing.state || ''),
+            error: error?.message || String(error)
+          });
+        }
+      }
+
+      return sendJson(res, 200, {
+        ok: true,
+        updatedListings,
+        updatedVariants,
+        saleDiscountPercent: SILVIA_SALE_DISCOUNT_PERCENT,
+        referenceCadPerUsd: SILVIA_REFERENCE_CAD_PER_USD,
+        results
+      });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
     }
   }
 
