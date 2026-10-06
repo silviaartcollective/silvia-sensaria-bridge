@@ -16,17 +16,25 @@ export async function getEtsyListingImages({
   sharedSecret,
   accessToken
 }) {
-  const response = await fetch(
-    `${ETSY_API_BASE}/application/listings/${encodeURIComponent(listingId)}/images`,
-    { headers: apiHeaders({ keystring, sharedSecret, accessToken }) }
-  );
-  if (!response.ok) {
-    throw new Error(`Etsy listing images fetch failed (${response.status}): ${await response.text()}`);
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const response = await fetch(
+      `${ETSY_API_BASE}/application/listings/${encodeURIComponent(listingId)}/images`,
+      { headers: apiHeaders({ keystring, sharedSecret, accessToken }) }
+    );
+    if (response.ok) {
+      const data = await response.json();
+      return (data.results || data || [])
+        .slice()
+        .sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+    }
+
+    const detail = await response.text();
+    lastError = new Error(`Etsy listing images fetch failed (${response.status}): ${detail}`);
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 3) break;
+    await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
   }
-  const data = await response.json();
-  return (data.results || data || [])
-    .slice()
-    .sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+  throw lastError || new Error('Etsy listing images fetch failed.');
 }
 
 export async function chooseRecentMockupReference({
