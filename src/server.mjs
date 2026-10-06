@@ -32,6 +32,7 @@ import {
 import {
   buildOwnSilviaInventory,
   productKeyFromVariationValues,
+  normalizeSize,
   retailPriceForProductKey,
   SILVIA_REFERENCE_CAD_PER_USD,
   SILVIA_SALE_DISCOUNT_PERCENT
@@ -126,6 +127,41 @@ function firstPropertyValue(product, matcher) {
   return String(property?.values?.[0] || '').trim();
 }
 
+function productKeyForExistingInventoryProduct(product) {
+  const properties = Array.isArray(product?.property_values) ? product.property_values : [];
+  const values = properties.flatMap(property =>
+    Array.isArray(property?.values) ? property.values.map(value => String(value || '').trim()) : []
+  ).filter(Boolean);
+
+  let sizeValue = firstPropertyValue(product, name => name === 'size' || name.includes('size'));
+  if (!sizeValue) {
+    sizeValue = values.find(value => Boolean(normalizeSize(value))) || '';
+  }
+
+  let styleValue = firstPropertyValue(product, name => name === 'product - style' || name.includes('style'));
+  if (!styleValue) {
+    styleValue = values.find(value => /framed\s*canvas|canvas|poster|paper|print/i.test(value)) || '';
+  }
+
+  let key = productKeyFromVariationValues(sizeValue, styleValue);
+  if (key) return key;
+
+  // Older/app-created listings may have a valid SAC SKU even when Etsy's
+  // variation property names differ from the current Product Creator labels.
+  const sku = String(product?.sku || '').trim().toUpperCase();
+  const match = sku.match(/^SAC\d+-(P|C|FC)-(\d{3,4})(?:-(BLK|WHT|NAT|BRN|DWD))?$/);
+  if (!match) return null;
+
+  const [, format, digits, frameRaw] = match;
+  const size = digits.length === 4
+    ? `${Number(digits.slice(0, 2))}x${Number(digits.slice(2))}`
+    : `${Number(digits.slice(0, 1))}x${Number(digits.slice(1))}`;
+  let frame = frameRaw || 'NONE';
+  if (frame === 'DWD') frame = 'BRN';
+  if (format === 'FC' && frame === 'NONE') return null;
+  return `${format}|${size}|${format === 'FC' ? frame : 'NONE'}`;
+}
+
 function priceSyncPlanForInventory(inventory) {
   const cloned = JSON.parse(JSON.stringify(inventory || {}));
   const changes = [];
@@ -134,7 +170,7 @@ function priceSyncPlanForInventory(inventory) {
   for (const product of cloned.products || []) {
     const sizeValue = firstPropertyValue(product, name => name === 'size' || name.includes('size'));
     const styleValue = firstPropertyValue(product, name => name === 'product - style' || name.includes('style'));
-    const productKey = productKeyFromVariationValues(sizeValue, styleValue);
+    const productKey = productKeyForExistingInventoryProduct(product);
 
     if (!productKey) {
       skipped.push({ sku: String(product?.sku || ''), size: sizeValue, style: styleValue, reason: 'Unrecognized Silvia variation' });
@@ -204,6 +240,7 @@ async function buildExistingPriceSyncPreview(session) {
   const details = [];
   let variantChangeCount = 0;
   let skippedVariantCount = 0;
+  let recognizedListingCount = 0;
 
   for (const listing of listings) {
     try {
@@ -214,30 +251,40 @@ async function buildExistingPriceSyncPreview(session) {
         accessToken: session.accessToken
       });
       const plan = priceSyncPlanForInventory(inventory);
-      const recognizable = plan.changes.length > 0 ||
-        (inventory?.products || []).some(product => {
-          const sizeValue = firstPropertyValue(product, name => name === 'size' || name.includes('size'));
-          const styleValue = firstPropertyValue(product, name => name === 'product - style' || name.includes('style'));
-          return Boolean(productKeyFromVariationValues(sizeValue, styleValue));
-        });
+      const recognizableProducts = (inventory?.products || []).filter(product =>
+        Boolean(productKeyForExistingInventoryProduct(product))
+      );
+      const recognized = recognizableProducts.length > 0;
 
-      if (!recognizable) continue;
+      if (recognized) recognizedListingCount += 1;
       variantChangeCount += plan.changes.length;
       skippedVariantCount += plan.skipped.length;
+
       details.push({
         listingId: Number(listing.listing_id),
         title: String(listing.title || ''),
         state: String(listing.state || ''),
+        recognized,
+        canUpdate: recognized && plan.changes.length > 0,
+        productCount: Array.isArray(inventory?.products) ? inventory.products.length : 0,
+        recognizedProductCount: recognizableProducts.length,
         changeCount: plan.changes.length,
         skippedCount: plan.skipped.length,
         changes: plan.changes,
-        skipped: plan.skipped
+        skipped: plan.skipped,
+        note: recognized
+          ? (plan.changes.length ? '' : 'Recognized, but already matches the current price ladder.')
+          : 'Could not map this listing to the Silvia size/style price ladder.'
       });
     } catch (error) {
       details.push({
         listingId: Number(listing.listing_id),
         title: String(listing.title || ''),
         state: String(listing.state || ''),
+        recognized: false,
+        canUpdate: false,
+        productCount: 0,
+        recognizedProductCount: 0,
         changeCount: 0,
         skippedCount: 0,
         error: error?.message || String(error)
@@ -246,7 +293,10 @@ async function buildExistingPriceSyncPreview(session) {
   }
 
   return {
+    shopListingCount: listings.length,
     listingCount: details.length,
+    recognizedListingCount,
+    unrecognizedListingCount: details.filter(item => !item.recognized).length,
     listingsWithChanges: details.filter(item => item.changeCount > 0).length,
     variantChangeCount,
     skippedVariantCount,
@@ -1661,6 +1711,19 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      const requestedListingIds = Array.from(new Set(
+        (Array.isArray(body.listingIds) ? body.listingIds : [])
+          .map(value => Number(value))
+          .filter(value => Number.isInteger(value) && value > 0)
+      ));
+      if (!requestedListingIds.length) {
+        return sendJson(res, 400, {
+          ok: false,
+          error: 'Select at least one Etsy listing to update.'
+        });
+      }
+      const requestedSet = new Set(requestedListingIds);
+
       const session = await getEtsySession({ forceRefresh: true });
       const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
       if (!scopes.has('listings_r') || !scopes.has('listings_w')) {
@@ -1671,7 +1734,11 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      const listings = await allShopListingsForPriceSync(session);
+      const listings = (await allShopListingsForPriceSync(session))
+        .filter(listing => requestedSet.has(Number(listing.listing_id)));
+
+      const foundIds = new Set(listings.map(listing => Number(listing.listing_id)));
+      const missingListingIds = requestedListingIds.filter(id => !foundIds.has(id));
       const results = [];
       let updatedListings = 0;
       let updatedVariants = 0;
@@ -1685,7 +1752,17 @@ const server = http.createServer(async (req, res) => {
             accessToken: session.accessToken
           });
           const plan = priceSyncPlanForInventory(inventory);
-          if (!plan.changed) continue;
+          if (!plan.changed) {
+            results.push({
+              listingId: Number(listing.listing_id),
+              title: String(listing.title || ''),
+              state: String(listing.state || ''),
+              updatedVariants: 0,
+              skipped: true,
+              note: 'No mapped variant price changes were available for this listing.'
+            });
+            continue;
+          }
 
           await withEtsyListingRetry(() => updateListingInventory({
             listingId: listing.listing_id,
@@ -1716,8 +1793,10 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, 200, {
         ok: true,
+        requestedListings: requestedListingIds.length,
         updatedListings,
         updatedVariants,
+        missingListingIds,
         saleDiscountPercent: SILVIA_SALE_DISCOUNT_PERCENT,
         referenceCadPerUsd: SILVIA_REFERENCE_CAD_PER_USD,
         results
