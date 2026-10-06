@@ -84,7 +84,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
           <div class="uploadmeta">Upload only the artwork-specific mockups here. The 3 reusable shop mockups and 1 listing video are appended automatically from the preset library.</div>
           <div class="progress"><span id="upload-progress"></span></div>
           <div class="status" id="upload-status">Choose the master artwork and artwork mockups. They upload to R2 automatically, then attach to the Etsy draft with the preset media.</div>
-          <div class="actions"><button class="btn secondary" id="launch-crop-worker" type="button">Launch Shared Crop Worker</button></div>
+          <div class="actions"><a class="btn secondary" id="launch-crop-worker" href="pod-crop-worker://start">Launch Shared Crop Worker</a></div>
           <div class="status" id="crop-worker-status">Production crops will be queued after the master artwork finishes uploading.</div>
         </div>
 
@@ -369,12 +369,7 @@ async function putFile(url,file,contentType){
   }
 }
 
-function launchCropWorker(){
-  window.location.href='pod-crop-worker://start';
-}
-
 launchCropWorkerButton?.addEventListener('click',()=>{
-  launchCropWorker();
   cropWorkerStatus.className='status';
   cropWorkerStatus.textContent='Crop Worker launch requested. It will claim any queued Silvia crop jobs.';
 });
