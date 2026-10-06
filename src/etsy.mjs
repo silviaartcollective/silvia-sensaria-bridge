@@ -584,6 +584,44 @@ export async function getListingInventory({
   return response.json();
 }
 
+function inventoryPriceDecimal(value) {
+  if (value && typeof value === 'object' && Number.isFinite(Number(value.amount))) {
+    const divisor = Number(value.divisor || 100);
+    return Number((Number(value.amount) / divisor).toFixed(2));
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Number(numeric.toFixed(2)) : value;
+}
+
+function cleanInventoryForUpdate(inventory) {
+  return {
+    products: (inventory?.products || []).map(product => ({
+      sku: String(product?.sku || ''),
+      offerings: (product?.offerings || []).map(offering => ({
+        price: inventoryPriceDecimal(offering?.price),
+        quantity: Number(offering?.quantity || 0),
+        is_enabled: Boolean(offering?.is_enabled),
+        ...(offering?.readiness_state_id != null
+          ? { readiness_state_id: Number(offering.readiness_state_id) }
+          : {})
+      })),
+      property_values: (product?.property_values || []).map(property => ({
+        property_id: Number(property.property_id),
+        property_name: String(property.property_name || ''),
+        scale_id: property.scale_id == null ? null : Number(property.scale_id),
+        value_ids: Array.isArray(property.value_ids)
+          ? property.value_ids.map(value => Number(value)).filter(Number.isFinite)
+          : [],
+        values: Array.isArray(property.values) ? property.values.map(String) : []
+      }))
+    })),
+    price_on_property: inventory?.price_on_property || [],
+    quantity_on_property: inventory?.quantity_on_property || [],
+    sku_on_property: inventory?.sku_on_property || [],
+    readiness_state_on_property: inventory?.readiness_state_on_property || []
+  };
+}
+
 export async function updateListingInventory({
   listingId,
   inventory,
@@ -591,6 +629,7 @@ export async function updateListingInventory({
   sharedSecret,
   accessToken
 }) {
+  const payload = cleanInventoryForUpdate(inventory);
   const response = await fetch(
     `${ETSY_API_BASE}/application/listings/${encodeURIComponent(listingId)}/inventory?legacy=false`,
     {
@@ -599,13 +638,7 @@ export async function updateListingInventory({
         ...apiHeaders({ keystring, sharedSecret, accessToken }),
         'content-type': 'application/json'
       },
-      body: JSON.stringify({
-        products: inventory.products || [],
-        price_on_property: inventory.price_on_property || [],
-        quantity_on_property: inventory.quantity_on_property || [],
-        sku_on_property: inventory.sku_on_property || [],
-        readiness_state_on_property: inventory.readiness_state_on_property || []
-      })
+      body: JSON.stringify(payload)
     }
   );
   if (!response.ok) {
