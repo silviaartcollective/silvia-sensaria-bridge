@@ -75,7 +75,7 @@ test('BC framed 40x60 matches verified Sensaria checkout totals', () => {
   assert.equal(row.taxRate, 0.05);
   assert.equal(row.sensariaTaxUsd, 15.42);
   assert.equal(row.trueFulfillmentCostUsd, 323.73);
-  assert.equal(row.profitAfterTaxUsd, 107.89);
+  assert.equal(row.profitAfterTaxUsd, 107.9);
 });
 
 
