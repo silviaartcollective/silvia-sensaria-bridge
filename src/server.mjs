@@ -530,7 +530,22 @@ async function prepareMediaPlan({ session, manifest }) {
     throw new Error('The 3 preset images + listing video are not installed in R2 yet.');
   }
 
-  const reference = currentMockupReference(session);
+  let reference = currentMockupReference(session);
+  if (!reference) {
+    const shopArgs = {
+      shopId: session.shop.shop_id,
+      keystring: session.keystring,
+      sharedSecret: session.sharedSecret,
+      accessToken: session.accessToken
+    };
+    const listings = await getShopListings({ ...shopArgs, state: 'active', limit: 100 });
+    const sourceListings = (listings.results || listings || []).map((listing) => ({
+      listing_id: listing.listing_id,
+      title: listing.title
+    }));
+    reference = await cacheRecentMockupReference(session, sourceListings);
+  }
+
   const customImages = customMedia.filter((item) =>
     String(item?.contentType || '').startsWith('image/')
   );
@@ -546,7 +561,7 @@ async function prepareMediaPlan({ session, manifest }) {
   ]);
 
   if (!reference) {
-    throw new Error('No locked Etsy mockup reference is available. Open Product Creator once to cache an active listing template.');
+    throw new Error('No usable active Etsy listing was found to use as the locked mockup reference.');
   }
 
   const referenceCustomImages = (reference.images || []).filter((_, index) =>
