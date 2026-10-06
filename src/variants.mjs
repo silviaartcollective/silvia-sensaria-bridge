@@ -39,9 +39,9 @@ export const SILVIA_STYLES = [
 // Only Poster, Canvas and Framed Canvas are used for this Etsy shop.
 // Silvia's approved regular retail ladder is maintained in CAD and converted
 // to Etsy USD at the planning rate 1 USD = 1.39 CAD. Etsy applies the whole-shop
-// 20% promotion separately, so the inventory payload keeps regular/base USD prices.
+// 25% promotion separately, so the inventory payload keeps regular/base USD prices.
 export const SILVIA_REFERENCE_CAD_PER_USD = 1.39;
-export const SILVIA_SALE_DISCOUNT_PERCENT = 20;
+export const SILVIA_SALE_DISCOUNT_PERCENT = 25;
 export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
   P: {
     '8x10': 54.95,
