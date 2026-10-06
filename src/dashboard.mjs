@@ -52,6 +52,7 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
   <div class="brand">Silvia<br>Fulfillment <small>Etsy → Sensaria</small></div>
   <nav>
     <a class="nav active" href="/">Dashboard</a>\n    <a class="nav" href="/product-creator">Product Creator</a>
+    <a class="nav" href="/listing-converter">Gelato → Silvia Converter</a>
         <a class="nav" href="/shipping-profile">Shipping Profile</a>\n<a class="nav" href="/pricing">Pricing & Shipping</a>
     <a class="nav" href="/compare">Supplier Comparison</a>
     <a class="nav" href="/test-order">Test Order</a>
@@ -107,7 +108,7 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
       <div class="chips"><span class="chip">Matte Poster Paper</span><span class="chip">Canvas</span><span class="chip">Framed Canvas</span><span class="chip">40×60 canvas</span></div>
       <div class="eyebrow" style="margin-top:22px">Still needs Sensaria SKU</div>
       <div class="chips">${unresolved}</div>
-      <div class="actions"><a class="btn primary" href="/test-order">Run dry test order</a><a class="btn" href="/r2/status" target="_blank">Check R2 storage</a><a class="btn" href="/etsy/status" target="_blank">Check Etsy connection</a></div>
+      <div class="actions"><a class="btn primary" href="/listing-converter">Convert existing Gelato listings</a><a class="btn" href="/test-order">Run dry test order</a><a class="btn" href="/r2/status" target="_blank">Check R2 storage</a><a class="btn" href="/etsy/status" target="_blank">Check Etsy connection</a></div>
       <div class="notice">No Etsy order is being submitted to Sensaria yet. Live fulfillment stays disabled until artwork preparation, webhooks and a test order are complete.</div>
     </div>
   </section>
