@@ -212,7 +212,7 @@ async function previewExistingPrices(){
 previewPrices.addEventListener('click',previewExistingPrices);
 
 applyPrices.addEventListener('click',async()=>{
-  const confirmed=confirm('Update all recognized active and draft Silvia Etsy variant prices to the current app price ladder?\n\nThis changes live Etsy listing prices. The 25% Etsy sale remains separate.');
+  const confirmed=confirm('Update all recognized active and draft Silvia Etsy variant prices to the current app price ladder?\\n\\nThis changes live Etsy listing prices. The 25% Etsy sale remains separate.');
   if(!confirmed)return;
   applyPrices.disabled=true;
   previewPrices.disabled=true;
