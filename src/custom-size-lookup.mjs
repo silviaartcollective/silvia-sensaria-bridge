@@ -6,6 +6,7 @@ import { getPrintShrimpPricing, printShrimpPriceRow } from './printshrimp.mjs';
 import { getGbpToUsdRate } from './supplier-comparison.mjs';
 import { estimateSupplierLandedCost, landedCostPolicy } from './landed-cost.mjs';
 import { profitScenarioPolicy } from './retail-margin.mjs';
+import { getArteloUnframedPosterCost } from './artelo.mjs';
 
 const sensariaCatalog = JSON.parse(
   readFileSync(new URL('../config/sensaria-custom-catalog.json', import.meta.url), 'utf8')
@@ -328,14 +329,47 @@ async function printShrimpRecord({ productCode, size, countryCode }) {
   }
 }
 
-function arteloRecord(productCode) {
-  return providerRecord({
-    provider: 'Artelo',
-    status: 'not-offered',
-    reason: productCode === 'FC'
-      ? 'The current Artelo integration maps framed posters, not float-framed canvas.'
-      : 'The current Artelo product mapping does not match this shop product family.'
-  });
+async function arteloRecord({ productCode, size, countryCode }) {
+  if (productCode !== 'P') {
+    return providerRecord({
+      provider: 'Artelo',
+      status: 'not-offered',
+      reason: 'Artelo is used here for unframed Matte Poster only; Canvas and Framed Canvas are not treated as compatible.'
+    });
+  }
+
+  try {
+    const quote = await getArteloUnframedPosterCost({
+      countryCode,
+      size,
+      quantity: 1
+    });
+    const total = numeric(quote?.totalBeforeTax);
+    return providerRecord({
+      provider: 'Artelo',
+      eligible: total != null,
+      status: total != null ? 'available' : 'price-unavailable',
+      totalUsd: total,
+      originalTotal: total,
+      currency: quote?.currency || 'USD',
+      productCost: quote?.productionCost,
+      shippingCost: quote?.shippingCost,
+      reason: total != null ? '' : 'Artelo returned the poster route but no complete production + shipping total.',
+      basis: 'Live Artelo catalog cost for IndividualArtPrint, MattePoster, Unframed.',
+      meta: {
+        apiSize: quote?.apiSize || '',
+        productType: 'IndividualArtPrint',
+        frameStyle: 'Unframed',
+        paperType: 'MattePoster'
+      }
+    });
+  } catch (error) {
+    return providerRecord({
+      provider: 'Artelo',
+      status: /size|unsupported|invalid/i.test(String(error?.message || '')) ? 'unsupported-size' : 'unavailable',
+      reason: error?.message || String(error)
+    });
+  }
 }
 
 function priceFloor(adjustedSupplierUsd) {
@@ -406,11 +440,12 @@ export async function lookupCustomSize({
     countryCode: country
   });
 
-  const [prodigi, printify, gelato, printshrimp] = await Promise.all([
+  const [prodigi, printify, gelato, printshrimp, artelo] = await Promise.all([
     prodigiRecord({ productCode: product, size, frame: resolvedFrame, countryCode: country }),
     printifyRecord(row, country),
     gelatoRecord(row, country),
-    printShrimpRecord({ productCode: product, size, countryCode: country })
+    printShrimpRecord({ productCode: product, size, countryCode: country }),
+    arteloRecord({ productCode: product, size, countryCode: country })
   ]);
 
   const raw = {
@@ -419,7 +454,7 @@ export async function lookupCustomSize({
     printshrimp,
     printify,
     gelato,
-    artelo: arteloRecord(product)
+    artelo
   };
 
   const policy = landedCostPolicy();
