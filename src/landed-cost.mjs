@@ -68,6 +68,14 @@ export function estimateSupplierLandedCost(record, { countryCode, policy = lande
     rate = String(record.currency || '').toUpperCase() === 'GBP' ? policy.printShrimpGbpFxReserve : 0;
     confidence = 'supplier-quoted';
     assumptions = 'Supplier states rare import tariffs are covered. GBP quote has an FX/card-conversion contingency; separately assessed local sales tax remains unverified.';
+  } else if (provider === 'Printify') {
+    rate = policy.printifyReserve;
+    confidence = 'estimated';
+    assumptions = 'Catalog production + destination shipping are live supplier values. Taxes and final routing can vary by print provider, so a planning reserve is added.';
+  } else if (provider === 'Gelato') {
+    rate = policy.gelatoReserve;
+    confidence = 'estimated';
+    assumptions = 'Country-level product and shipment pricing is live supplier data. Final address routing, taxes and regional production can vary, so a planning reserve is added.';
   } else {
     return { ...record, modeledLandedUsd: null, contingencyUsd: null, contingencyRate: null, costConfidence: 'unknown-provider' };
   }
