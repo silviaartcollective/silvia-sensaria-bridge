@@ -95,7 +95,20 @@ export async function testArteloConnection() {
 }
 
 function destinationByCode(code) {
-  return ARTELO_DESTINATIONS.find(item => item.code === code) || null;
+  const normalized = String(code || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalized)) return null;
+  return ARTELO_DESTINATIONS.find(item => item.code === normalized) || {
+    code: normalized,
+    label: normalized
+  };
+}
+
+function apiSizeFromLabel(size) {
+  const text = String(size || '').trim().toLowerCase().replace(/[×]/g, 'x').replace(/\s+/g, '');
+  const match = text.match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const encode = value => String(Number(value)).replace('.', 'dot');
+  return `x${encode(match[1])}x${encode(match[2])}`;
 }
 
 function sizeByLabel(label) {
@@ -293,6 +306,52 @@ export async function validateArteloOrderPriceCheck(payload = {}) {
     customPricingAdjustment: number(costs.customPricingAdjustment) || 0,
     wholesaleDiscount: number(costs.wholesaleDiscount) || 0,
     total: number(costs.total),
+    raw
+  };
+}
+
+export async function getArteloUnframedPosterCost({
+  countryCode,
+  size,
+  quantity = 1
+}) {
+  const destination = destinationByCode(String(countryCode || '').toUpperCase());
+  if (!destination) throw new Error('Unsupported Artelo destination country code');
+
+  const apiSize = apiSizeFromLabel(size);
+  if (!apiSize) throw new Error('Invalid Artelo poster size');
+
+  const raw = await arteloRequest('/catalog/get-costs', {
+    method: 'POST',
+    body: {
+      catalogProductId: 'IndividualArtPrint',
+      size: apiSize,
+      frameStyle: 'Unframed',
+      frameColor: null,
+      includeMats: false,
+      includeFramingService: false,
+      includeHangingPins: false,
+      paperType: 'MattePoster',
+      shippingDestination: destination.code,
+      quantity
+    }
+  });
+
+  const productionCost = Number(raw?.productionCost);
+  const shippingCost = Number(raw?.shippingCost);
+  return {
+    countryCode: destination.code,
+    country: destination.label,
+    size: String(size || ''),
+    apiSize,
+    quantity,
+    currency: 'USD',
+    productionCost: Number.isFinite(productionCost) ? productionCost : null,
+    shippingCost: Number.isFinite(shippingCost) ? shippingCost : null,
+    totalBeforeTax:
+      Number.isFinite(productionCost) && Number.isFinite(shippingCost)
+        ? productionCost + shippingCost
+        : null,
     raw
   };
 }
