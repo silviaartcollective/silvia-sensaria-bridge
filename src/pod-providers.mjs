@@ -2,6 +2,7 @@ import { arteloConfigStatus, testArteloConnection } from './artelo.mjs';
 import { prodigiConfigStatus, testProdigiConnection } from './prodigi.mjs';
 import { printShrimpConfigStatus, testPrintShrimpConnection } from './printshrimp.mjs';
 import { printifyConfigStatus, testPrintifyConnection } from './printify.mjs';
+import { gelatoConfigStatus, testGelatoConnection } from './gelato.mjs';
 
 export function podProviderStatus() {
   return {
@@ -25,6 +26,12 @@ export function podProviderStatus() {
     },
     Printify: {
       ...printifyConfigStatus(),
+      liveSubmissionEnabled:
+        String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED || '').toLowerCase() === 'true' &&
+        String(process.env.PRINTIFY_FULFILLMENT_ENABLED || '').toLowerCase() === 'true'
+    },
+    Gelato: {
+      ...gelatoConfigStatus(),
       liveSubmissionEnabled: false
     }
   };
@@ -36,8 +43,9 @@ export async function testPodProvider(provider) {
   if (key === 'artelo') return { provider: 'Artelo', ...(await testArteloConnection()) };
   if (key === 'printshrimp') return { provider: 'PrintShrimp', ...(await testPrintShrimpConnection('CA')) };
   if (key === 'printify') return { provider: 'Printify', ...(await testPrintifyConnection()) };
+  if (key === 'gelato') return { provider: 'Gelato', ...(await testGelatoConnection()) };
   if (key === 'sensaria') {
     return { provider: 'Sensaria', ok: true, integration: 'Sensaria GO / CSV', apiCredentialRequired: false };
   }
-  throw new Error('Unknown POD provider. Use sensaria, prodigi, artelo, printshrimp, or printify.');
+  throw new Error('Unknown POD provider. Use sensaria, prodigi, artelo, printshrimp, printify, or gelato.');
 }
