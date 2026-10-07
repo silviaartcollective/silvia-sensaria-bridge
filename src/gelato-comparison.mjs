@@ -400,10 +400,19 @@ function parseShipmentPrice(payload, productUid) {
   const methods = Array.isArray(quantity?.methods) ? quantity.methods : [];
   const normal = methods.filter(item => String(item?.type || '').toLowerCase() === 'normal');
   const source = normal.length ? normal : methods;
-  const selected = [...source].sort((a, b) => Number(a?.minPrice ?? Infinity) - Number(b?.minPrice ?? Infinity))[0];
+  // Gelato documents minPrice as the CHEAPEST rate within a country,
+  // not an actual shipment quote to a specific customer address. Using it
+  // as a customer's expected shipping cost underprices regional deliveries.
+  // Prefer the country-average normal residential rate, retaining the min
+  // for transparency; an address-specific Gelato checkout may still differ.
+  const selected = [...source].sort((a, b) =>
+    Number(a?.avgPrice ?? a?.minPrice ?? Infinity) -
+    Number(b?.avgPrice ?? b?.minPrice ?? Infinity)
+  )[0];
   if (!selected) return null;
   return {
-    price: numeric(selected.minPrice ?? selected.avgPrice),
+    price: numeric(selected.avgPrice ?? selected.minPrice),
+    minimumPrice: numeric(selected.minPrice),
     averagePrice: numeric(selected.avgPrice),
     methodUid: selected.shipmentMethodUid || '',
     type: selected.type || '',
@@ -578,7 +587,7 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
       productCost: Math.round(best.productCost * 100) / 100,
       shippingCost: Math.round(best.shippingCost * 100) / 100,
       reason: '',
-      basis: 'Gelato live country-specific product price + normal residential shipment price.',
+      basis: 'Gelato product price + country-average normal residential shipping estimate (not address-specific checkout). Actual shipping can differ by postcode and carrier.',
       meta: {
         catalogUid: best.candidate.catalog.catalogUid,
         catalogTitle: best.candidate.catalog.title || '',
@@ -588,6 +597,9 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
           height: Math.round(actual.height * 100) / 100
         } : null,
         shipmentMethodUid: best.quote?.shipping?.methodUid || '',
+        shippingCountryMinimumUsd: best.quote?.shipping?.minimumPrice ?? null,
+        shippingCountryAverageUsd: best.quote?.shipping?.averagePrice ?? null,
+        shippingEstimateScope: 'country average, not recipient-address checkout',
         shipmentType: best.quote?.shipping?.type || '',
         deliveryDays: best.quote?.shipping ? {
           min: best.quote.shipping.minDays,
