@@ -1774,8 +1774,12 @@ const server = http.createServer(async (req, res) => {
     const providers = podProviderStatus();
     return sendHtml(res, 200, renderSupplierComparisonPage({
       configured: {
+        sensaria: Boolean(providers?.Sensaria?.ready),
         prodigi: Boolean(providers?.Prodigi?.ready),
-        printshrimp: Boolean(providers?.PrintShrimp?.ready)
+        printshrimp: Boolean(providers?.PrintShrimp?.ready),
+        printify: Boolean(providers?.Printify?.ready),
+        gelato: Boolean(providers?.Gelato?.ready),
+        artelo: Boolean(providers?.Artelo?.ready)
       }
     }));
   }
