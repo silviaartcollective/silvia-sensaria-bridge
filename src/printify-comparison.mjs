@@ -12,6 +12,7 @@ let catalogCache = null;
 let catalogPromise = null;
 
 function numeric(value) {
+  if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -103,8 +104,11 @@ function costMapKey(blueprintId, providerId, variantId) {
 
 async function buildShopCostMap() {
   const map = new Map();
+  let productCount = 0;
+  let warning = '';
   try {
     const products = await getPrintifyProducts();
+    productCount = products.length;
     for (const product of products) {
       const blueprintId = Number(product?.blueprint_id);
       const providerId = Number(product?.print_provider_id);
@@ -115,11 +119,12 @@ async function buildShopCostMap() {
         map.set(costMapKey(blueprintId, providerId, variant.id), cost);
       }
     }
-  } catch {
-    // Catalog availability can still be compared even if this shop has no
-    // created Printify products or product-list access is unavailable.
+  } catch (error) {
+    // Never misreport a missing shop ID / missing permissions as an actual
+    // supplier price of $0. Catalog/shipping lookup remains independent.
+    warning = error?.message || String(error);
   }
-  return map;
+  return { map, warning, productCount };
 }
 
 function shippingProfileForVariant(shipping, variantId, countryCode) {
@@ -210,7 +215,13 @@ async function loadCatalog({ fresh = false } = {}) {
       }
     })).filter(Boolean);
 
-    catalogCache = { fetchedAt: Date.now(), rows, shopCosts };
+    catalogCache = {
+      fetchedAt: Date.now(), rows,
+      shopCosts: shopCosts.map,
+      shopCostWarning: shopCosts.warning,
+      shopProductCount: shopCosts.productCount,
+      pricedVariantCount: shopCosts.map.size
+    };
     return catalogCache;
   })();
 
@@ -263,8 +274,13 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
     }
 
     candidates.sort((a, b) => {
+      // Prefer a complete production + shipping quote; of those, choose
+      // the lowest real landed total, NOT merely the lowest shipping fee.
       if (a.totalUsd == null && b.totalUsd != null) return 1;
       if (a.totalUsd != null && b.totalUsd == null) return -1;
+      if (a.totalUsd != null && b.totalUsd != null && a.totalUsd !== b.totalUsd) {
+        return a.totalUsd - b.totalUsd;
+      }
       if (a.shippingCost !== b.shippingCost) return a.shippingCost - b.shippingCost;
       return String(a.offering.providerTitle).localeCompare(String(b.offering.providerTitle));
     });
@@ -285,7 +301,9 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
         currency: 'USD',
         productCost: null,
         shippingCost: best.shippingCost,
-        reason: 'Printify confirms this exact size/provider/shipping route. Its Catalog API does not expose fulfillment cost; a cost is only available from an existing Printify shop product using the same blueprint/provider/variant.',
+        reason: loaded.shopCostWarning
+          ? `Printify offers this size and shipping route, but production cost could not be loaded from the connected shop: ${loaded.shopCostWarning}. It cannot be safely ranked until cost is verified.`
+          : `Printify offers this size and shipping route, but there is no production cost for this exact blueprint/provider/variant in the connected shop's ${loaded.shopProductCount} products. The catalog API only exposes shipping, not production cost. It cannot be safely ranked yet.`,
         basis: 'Live Printify catalog availability + destination shipping. Production cost is not exposed by the catalog endpoint.',
         meta: {
           blueprintId: best.offering.blueprintId,
@@ -295,7 +313,9 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
           providerCountry: best.offering.providerLocation?.country || '',
           variantId: best.variant?.id,
           variantTitle: best.variant?.title || '',
-          candidates: candidates.length
+          candidates: candidates.length,
+          shopProductCount: loaded.shopProductCount,
+          pricedVariantCount: loaded.pricedVariantCount
         }
       });
       continue;
