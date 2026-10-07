@@ -94,11 +94,12 @@ test('Printify scans all canvas models and their print providers, not just Jondo
       { blueprint_id: 1160, print_provider_id: 3,
         variants: [{ id: 113, cost: 5500 }] }
     ] });
-    const parts = href.match(/\/catalog\/blueprints\/(\d+)\/print_providers(?:\/(\d+))?\/(variants|shipping)?/);
+    const providersMatch = href.match(/\/catalog\/blueprints\/(\d+)\/print_providers\.json$/);
+    if (providersMatch) return json(providerList[Number(providersMatch[1])] || []);
+    const parts = href.match(/\/catalog\/blueprints\/(\d+)\/print_providers\/(\d+)\/(variants|shipping)\.json$/);
     if (parts) {
       const bp = Number(parts[1]);
-      const provider = parts[2] ? Number(parts[2]) : null;
-      if (provider == null) return json(providerList[bp] || []);
+      const provider = Number(parts[2]);
       const id = variantId[`${bp}/${provider}`];
       if (parts[3] === 'variants') return json({ variants: [{
         id, title: '20x30', options: { size: '20x30' }
