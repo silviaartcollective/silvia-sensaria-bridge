@@ -3,6 +3,7 @@ import {
   getPrintifyVariants,
   getPrintifyProducts,
   createPrintifyPricingDraft,
+  getPrintifyPricingDraft,
   deletePrintifyPricingDraft,
   uploadPrintifyPricingImage,
   printifyConfigStatus
@@ -176,10 +177,20 @@ export async function buildPrintifyCostsForRequest({
         );
         // Use the official POST product creation endpoint, never /publish or /orders.
         draft = await createUnpublished(payload, getImageId);
-        if (!draft?.id || !Array.isArray(draft?.variants)) {
-          throw new Error('Printify created no readable draft ID or variant price information');
+        if (!draft?.id) {
+          throw new Error('Printify did not return a draft product ID');
         }
-        const prices = draft.variants
+        // Some Printify shops populate product costs after the POST responds.
+        // Re-fetch the private draft before deciding a variant is unavailable.
+        let pricedDraft = draft;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const pricesReturned = Array.isArray(pricedDraft?.variants) &&
+            pricedDraft.variants.some(v => Number.isSafeInteger(safeNumber(v?.cost)));
+          if (pricesReturned) break;
+          if (attempt) await new Promise(resolve => setTimeout(resolve, 800));
+          pricedDraft = await getPrintifyPricingDraft(draft.id);
+        }
+        const prices = (pricedDraft?.variants || [])
           .filter(v => Number.isSafeInteger(safeNumber(v?.cost)) && Number(v.cost) >= 0)
           .map(v => ({
             blueprintId: target.blueprintId,
