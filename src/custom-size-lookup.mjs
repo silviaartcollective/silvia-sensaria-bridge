@@ -547,7 +547,7 @@ export async function lookupCustomSize({
       providerProfits,
       label: mode === 'separate' ? 'Customer pays shipping' : 'Free shipping included',
       note: mode === 'separate'
-        ? 'Enter this estimated fixed charge in the Shipping price field of Etsy's private custom order. No shipping profile is needed. Verify exact destination costs where possible; standard listings are unchanged.'
+        ? 'Enter this estimated fixed charge in the Shipping price field of an Etsy private custom order. No shipping profile is needed. Verify exact destination costs where possible; standard listings are unchanged.'
         : 'The customer pays no separate delivery charge. All supplier shipping and contingency costs are covered by the artwork price.',
       warning: mode === 'separate' && !pricing
         ? 'A separate customer shipping price cannot be calculated because this supplier has no complete shipping-cost breakdown.'
@@ -627,6 +627,6 @@ export async function lookupCustomSize({
     recommendedShippingMode,
     shippingThresholdUsd,
     shippingOptions,
-    note: 'Custom lookup is read-only. API providers are queried for this exact size/product/country. Sensaria uses the captured full catalog and captured shipping zones because no equivalent live catalog/quote API is configured. No supplier order is created. These are draft custom-order selling and shipping suggestions; for a private Etsy custom order, enter the intended artwork charge under Price and any delivery charge under Shipping price (US$0 if free). No shipping profile is needed. Check the buyer's final checkout for extra sale or coupon discounts; standard listing shipping remains unchanged.'
+    note: 'Custom lookup is read-only. API providers are queried for this exact size/product/country. Sensaria uses the captured full catalog and captured shipping zones because no equivalent live catalog/quote API is configured. No supplier order is created. These are draft custom-order selling and shipping suggestions; for a private Etsy custom order, enter the intended artwork charge under Price and any delivery charge under Shipping price (US$0 if free). No shipping profile is needed. Check the final buyer checkout for extra sale or coupon discounts; standard listing shipping remains unchanged.'
   };
 }
