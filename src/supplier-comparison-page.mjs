@@ -71,8 +71,8 @@ select,button{border:1px solid var(--line);border-radius:9px;background:#fff;pad
 </aside>
 <main>
 <h1>Supplier Comparison</h1>
-<p class="sub">Final regular-catalog comparison across Sensaria, Prodigi, PrintShrimp, Printify and Gelato for the exact Silvia Etsy sizes and destination country. Artelo remains visible but is not scored where its current product mapping does not match Silvia's Poster, Canvas or Framed Canvas products.</p>
-<div class="notice"><strong>Planning only:</strong> this page reads supplier catalogs and quote/pricing APIs. It never creates supplier orders, changes Etsy listings or enables live fulfillment. Gelato uses country-level shipment pricing; Printify compares individual print providers.</div>
+<p class="sub">Final regular-catalog comparison across Sensaria, Prodigi, PrintShrimp, Printify, Gelato and compatible Artelo poster routes for the exact Silvia Etsy sizes and destination country. Canvas and Framed Canvas remain excluded only for providers whose actual product catalog does not offer a compatible match.</p>
+<div class="notice"><strong>Planning only:</strong> this page reads supplier catalogs and quote/pricing APIs. It never creates supplier orders, changes Etsy listings or enables live fulfillment. Gelato uses live product + country shipment pricing; Printify checks individual print providers and shows availability even when its public Catalog API does not expose a production cost.</div>
 <section class="card">
 <div class="providers-head"><div><h2 style="font:500 23px Georgia,serif;margin:0 0 5px">Provider connections</h2><div class="provider-detail">Test each live API before running the final comparison.</div></div><button id="test-all">Test all connections</button></div>
 <div class="providers-grid">${providerRows}</div>
