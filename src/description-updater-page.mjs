@@ -14,6 +14,7 @@ button{padding:11px 16px;border:1px solid var(--line);border-radius:9px;backgrou
 .toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px}.status{padding:12px 14px;background:#eee9df;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;margin:12px 0}.status.ok{background:var(--soft);color:var(--green)}.status.fail{background:#fae8e2;color:#992e28}
 .row{display:flex;align-items:flex-start;gap:12px;padding:13px 0;border-bottom:1px solid var(--line)}.row label{flex:1;cursor:pointer}.row strong{font-size:13px}.row small{display:block;color:var(--muted);margin-top:5px;line-height:1.55}input[type=checkbox]{width:17px;height:17px;accent-color:#4e6853}
 input[type=text]{padding:11px;border:1px solid var(--line);border-radius:9px;max-width:100%;width:230px}
+textarea{width:100%;min-height:135px;padding:12px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);font:13px/1.5 inherit;resize:vertical;white-space:pre-wrap} .label{display:block;margin-bottom:9px;font-weight:700} .example>div{min-width:0}
 .muted{color:var(--muted);font-size:12px}.hidden{display:none!important}
 @media(max-width:800px){.shell{grid-template-columns:1fr}aside{display:none}main{padding:24px 18px}.example{grid-template-columns:1fr}h1{font-size:31px}}
 </style></head><body><div class="shell"><aside><div class="brand">Silvia<br>Fulfillment<small>Etsy → Sensaria</small></div><nav>
@@ -23,17 +24,23 @@ input[type=text]{padding:11px;border:1px solid var(--line);border-radius:9px;max
 <a class="nav" href="/custom-size">Custom Size Lookup</a><a class="nav" href="/custom-orders">Custom Orders</a>
 <a class="nav active" href="/description-updater">Description Updater</a>
 <a class="nav" href="/test-order">Test Order</a></nav><div class="foot">Silvia Art Collective<br>Private listing editor</div></aside>
-<main><h1>Description Updater</h1><p>Correct canvas thickness across existing Etsy descriptions, while keeping the rest of each description unchanged.</p>
-<section class="card"><h2>Canvas thickness correction</h2>
-<div class="example"><div class="before"><div class="label">Current wording</div><span>(Thickness: 2 cm)</span></div>
-<div class="after"><div class="label">Replacement</div><strong>(Thickness: 1.25" / 3.2 cm)</strong></div></div>
-<p class="muted">1.25 inches is exactly 3.175 cm, rounded to 3.2 cm. Only active listings containing this exact original wording are eligible.</p>
+<main><h1>Description Updater</h1>
+<p>Find and replace any text in your existing Etsy listing descriptions. Preview every matching listing and approve exactly which ones to update.</p>
+<section class="card"><h2>Find &amp; replace text</h2>
+<div class="toolbar"><button id="preset" type="button">Use canvas thickness correction</button><button id="clear" type="button">Clear both fields</button></div>
+<div class="example">
+<div class="before"><label class="label" for="find-text">Find this text (case-sensitive)</label>
+<textarea id="find-text" spellcheck="false" maxlength="4000" placeholder="Paste the exact wording you want to find">(Thickness: 2 cm)</textarea></div>
+<div class="after"><label class="label" for="replace-text">Replace with your own wording</label>
+<textarea id="replace-text" spellcheck="false" maxlength="10000" placeholder="Type the replacement text">(Thickness: 1.25&quot; / 3.2 cm)</textarea></div>
+</div>
+<p class="muted">Works with any words, paragraphs or multiple lines. Exact text and capitalization must match. Leave the replacement field empty to remove the matched text. All other wording stays unchanged.</p>
 <div class="toolbar"><button id="preview" class="primary">Scan Etsy descriptions</button><span id="count" class="muted">No scan yet</span></div>
-<div class="status" id="status">Preview first. No Etsy descriptions have been changed.</div>
+<div class="status" id="status">Read-only until you explicitly approve selected updates. No descriptions have been changed.</div>
 </section>
 <section class="card hidden" id="results">
 <h2>Matching listings</h2><div class="toolbar"><label><input type="checkbox" id="select-all" checked> Select all matches</label></div>
-<div id="matches"></div><p class="muted">Only selected listings are updated. This action changes descriptions on Etsy immediately.</p>
+<div id="matches"></div><p class="muted">Review the before/after preview below. Only selected listings will be updated after confirmation. Changes on Etsy are immediate.</p>
 <div class="toolbar"><input type="text" id="confirm" placeholder="Type UPDATE DESCRIPTIONS" autocomplete="off"><button class="primary" id="apply" disabled>Apply to selected listings</button></div>
 <div class="status" id="apply-status">No changes applied.</div></section>
 </main></div><script src="/description-updater-client.js" defer></script></body></html>`;
