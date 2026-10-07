@@ -136,6 +136,27 @@ export async function getPrintifyShippingMethod(
   );
 }
 
+export async function getPrintifyProducts(shopId, { limit = 50 } = {}) {
+  const id = await resolvePrintifyShopId(shopId);
+  const products = [];
+  const pageSize = Math.min(Math.max(Number(limit) || 50, 1), 50);
+
+  for (let page = 1; page <= 100; page++) {
+    const query = new URLSearchParams({
+      page: String(page),
+      limit: String(pageSize)
+    });
+    const payload = await printifyRequest(
+      `/shops/${encodeURIComponent(id)}/products.json?${query}`
+    );
+    const batch = Array.isArray(payload?.data) ? payload.data : [];
+    products.push(...batch);
+    const lastPage = Number(payload?.last_page || 0);
+    if (!batch.length || (lastPage && page >= lastPage) || batch.length < pageSize) break;
+  }
+  return products;
+}
+
 export async function findPrintifyWallArtBlueprints() {
   const blueprints = await getPrintifyBlueprints();
   const pattern = /(poster|canvas|framed|wall art|fine art|print)/i;
