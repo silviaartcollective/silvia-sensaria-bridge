@@ -1791,6 +1791,29 @@ const server = http.createServer(async (req, res) => {
     return res.end(script);
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/description-updater/preview') {
+    if (!requireAdminApi(req, res)) return;
+    if (!String(req.headers['content-type'] || '').toLowerCase().includes('application/json')) {
+      return sendJson(res, 415, { ok: false, error: 'JSON request required.' });
+    }
+    try {
+      const body = await readJsonBody(req);
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_r')) {
+        return sendJson(res, 403, { ok: false, error: 'Etsy listings_r permission required.' });
+      }
+      return sendJson(res, 200, {
+        ok: true,
+        ...(await previewDescriptionUpdates(session, {
+          findText: body.findText, replaceText: body.replaceText
+        }))
+      });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: String(error?.message || error) });
+    }
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/description-updater/preview') {
     if (!requireAdminApi(req, res)) return;
     try {
@@ -1825,7 +1848,7 @@ const server = http.createServer(async (req, res) => {
       if (!scopes.has('listings_w') || !scopes.has('listings_r')) {
         return sendJson(res, 403, { ok: false, error: 'Etsy listings_r and listings_w required.' });
       }
-      return sendJson(res, 200, { ok: true, ...(await applyDescriptionUpdates(session, body.selections)) });
+      return sendJson(res, 200, { ok: true, ...(await applyDescriptionUpdates(session, body.selections, { findText: body.findText, replaceText: body.replaceText })) });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: String(error?.message || error) });
     }
