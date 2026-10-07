@@ -459,6 +459,30 @@ export async function lookupCustomSize({
   const pricing = winner
     ? priceFloor(winnerCost, winner.totalUsd, retailPolicy)
     : null;
+  // Expose estimated profitability of EACH Printify print provider/model at
+  // the SAME recommended Etsy selling price, even when it is not the winner.
+  // This makes expensive providers and potential losses immediately visible.
+  const printifyOffers = suppliers.printify?.meta?.offers;
+  if (pricing && Array.isArray(printifyOffers)) {
+    for (const offer of printifyOffers) {
+      const offeredTotal = numeric(offer.quotedTotalUsd);
+      if (offeredTotal === null) {
+        offer.profit = null;
+        continue;
+      }
+      const modeledOffer = estimateSupplierLandedCost({
+        provider: 'Printify', eligible: true, currency: 'USD',
+        totalUsd: offeredTotal
+      }, { countryCode: country, policy });
+      offer.profit = profitAtRetail({
+        quotedCostUsd: offeredTotal,
+        planningCostUsd: modeledOffer.modeledLandedUsd,
+        salePriceUsd: pricing.salePriceAfterDiscountUsd,
+        etsyFeePercent: pricing.etsyFeeReservePercent,
+        cadPerUsd: pricing.assumedCadPerUsd
+      });
+    }
+  }
   const providerProfits = Object.fromEntries(
     Object.entries(suppliers).map(([key, record]) => [
       key,
