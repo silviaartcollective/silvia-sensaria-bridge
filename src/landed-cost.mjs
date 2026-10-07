@@ -28,6 +28,8 @@ export function landedCostPolicy() {
     arteloCanadaReserve: percent('SAC_ARTELO_CANADA_RESERVE_PERCENT', 18),
     arteloEuropeReserve: percent('SAC_ARTELO_EU_RESERVE_PERCENT', 28),
     arteloUsReserve: percent('SAC_ARTELO_US_RESERVE_PERCENT', 10),
+    printifyReserve: percent('SAC_PRINTIFY_RESERVE_PERCENT', 20),
+    gelatoReserve: percent('SAC_GELATO_RESERVE_PERCENT', 20),
     printShrimpGbpFxReserve: percent('SAC_PRINTSHRIMP_GBP_FX_RESERVE_PERCENT', 2)
   };
 }
