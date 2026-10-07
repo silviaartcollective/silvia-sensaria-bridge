@@ -51,14 +51,16 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
 <aside>
   <div class="brand">Silvia<br>Fulfillment <small>Etsy → Sensaria</small></div>
   <nav>
-    <a class="nav active" href="/">Dashboard</a>\n    <a class="nav" href="/product-creator">Product Creator</a>
+    <a class="nav active" href="/">Dashboard</a>
+    <a class="nav" href="/product-creator">Product Creator</a>
     <a class="nav" href="/listing-converter">Gelato → Silvia Converter</a>
-        <a class="nav" href="/shipping-profile">Shipping Profile</a>\n<a class="nav" href="/pricing">Pricing & Shipping</a>
+    <a class="nav" href="/shipping-profile">Shipping Profile</a>
+    <a class="nav" href="/pricing">Pricing & Shipping</a>
     <a class="nav" href="/compare">Supplier Comparison</a>
     <a class="nav" href="/test-order">Test Order</a>
-    <a class="nav" href="#orders">Orders</a>
-    <a class="nav" href="#artworks">Artwork Library</a>
-    <a class="nav" href="#mappings">Product SKUs</a>
+    <a class="nav" href="/#orders">Orders</a>
+    <a class="nav" href="/#artworks">Artwork Library</a>
+    <a class="nav" href="/#mappings">Product SKUs</a>
     <a class="nav" href="/etsy/status" target="_blank">Etsy Status</a>
     <a class="nav" href="/r2/status" target="_blank">R2 Status</a>
     <a class="nav" href="/logout">Log out</a>
