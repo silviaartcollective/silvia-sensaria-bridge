@@ -3,6 +3,9 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { renderDashboard } from './dashboard.mjs';
+import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
+import { previewDescriptionUpdates, applyDescriptionUpdates } from './description-updater.mjs';
+
 import { renderProductCreator } from './product-creator.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
@@ -1769,6 +1772,62 @@ const server = http.createServer(async (req, res) => {
         rolledBack: Boolean(createdProfileId && !rollbackError),
         rollbackError
       });
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/description-updater') {
+    if (!requireAdminPage(req, res, '/description-updater')) return;
+    return sendHtml(res, 200, renderDescriptionUpdaterPage());
+  }
+
+  if (req.method === 'GET' && url.pathname === '/description-updater-client.js') {
+    if (!requireAdminApi(req, res)) return;
+    const script = readFileSync(new URL('./description-updater-client.js', import.meta.url), 'utf8');
+    res.writeHead(200, {
+      'content-type': 'application/javascript; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff'
+    });
+    return res.end(script);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/description-updater/preview') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_r')) {
+        return sendJson(res, 403, { ok: false, error: 'Etsy listings_r permission required.' });
+      }
+      return sendJson(res, 200, { ok: true, ...(await previewDescriptionUpdates(session)) });
+    } catch (error) {
+      return sendJson(res, 502, { ok: false, error: String(error?.message || error) });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/description-updater/apply') {
+    if (!requireAdminApi(req, res)) return;
+    const origin = String(req.headers.origin || '');
+    const expectedOrigin = String(req.headers['x-forwarded-proto'] || 'https') + '://' + req.headers.host;
+    if ((origin && origin !== expectedOrigin) || req.headers['sec-fetch-site'] === 'cross-site') {
+      return sendJson(res, 403, { ok: false, error: 'Cross-site request blocked.' });
+    }
+    if (!String(req.headers['content-type'] || '').toLowerCase().includes('application/json')) {
+      return sendJson(res, 415, { ok: false, error: 'JSON request required.' });
+    }
+    try {
+      const body = await readJsonBody(req);
+      if (body.confirm !== 'UPDATE DESCRIPTIONS') {
+        return sendJson(res, 400, { ok: false, error: 'Explicit update confirmation required.' });
+      }
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_w') || !scopes.has('listings_r')) {
+        return sendJson(res, 403, { ok: false, error: 'Etsy listings_r and listings_w required.' });
+      }
+      return sendJson(res, 200, { ok: true, ...(await applyDescriptionUpdates(session, body.selections)) });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: String(error?.message || error) });
     }
   }
 
