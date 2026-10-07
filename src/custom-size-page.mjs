@@ -120,7 +120,7 @@ table.offer-table th{font-size:9px}
   <h2 style="margin:0 0 5px">Provider results</h2>
   <p class="sub" style="margin-bottom:14px">Availability and price are for the exact request above. Hover/status detail explains why a provider is not ranked.</p>
   <div class="table-wrap" id="table-wrap">
-    <table><thead><tr><th>Rank</th><th>Provider</th><th>Status</th><th>Product</th><th>Shipping</th><th>Quoted total</th><th>Planning total</th><th>Profit (planning)</th><th>Profit (quoted)</th><th>Details</th></tr></thead>
+    <table><thead><tr><th>Rank</th><th>Provider</th><th>Status</th><th>Product</th><th>Shipping</th><th title="Supplier quote or estimate before tax. Gelato is a country-level estimate, not an exact checkout price for a specific address.">Quoted total (est.)</th><th>Planning total</th><th>Profit (planning)</th><th>Profit (quoted)</th><th>Details</th></tr></thead>
     <tbody id="rows"></tbody></table>
   </div>
   <div class="status" id="empty">Run a lookup to see provider results.</div>
