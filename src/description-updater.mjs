@@ -4,10 +4,26 @@ import { getShopListings, updateListing } from './etsy.mjs';
 export const OLD_THICKNESS = '(Thickness: 2 cm)';
 export const NEW_THICKNESS = '(Thickness: 1.25" / 3.2 cm)';
 
-// An exact phrase replacement: leave all other text, formatting and products alone.
+export function normalizeReplacement(options = {}) {
+  const findText = options.findText == null ? OLD_THICKNESS : String(options.findText);
+  const replaceText = options.replaceText == null ? NEW_THICKNESS : String(options.replaceText);
+  if (!findText.trim() || findText.length > 4000) {
+    throw new Error('Find text must contain 1–4000 characters and cannot be blank.');
+  }
+  if (replaceText.length > 10000) {
+    throw new Error('Replacement text must not exceed 10,000 characters.');
+  }
+  if (findText === replaceText) throw new Error('Find and replacement text are identical.');
+  return { findText, replaceText };
+}
+
+// Literal, case-sensitive find/replace. Only the matching text changes.
+export function replaceDescriptionText(description, options = {}) {
+  const { findText, replaceText } = normalizeReplacement(options);
+  return String(description ?? '').replaceAll(findText, replaceText);
+}
 export function reviseCanvasThickness(description) {
-  const before = String(description ?? '');
-  return before.replaceAll(OLD_THICKNESS, NEW_THICKNESS);
+  return replaceDescriptionText(description);
 }
 const fingerprint = value => crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 20);
 function credentials(session) {
@@ -29,38 +45,62 @@ export async function activeListings(session) {
   }
   return listings;
 }
-export function proposedUpdate(listing) {
+export function proposedUpdate(listing, options = {}) {
+  const { findText, replaceText } = normalizeReplacement(options);
   const id = Number(listing?.listing_id);
   const oldText = String(listing?.description ?? '');
-  const newText = reviseCanvasThickness(oldText);
-  if (!Number.isSafeInteger(id) || id <= 0 || oldText === newText) return null;
-  const start = oldText.indexOf(OLD_THICKNESS);
+  const start = oldText.indexOf(findText);
+  if (!Number.isSafeInteger(id) || id <= 0 || start < 0) return null;
+  const newText = oldText.replaceAll(findText, replaceText);
+  if (!newText.trim()) return null;
+  if (newText.length > 13000) return null;
   return {
     listingId: id,
     title: String(listing.title || 'Untitled'),
-    before: OLD_THICKNESS,
-    after: NEW_THICKNESS,
-    context: oldText.slice(Math.max(0, start - 85), Math.min(oldText.length, start + OLD_THICKNESS.length + 85)),
-    hash: fingerprint(oldText),
-    occurrenceCount: oldText.split(OLD_THICKNESS).length - 1
+    before: findText,
+    after: replaceText,
+    context: oldText.slice(Math.max(0, start - 90), Math.min(oldText.length, start + findText.length + 90)),
+    previewContext: newText.slice(Math.max(0, start - 90), Math.min(newText.length, start + replaceText.length + 90)),
+    hash: fingerprint(oldText + '\u0000' + findText + '\u0000' + replaceText),
+    occurrenceCount: oldText.split(findText).length - 1,
+    currentLength: oldText.length,
+    updatedLength: newText.length
   };
 }
-export async function previewDescriptionUpdates(session) {
+export async function previewDescriptionUpdates(session, options = {}) {
+  const { findText, replaceText } = normalizeReplacement(options);
   const listings = await activeListings(session);
+  const matches = [];
+  const tooLong = [];
+  for (const listing of listings) {
+    const description = String(listing?.description ?? '');
+    if (!description.includes(findText)) continue;
+    if (description.replaceAll(findText, replaceText).length > 13000 ||
+        !description.replaceAll(findText, replaceText).trim()) {
+      tooLong.push({ listingId: listing.listing_id, title: String(listing.title || 'Untitled') });
+      continue;
+    }
+    const change = proposedUpdate(listing, { findText, replaceText });
+    if (change) matches.push(change);
+  }
   return {
     scanned: listings.length,
-    matches: listings.map(proposedUpdate).filter(Boolean),
-    from: OLD_THICKNESS, to: NEW_THICKNESS,
-    note: 'Read-only preview. Only the exact existing thickness phrase is replaced.'
+    matches,
+    skipped: tooLong,
+    from: findText,
+    to: replaceText,
+    note: 'Read-only exact text preview. All other description content stays unchanged.'
   };
 }
-export async function applyDescriptionUpdates(session, selections) {
+export async function applyDescriptionUpdates(session, selections, options = {}) {
+  const { findText, replaceText } = normalizeReplacement(options);
   if (!Array.isArray(selections) || !selections.length || selections.length > 500) {
     throw new Error('Select between 1 and 500 matching active listings.');
   }
   const requested = new Map();
   for (const row of selections) {
-    const id = Number(row?.listingId), hash = String(row?.hash || '');
+    const id = Number(row?.listingId);
+    const hash = String(row?.hash || '');
     if (!Number.isSafeInteger(id) || id <= 0 || !/^[a-f0-9]{20}$/.test(hash)) {
       throw new Error('Invalid listing selection. Refresh the preview.');
     }
@@ -71,17 +111,16 @@ export async function applyDescriptionUpdates(session, selections) {
   const eligible = new Map(current.map(item => [Number(item.listing_id), item]));
   const results = [];
   let updated = 0;
-  // Apply only the exact phrase to the selected listings; reject stale previews.
   for (const [id, hash] of requested.entries()) {
     const listing = eligible.get(id);
-    const change = proposedUpdate(listing);
+    const change = proposedUpdate(listing, { findText, replaceText });
     if (!change || change.hash !== hash) {
-      results.push({ listingId: id, ok: false, error: 'Listing changed or no longer matches. Refresh the preview.' });
+      results.push({ listingId: id, ok: false, error: 'Listing or replacement text changed after preview. Scan again.' });
       continue;
     }
     try {
       await updateListing({ ...credentials(session), listingId: id, listing: {
-        description: reviseCanvasThickness(listing.description)
+        description: replaceDescriptionText(listing.description, { findText, replaceText })
       } });
       updated += 1;
       results.push({ listingId: id, ok: true, title: change.title, occurrences: change.occurrenceCount });
