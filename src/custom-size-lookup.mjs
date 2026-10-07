@@ -225,7 +225,7 @@ async function prodigiRecord({ productCode, size, frame, countryCode }) {
 
 async function printifyRecord(row, countryCode) {
   try {
-    const records = await scanPrintifyComparisonRows({ rows: [row], countryCode });
+    const records = await scanPrintifyComparisonRows({ rows: [row], countryCode, fresh: true });
     const record = [...records.values()][0];
     return record || providerRecord({
       provider: 'Printify',
@@ -243,7 +243,7 @@ async function printifyRecord(row, countryCode) {
 
 async function gelatoRecord(row, countryCode) {
   try {
-    const records = await scanGelatoComparisonRows({ rows: [row], countryCode });
+    const records = await scanGelatoComparisonRows({ rows: [row], countryCode, fresh: true });
     const record = [...records.values()][0];
     return record || providerRecord({
       provider: 'Gelato',
