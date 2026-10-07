@@ -302,7 +302,12 @@ async function prodigiRequest(pathname, { method = 'GET', body } = {}) {
 }
 
 function destinationByCode(code) {
-  return PRODIGI_DESTINATIONS.find(item => item.code === String(code || '').toUpperCase()) || null;
+  const normalized = String(code || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalized)) return null;
+  return PRODIGI_DESTINATIONS.find(item => item.code === normalized) || {
+    code: normalized,
+    label: normalized
+  };
 }
 
 function sizeByLabel(label) {
