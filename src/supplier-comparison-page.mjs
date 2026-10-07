@@ -36,7 +36,39 @@ select,button{border:1px solid var(--line);border-radius:9px;background:#fff;pad
 .scroll{overflow:auto;max-height:720px;border:1px solid var(--line);border-radius:10px}table{width:100%;border-collapse:collapse;background:#fff;font-size:12px}th,td{padding:9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{position:sticky;top:0;background:#f2efe9;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .pill{display:inline-block;padding:4px 7px;border-radius:999px;background:var(--goodbg);color:var(--good);font-size:10px}.pill.warn{background:var(--warnbg);color:var(--warn)}.note{font-size:10px;color:var(--muted);margin-top:2px}
 @media(max-width:900px){.controls{grid-template-columns:1fr 1fr}.controls button{width:100%}}@media(max-width:600px){.controls{grid-template-columns:1fr}h1{font-size:31px}}
-</style></head><body><main>
+
+.app-shell{min-height:100vh;display:grid;grid-template-columns:238px minmax(0,1fr)}
+.app-sidebar{background:#252820;color:#f8f5ee;padding:28px 20px;display:flex;flex-direction:column;min-height:100vh}
+.app-sidebar .brand{font-family:Georgia,serif;font-size:24px;line-height:1.08;margin-bottom:30px}
+.app-sidebar .brand small{display:block;font-size:12px;color:#b9beb3;margin-top:8px}
+.app-sidebar nav{display:grid;gap:7px}
+.app-sidebar .nav{padding:11px 12px;border-radius:9px;color:#cdd1c7;font-size:14px;text-decoration:none}
+.app-sidebar .nav.active,.app-sidebar .nav:hover{background:#373b33;color:#fff}
+.app-sidebar .foot{margin-top:auto;color:#aeb3a8;font-size:12px;line-height:1.5}
+.app-shell>main{min-width:0;width:100%}
+@media(max-width:720px){.app-shell{grid-template-columns:1fr}.app-sidebar{display:none}}
+
+</style></head><body><div class="app-shell">
+<aside class="app-sidebar">
+  <div class="brand">Silvia<br>Fulfillment <small>Etsy → Sensaria</small></div>
+  <nav>
+    <a class="nav" href="/">Dashboard</a>
+    <a class="nav" href="/product-creator">Product Creator</a>
+    <a class="nav" href="/listing-converter">Gelato → Silvia Converter</a>
+    <a class="nav" href="/shipping-profile">Shipping Profile</a>
+    <a class="nav" href="/pricing">Pricing & Shipping</a>
+    <a class="nav active" href="/compare">Supplier Comparison</a>
+    <a class="nav" href="/test-order">Test Order</a>
+    <a class="nav" href="/#orders">Orders</a>
+    <a class="nav" href="/#artworks">Artwork Library</a>
+    <a class="nav" href="/#mappings">Product SKUs</a>
+    <a class="nav" href="/etsy/status" target="_blank">Etsy Status</a>
+    <a class="nav" href="/r2/status" target="_blank">R2 Status</a>
+    <a class="nav" href="/logout">Log out</a>
+  </nav>
+  <div class="foot">Silvia Art Collective<br>Private fulfillment service</div>
+</aside>
+<main>
 <h1>Supplier Comparison</h1>
 <p class="sub">Final regular-catalog comparison across Sensaria, Prodigi, PrintShrimp, Printify and Gelato for the exact Silvia Etsy sizes and destination country. Artelo remains visible but is not scored where its current product mapping does not match Silvia's Poster, Canvas or Framed Canvas products.</p>
 <div class="notice"><strong>Planning only:</strong> this page reads supplier catalogs and quote/pricing APIs. It never creates supplier orders, changes Etsy listings or enables live fulfillment. Gelato uses country-level shipment pricing; Printify compares individual print providers.</div>
@@ -57,6 +89,7 @@ select,button{border:1px solid var(--line);border-radius:9px;background:#fff;pad
 <div class="summary" id="summary"></div>
 <div class="scroll"><table><thead><tr><th>Country</th><th>Product</th><th>Size</th><th>Finish</th><th>Sensaria</th><th>Prodigi</th><th>PrintShrimp</th><th>Printify</th><th>Gelato</th><th>Artelo</th><th>Winner</th><th>Est. contribution</th><th>Saves</th><th>Eligible</th></tr></thead><tbody id="rows"><tr><td colspan="14">Run a scan.</td></tr></tbody></table></div>
 </section></main>
+</div>
 <script>
 (function(){
 const scan=document.getElementById('scan'),copy=document.getElementById('copy'),download=document.getElementById('download'),country=document.getElementById('country'),scope=document.getElementById('scope'),status=document.getElementById('status'),progressWrap=document.getElementById('progress-wrap'),progressBar=document.getElementById('progress-bar'),summary=document.getElementById('summary'),rows=document.getElementById('rows'),providerStatus=document.getElementById('provider-status'),testAll=document.getElementById('test-all');
