@@ -6,8 +6,13 @@ import { getPrintShrimpPricing, printShrimpPriceRow } from './printshrimp.mjs';
 import { getGbpToUsdRate } from './supplier-comparison.mjs';
 import { estimateSupplierLandedCost, landedCostPolicy } from './landed-cost.mjs';
 import { profitScenarioPolicy } from './retail-margin.mjs';
-import { suggestedCustomRetail, profitAtRetail } from './custom-size-profit.mjs';
-import { SILVIA_SALE_DISCOUNT_PERCENT } from './variants.mjs';
+import { suggestedCustomRetail, profitAtRetail, referenceRetailForSize } from './custom-size-profit.mjs';
+import {
+  SILVIA_SALE_DISCOUNT_PERCENT,
+  SILVIA_RETAIL_PRICE_LADDER_CAD,
+  SILVIA_REFERENCE_CAD_PER_USD,
+  SILVIA_POSTER_ETSY_CAD_PER_USD
+} from './variants.mjs';
 import { getArteloUnframedPosterCost } from './artelo.mjs';
 
 const sensariaCatalog = JSON.parse(
@@ -377,12 +382,20 @@ async function arteloRecord({ productCode, size, countryCode }) {
   }
 }
 
-function priceFloor(adjustedSupplierUsd, quotedSupplierUsd, policy) {
+function priceFloor(adjustedSupplierUsd, quotedSupplierUsd, policy, productCode, size) {
+  const referenceRetail = referenceRetailForSize({
+    productCode,
+    size,
+    ladderCad: SILVIA_RETAIL_PRICE_LADDER_CAD,
+    cadPerUsd: SILVIA_REFERENCE_CAD_PER_USD,
+    posterCadPerUsd: SILVIA_POSTER_ETSY_CAD_PER_USD
+  });
   return suggestedCustomRetail({
     planningCostUsd: adjustedSupplierUsd,
     quotedCostUsd: quotedSupplierUsd,
     policy,
-    storeDiscountPercent: SILVIA_SALE_DISCOUNT_PERCENT
+    storeDiscountPercent: SILVIA_SALE_DISCOUNT_PERCENT,
+    referenceRetail
   });
 }
 
@@ -457,7 +470,7 @@ export async function lookupCustomSize({
   // Compute the displayed regular price first, then Etsy's actual discounted
   // sale price, so profit never assumes a price the customer cannot pay.
   const pricing = winner
-    ? priceFloor(winnerCost, winner.totalUsd, retailPolicy)
+    ? priceFloor(winnerCost, winner.totalUsd, retailPolicy, product, size)
     : null;
   // Expose estimated profitability of EACH Printify print provider/model at
   // the SAME recommended Etsy selling price, even when it is not the winner.
