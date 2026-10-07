@@ -11,6 +11,8 @@ import { renderShippingProfilePage } from './shipping-profile-page.mjs';
 import { pricingCatalogForZone, pricingCatalogForMarket, publicShippingPricingConfig } from './pricing.mjs';
 import { scanSupplierComparison } from './supplier-comparison.mjs';
 import { renderSupplierComparisonPage } from './supplier-comparison-page.mjs';
+import { renderCustomSizeLookupPage } from './custom-size-page.mjs';
+import { lookupCustomSize } from './custom-size-lookup.mjs';
 import { buildTestReceipt } from './test-order.mjs';
 import { etsyReceiptToSensariaCsvFromR2 } from './fulfillment.mjs';
 import {
@@ -1765,6 +1767,24 @@ const server = http.createServer(async (req, res) => {
         error: error?.message || String(error),
         rolledBack: Boolean(createdProfileId && !rollbackError),
         rollbackError
+      });
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/custom-size') {
+    if (!requireAdminPage(req, res, '/custom-size')) return;
+    return sendHtml(res, 200, renderCustomSizeLookupPage());
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/custom-size/lookup') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const body = await readJsonBody(req);
+      return sendJson(res, 200, await lookupCustomSize(body));
+    } catch (error) {
+      return sendJson(res, 400, {
+        ok: false,
+        error: error?.message || String(error)
       });
     }
   }
