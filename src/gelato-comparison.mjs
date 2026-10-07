@@ -200,9 +200,9 @@ async function searchAllCatalogProducts(catalogUid) {
   return products;
 }
 
-async function loadProductCatalog() {
+async function loadProductCatalog({ fresh = false } = {}) {
   const now = Date.now();
-  if (productCatalogCache && now - productCatalogCache.fetchedAt < CACHE_TTL_MS) return productCatalogCache.rows;
+  if (!fresh && productCatalogCache && now - productCatalogCache.fetchedAt < CACHE_TTL_MS) return productCatalogCache.rows;
   if (productCatalogPromise) return productCatalogPromise;
 
   productCatalogPromise = (async () => {
@@ -302,7 +302,7 @@ async function quoteProduct(productUid, countryCode) {
   return value;
 }
 
-export async function scanGelatoComparisonRows({ rows = [], countryCode } = {}) {
+export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh = false } = {}) {
   if (!gelatoConfigStatus().ready) {
     return new Map((rows || []).map(row => [rowKey(row), {
       provider: 'Gelato', eligible: false, status: 'not-configured',
@@ -310,7 +310,7 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode } = {}) 
     }]));
   }
 
-  const catalogRows = await loadProductCatalog();
+  const catalogRows = await loadProductCatalog({ fresh });
   const country = String(countryCode || '').trim().toUpperCase();
   const result = new Map();
 
