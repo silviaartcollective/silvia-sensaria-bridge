@@ -21,7 +21,7 @@ textarea{width:100%;min-height:135px;padding:12px;border:1px solid var(--line);b
 <a class="nav" href="/">Dashboard</a><a class="nav" href="/product-creator">Product Creator</a>
 <a class="nav" href="/listing-converter">Gelato → Silvia Converter</a><a class="nav" href="/shipping-profile">Shipping Profile</a>
 <a class="nav" href="/pricing">Pricing & Shipping</a><a class="nav" href="/compare">Supplier Comparison</a>
-<a class="nav" href="/custom-size">Custom Size Lookup</a><a class="nav" href="/custom-orders">Custom Orders</a>
+<a class="nav" href="/custom-size">Custom Size Lookup</a>
 <a class="nav active" href="/description-updater">Description Updater</a>
 <a class="nav" href="/test-order">Test Order</a></nav><div class="foot">Silvia Art Collective<br>Private listing editor</div></aside>
 <main><h1>Description Updater</h1>
