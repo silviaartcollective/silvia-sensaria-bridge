@@ -36,7 +36,7 @@ input,select,button{border:1px solid var(--line);border-radius:10px;background:#
 button{cursor:pointer;font-weight:700}button.primary{background:#30352e;color:#fff;border-color:#30352e}button:disabled{opacity:.5;cursor:not-allowed}
 .notice{padding:12px 14px;border-radius:10px;background:var(--green2);color:var(--green);font-size:12px;line-height:1.5;margin-bottom:18px}
 .status{font-size:12px;color:var(--muted);line-height:1.5;margin-top:13px}.status.bad{color:var(--red)}
-.hero{display:none;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}.hero.show{display:grid}.metric{background:#f7f4ee;border:1px solid var(--line);border-radius:11px;padding:13px}.metric small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}.metric strong{font:500 22px Georgia,serif}.metric .detail{font-size:10px;color:var(--muted);margin-top:4px}.metric strong.loss{color:var(--red)}.metric strong.gain{color:var(--green)}
+.hero{display:none;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}.hero.show{display:grid}.metric{background:#f7f4ee;border:1px solid var(--line);border-radius:11px;padding:13px}.metric small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}.metric strong{font:500 22px Georgia,serif}.metric .detail{font-size:10px;color:var(--muted);margin-top:4px}.metric strong.loss{color:var(--red)}.metric strong.gain{color:var(--green)}
 .table-wrap{display:none;overflow:auto;border:1px solid var(--line);border-radius:11px}.table-wrap.show{display:block}table{width:100%;border-collapse:collapse;background:#fff;font-size:12px}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}th{background:#f1eee8;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}td.detail{white-space:normal;min-width:250px;max-width:390px;color:var(--muted);line-height:1.4}
 .offers{margin-top:9px;padding:9px;border:1px solid var(--line);border-radius:8px;background:#fcfaf6;color:var(--ink)}
 .offers summary{cursor:pointer;font-weight:700;font-size:11px}
@@ -45,9 +45,21 @@ button{cursor:pointer;font-weight:700}button.primary{background:#30352e;color:#f
 table.offer-table{min-width:650px;font-size:11px;margin-top:10px}
 table.offer-table th,table.offer-table td{padding:7px;white-space:normal;max-width:210px}
 table.offer-table th{font-size:9px}
+.shipping-settings{margin-top:16px;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.shipping-settings label{min-width:310px;max-width:420px;flex:1}
+.shipping-settings .help{font-size:12px;color:var(--muted);max-width:700px;line-height:1.55}
+.shipping-scenarios{display:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:15px}
+.shipping-scenarios.show{display:grid}
+.shipping-choice{border:1px solid var(--line);background:#fffdfa;border-radius:12px;padding:16px}
+.shipping-choice.selected{border:2px solid var(--green);background:#f1f6ef}
+.shipping-choice h3{font:500 20px Georgia,serif;margin:0 0 10px}
+.shipping-choice .kv{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid var(--line);padding:6px 0;font-size:12px}
+.shipping-choice .kv strong{font-size:13px;font-weight:700}
+.shipping-choice p{color:var(--muted);font-size:11px;line-height:1.5;margin:9px 0 0}
+.shipping-choice .badge{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--green);font-weight:700}
 .pill{display:inline-block;padding:4px 7px;border-radius:999px;background:var(--green2);color:var(--green);font-size:10px}.pill.warn{background:var(--amber2);color:var(--amber)}.pill.bad{background:var(--red2);color:var(--red)}
 .rank{font-weight:700}.spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;vertical-align:-2px;margin-right:7px;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
-@media(max-width:1100px){.lookup{grid-template-columns:repeat(3,1fr)}.hero{grid-template-columns:1fr 1fr}}@media(max-width:720px){.app-shell{grid-template-columns:1fr}aside{display:none}main{padding:24px 16px}.lookup{grid-template-columns:1fr}.hero{grid-template-columns:1fr}h1{font-size:32px}}
+@media(max-width:1100px){.lookup{grid-template-columns:repeat(3,1fr)}.hero{grid-template-columns:1fr 1fr}.shipping-scenarios{grid-template-columns:1fr}}@media(max-width:720px){.app-shell{grid-template-columns:1fr}aside{display:none}main{padding:24px 16px}.lookup{grid-template-columns:1fr}.hero{grid-template-columns:1fr}h1{font-size:32px}}
 </style></head>
 <body><div class="app-shell">
 <aside>
@@ -73,7 +85,7 @@ table.offer-table th{font-size:9px}
 <main>
 <h1>Custom Size Lookup</h1>
 <p class="sub">Enter the customer's destination, exact requested size and product. The app checks the connected providers specifically for that request and ranks the available options by estimated landed cost.</p>
-<div class="notice"><strong>Read-only:</strong> this lookup never creates an Etsy listing or supplier order. Prodigi, Printify, Gelato, PrintShrimp and compatible Artelo poster routes are checked for this exact request. The destination list includes the full ISO country list, including countries outside the shop's normal Etsy shipping profile. Sensaria uses the captured full catalog plus captured shipping zones.</div>
+<div class="notice"><strong>Read-only quote:</strong> This lookup never creates an Etsy listing, shipping profile or supplier order. (The separate optional Printify pricing-library tool creates temporary unpublished test drafts only after confirmation.) Prodigi, Printify, Gelato, PrintShrimp and compatible Artelo poster routes are checked for this exact request. The destination list includes the full ISO country list, including countries outside the shop's normal Etsy shipping profile. Sensaria uses the captured full catalog plus captured shipping zones.</div>
 
 <section class="card">
   <div class="lookup">
@@ -103,6 +115,14 @@ table.offer-table th{font-size:9px}
     </label>
     <button class="primary" id="lookup">Find best option</button>
   </div>
+  <div class="shipping-settings"><label>Custom listing shipping approach
+    <select id="shipping-mode">
+      <option value="auto">Automatic suggestion — separate when supplier shipping is high</option>
+      <option value="included">Free shipping — include delivery in artwork price</option>
+      <option value="separate">Customer pays shipping — add a custom Etsy delivery charge</option>
+    </select></label>
+    <div class="help" id="shipping-guidance">Custom orders can use a paid-delivery Etsy profile while standard listings retain free shipping. This quote does not change Etsy shipping settings.</div>
+  </div>
   <div class="status" id="status">Ready. Choose the customer's destination country. Provider availability is checked independently of the shop's normal Etsy shipping profile.</div>
 </section>
 
@@ -110,12 +130,15 @@ table.offer-table th{font-size:9px}
   <div class="metric"><small>Best provider</small><strong id="winner">—</strong><div class="detail" id="winner-detail"></div></div>
   <div class="metric"><small>Estimated landed cost</small><strong id="winner-cost">—</strong><div class="detail">USD planning estimate</div></div>
   <div class="metric"><small>Suggested regular Etsy retail</small><strong id="regular-price">—</strong><div class="detail" id="sale-detail"></div></div>
-  <div class="metric"><small>After shop discount</small><strong id="customer-price">—</strong><div class="detail" id="price-detail"></div></div>
+  <div class="metric"><small>Artwork after shop discount</small><strong id="customer-price">—</strong><div class="detail" id="price-detail"></div></div>
+  <div class="metric"><small>Custom delivery charged to buyer</small><strong id="customer-shipping">—</strong><div class="detail" id="customer-shipping-detail"></div></div>
+  <div class="metric"><small>Customer total at checkout</small><strong id="customer-total">—</strong><div class="detail" id="customer-total-detail"></div></div>
   <div class="metric"><small>Est. profit (planning cost)</small><strong id="planned-profit">—</strong><div class="detail" id="profit-detail"></div></div>
   <div class="metric"><small>Est. profit (quoted cost)</small><strong id="quoted-profit">—</strong><div class="detail" id="profit-quote-detail"></div></div>
 </section>
+<section id="shipping-scenarios" class="shipping-scenarios" aria-label="Custom order shipping comparison"></section>
 
-<div class="notice" id="profit-note" style="display:none">Suggested regular retail is based on the shop's existing size-price ladder; custom sizes between listed sizes are estimated by area, and international shipping may require a higher price. The old cost-based minimum is only a price FLOOR, not your normal retail. Profit estimates assume free customer shipping and an Etsy fee reserve. <strong>Planning profit</strong> uses the supplier cost plus the app's contingency; <strong>quoted profit</strong> uses only quoted production and shipping. Excludes ads, actual tax/duties, fixed fees, refunds and currency variation.</div>
+<div class="notice" id="profit-note" style="display:none">Suggested regular retail is based on the shop's existing size-price ladder; custom sizes between listed sizes are estimated by area, and international shipping may require a higher price. The cost-based minimum is only a price FLOOR, not your normal retail. Only custom listings should use a paid Etsy delivery profile; standard sizes keep their existing free-shipping settings. For separately charged custom shipping, the fixed delivery fee is not discounted with the artwork. The estimated Etsy fee reserve applies to BOTH artwork and shipping. <strong>Planning profit</strong> uses the supplier cost plus the app's contingency; <strong>quoted profit</strong> uses only quoted production and shipping. Excludes ads, actual tax/duties, fixed fees, refunds and currency variation.</div>
 <section class="card">
   <h2 style="margin:0 0 5px">Provider results</h2>
   <p class="sub" style="margin-bottom:14px">Availability and price are for the exact request above. Hover/status detail explains why a provider is not ranked.</p>
@@ -134,12 +157,12 @@ table.offer-table th{font-size:9px}
 </main></div>
 <script>
 (function(){
-const country=document.getElementById('country'),product=document.getElementById('product'),width=document.getElementById('width'),height=document.getElementById('height'),frame=document.getElementById('frame'),frameLabel=document.getElementById('frame-label'),button=document.getElementById('lookup'),status=document.getElementById('status'),hero=document.getElementById('hero'),winner=document.getElementById('winner'),winnerCost=document.getElementById('winner-cost'),winnerDetail=document.getElementById('winner-detail'),customerPrice=document.getElementById('customer-price'),regularPrice=document.getElementById('regular-price'),priceDetail=document.getElementById('price-detail'),saleDetail=document.getElementById('sale-detail'),plannedProfit=document.getElementById('planned-profit'),quotedProfit=document.getElementById('quoted-profit'),profitDetail=document.getElementById('profit-detail'),profitQuoteDetail=document.getElementById('profit-quote-detail'),profitNote=document.getElementById('profit-note'),tableWrap=document.getElementById('table-wrap'),rows=document.getElementById('rows'),empty=document.getElementById('empty'),libraryCard=document.getElementById('printify-library-card'),libraryButton=document.getElementById('build-printify-library'),libraryStatus=document.getElementById('printify-library-status');
+const country=document.getElementById('country'),product=document.getElementById('product'),width=document.getElementById('width'),height=document.getElementById('height'),frame=document.getElementById('frame'),frameLabel=document.getElementById('frame-label'),button=document.getElementById('lookup'),status=document.getElementById('status'),hero=document.getElementById('hero'),winner=document.getElementById('winner'),winnerCost=document.getElementById('winner-cost'),winnerDetail=document.getElementById('winner-detail'),customerPrice=document.getElementById('customer-price'),regularPrice=document.getElementById('regular-price'),priceDetail=document.getElementById('price-detail'),saleDetail=document.getElementById('sale-detail'),shippingMode=document.getElementById('shipping-mode'),shippingGuidance=document.getElementById('shipping-guidance'),shippingScenarios=document.getElementById('shipping-scenarios'),customerShipping=document.getElementById('customer-shipping'),customerShippingDetail=document.getElementById('customer-shipping-detail'),customerTotal=document.getElementById('customer-total'),customerTotalDetail=document.getElementById('customer-total-detail'),plannedProfit=document.getElementById('planned-profit'),quotedProfit=document.getElementById('quoted-profit'),profitDetail=document.getElementById('profit-detail'),profitQuoteDetail=document.getElementById('profit-quote-detail'),profitNote=document.getElementById('profit-note'),tableWrap=document.getElementById('table-wrap'),rows=document.getElementById('rows'),empty=document.getElementById('empty'),libraryCard=document.getElementById('printify-library-card'),libraryButton=document.getElementById('build-printify-library'),libraryStatus=document.getElementById('printify-library-status');
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>v==null||!Number.isFinite(Number(v))?'—':'$'+Number(v).toFixed(2);
 function syncFrame(){frameLabel.style.display=product.value==='FC'?'grid':'none'}product.addEventListener('change',syncFrame);syncFrame();
 function statusPill(r){const s=String(r?.status||'unavailable');const cls=r?.eligible?'':' '+(s==='error'?'bad':'warn');return '<span class="pill'+cls+'">'+esc(s)+'</span>';}
-function offerBreakdown(record){
+function offerBreakdown(record,mode){
  if(record.provider!=='Printify')return '';
  const offers=Array.isArray(record.meta?.offers)?record.meta.offers:[];
  const scan=record.meta?.scan||{};
@@ -148,7 +171,7 @@ function offerBreakdown(record){
  const errors=errorCount?'<p>'+errorCount+' Printify catalog request(s) failed; not all options could be checked.</p>':'';
  if(!offers.length)return '<div class="offers"><p>'+esc(summary)+'</p>'+errors+'</div>';
  const head='<thead><tr><th>Printify product</th><th>Brand</th><th>Print provider</th><th>Variant</th><th>Production</th><th>Shipping</th><th>Quote total</th><th>Profit (planning)</th><th>Profit (quoted)</th></tr></thead>';
- const body=offers.map(o=>'<tr><td>'+esc(o.product||'—')+'</td><td>'+esc(o.brand||'—')+'</td><td>'+esc(o.printProvider||'—')+'</td><td>'+esc(o.variantTitle||'—')+'</td><td>'+money(o.productionUsd)+'</td><td>'+money(o.shippingUsd)+'</td><td>'+money(o.quotedTotalUsd)+'</td><td>'+money(o.profit?.planningProfitUsd)+'</td><td>'+money(o.profit?.quotedProfitUsd)+'</td></tr>').join('');
+ const body=offers.map(o=>{const profit=o.profitByShippingMode?o.profitByShippingMode[mode]:o.profit;return '<tr><td>'+esc(o.product||'—')+'</td><td>'+esc(o.brand||'—')+'</td><td>'+esc(o.printProvider||'—')+'</td><td>'+esc(o.variantTitle||'—')+'</td><td>'+money(o.productionUsd)+'</td><td>'+money(o.shippingUsd)+'</td><td>'+money(o.quotedTotalUsd)+'</td><td>'+money(profit?.planningProfitUsd)+'</td><td>'+money(profit?.quotedProfitUsd)+'</td></tr>';}).join('');
  return '<details class="offers"><summary>View all '+offers.length+' Printify product / print-provider matches</summary><p>'+esc(summary)+'</p>'+errors+'<div class="offers-scroll"><table class="offer-table">'+head+'<tbody>'+body+'</tbody></table></div></details>';
 }
 function render(data){
