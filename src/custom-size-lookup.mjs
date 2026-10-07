@@ -6,7 +6,10 @@ import { getPrintShrimpPricing, printShrimpPriceRow } from './printshrimp.mjs';
 import { getGbpToUsdRate } from './supplier-comparison.mjs';
 import { estimateSupplierLandedCost, landedCostPolicy } from './landed-cost.mjs';
 import { profitScenarioPolicy } from './retail-margin.mjs';
-import { suggestedCustomRetail, profitAtRetail, referenceRetailForSize } from './custom-size-profit.mjs';
+import {
+  suggestedCustomRetail, profitAtRetail, referenceRetailForSize,
+  recommendedCustomShippingCharge
+} from './custom-size-profit.mjs';
 import {
   SILVIA_SALE_DISCOUNT_PERCENT,
   SILVIA_RETAIL_PRICE_LADDER_CAD,
@@ -382,7 +385,7 @@ async function arteloRecord({ productCode, size, countryCode }) {
   }
 }
 
-function priceFloor(adjustedSupplierUsd, quotedSupplierUsd, policy, productCode, size) {
+function priceFloor(adjustedSupplierUsd, quotedSupplierUsd, policy, productCode, size, customerShippingUsd = 0) {
   const referenceRetail = referenceRetailForSize({
     productCode,
     size,
@@ -395,8 +398,41 @@ function priceFloor(adjustedSupplierUsd, quotedSupplierUsd, policy, productCode,
     quotedCostUsd: quotedSupplierUsd,
     policy,
     storeDiscountPercent: SILVIA_SALE_DISCOUNT_PERCENT,
-    referenceRetail
+    referenceRetail,
+    customerShippingUsd
   });
+}
+
+// Custom-sized listings can use a DIFFERENT Etsy shipping profile. These
+// amounts are only suggested; the lookup never changes an Etsy listing/profile.
+// Some supplier product/shipping breakdowns (e.g. PrintShrimp in GBP) are not
+// denominated in USD even when the quoted total is converted to USD.
+function supplierShippingUsd(record) {
+  const rawShipping = numeric(record?.shippingCost);
+  const total = numeric(record?.totalUsd);
+  if (rawShipping == null || total == null) return null;
+  if (String(record?.currency || 'USD').toUpperCase() === 'USD') return rawShipping;
+  const originalTotal = numeric(record?.originalTotal);
+  return originalTotal != null && originalTotal > 0
+    ? round(rawShipping * (total / originalTotal)) : null;
+}
+
+function customShippingThresholdUsd() {
+  const raw = process.env.SAC_CUSTOM_SHIPPING_THRESHOLD_USD;
+  if (raw == null || String(raw).trim() === '') return 25;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error('Invalid SAC_CUSTOM_SHIPPING_THRESHOLD_USD; enter a nonnegative USD amount');
+  }
+  return value;
+}
+
+function customShippingMethod(value) {
+  const result = String(value || 'auto').trim().toLowerCase();
+  if (!['auto','included','separate'].includes(result)) {
+    throw new Error('Shipping method must be auto, included or separate.');
+  }
+  return result;
 }
 
 export async function lookupCustomSize({
@@ -404,9 +440,11 @@ export async function lookupCustomSize({
   productCode,
   width,
   height,
-  frame
+  frame,
+  shippingMode = 'auto'
 } = {}) {
   const country = normalizeCountry(countryCode);
+  const requestedShippingMode = customShippingMethod(shippingMode);
   const product = normalizeProduct(productCode);
   const size = normalizeSize(width, height);
   const resolvedFrame = product === 'FC' ? normalizeFrame(frame) : '';
@@ -466,50 +504,96 @@ export async function lookupCustomSize({
   const next = ranked[1] || null;
   const winnerCost = winner ? Number(winner.modeledLandedUsd ?? winner.totalUsd) : null;
   const retailPolicy = profitScenarioPolicy();
-  // The sale is fixed by the storefront: Silvia 25%, Japandi 20%.
-  // Compute the displayed regular price first, then Etsy's actual discounted
-  // sale price, so profit never assumes a price the customer cannot pay.
-  const pricing = winner
-    ? priceFloor(winnerCost, winner.totalUsd, retailPolicy, product, size)
-    : null;
-  // Expose estimated profitability of EACH Printify print provider/model at
-  // the SAME recommended Etsy selling price, even when it is not the winner.
-  // This makes expensive providers and potential losses immediately visible.
+  const supplierShipping = winner ? supplierShippingUsd(winner) : null;
+  const feePercent = retailPolicy.etsyFeeReservePercent;
+  const shippingThresholdUsd = customShippingThresholdUsd();
+  const suggestedShippingChargeUsd = supplierShipping == null
+    ? null : recommendedCustomShippingCharge(supplierShipping, feePercent);
+
+  // Automatic choice is a SUGGESTION only, not a change to Etsy settings:
+  // free shipping for low supplier shipping, separately charged for high.
+  const recommendedShippingMode = supplierShipping != null &&
+    supplierShipping >= shippingThresholdUsd ? 'separate' : 'included';
+  const selectedShippingMode = requestedShippingMode === 'auto'
+    ? recommendedShippingMode : requestedShippingMode;
+
+  const makeOption = mode => {
+    const shippingCharged = mode === 'separate' ? suggestedShippingChargeUsd : 0;
+    const pricing = winner && shippingCharged != null
+      ? priceFloor(winnerCost, winner.totalUsd, retailPolicy, product, size, shippingCharged)
+      : null;
+    const providerProfits = Object.fromEntries(
+      Object.entries(suppliers).map(([key, record]) => [
+        key,
+        pricing && record.eligible && numeric(record.totalUsd) !== null
+          ? profitAtRetail({
+              quotedCostUsd: record.totalUsd,
+              planningCostUsd: record.modeledLandedUsd ?? record.totalUsd,
+              salePriceUsd: pricing.salePriceAfterDiscountUsd,
+              customerShippingUsd: shippingCharged,
+              etsyFeePercent: pricing.etsyFeeReservePercent,
+              cadPerUsd: pricing.assumedCadPerUsd
+            })
+          : null
+      ])
+    );
+    return {
+      mode,
+      available: Boolean(pricing),
+      shippingChargedSeparately: mode === 'separate',
+      customerShippingUsd: shippingCharged,
+      quotedSupplierShippingUsd: supplierShipping,
+      pricing,
+      providerProfits,
+      label: mode === 'separate' ? 'Customer pays shipping' : 'Free shipping included',
+      note: mode === 'separate'
+        ? 'Set the suggested fixed delivery charge in a CUSTOM Etsy shipping profile. It includes an estimated Etsy fee allowance; it is not an address-specific checkout quote. Standard listings are unchanged.'
+        : 'The customer pays no separate delivery charge. All supplier shipping and contingency costs are covered by the artwork price.',
+      warning: mode === 'separate' && !pricing
+        ? 'A separate customer shipping price cannot be calculated because this supplier has no complete shipping-cost breakdown.'
+        : winner?.provider === 'Gelato' && mode === 'separate'
+          ? 'Gelato shipping is a country-level estimate. Check the destination postcode before setting the custom Etsy delivery charge.'
+          : null
+    };
+  };
+
+  const shippingOptions = {
+    included: makeOption('included'),
+    separate: makeOption('separate')
+  };
+  const currentOption = shippingOptions[selectedShippingMode];
+  const pricing = currentOption.pricing;
+  const providerProfits = currentOption.providerProfits;
+
+  // All Printify printers are evaluated at the SAME buyer selling price and
+  // shipping charge for each scenario, so supplier margins are comparable.
   const printifyOffers = suppliers.printify?.meta?.offers;
-  if (pricing && Array.isArray(printifyOffers)) {
+  if (Array.isArray(printifyOffers)) {
     for (const offer of printifyOffers) {
       const offeredTotal = numeric(offer.quotedTotalUsd);
-      if (offeredTotal === null) {
-        offer.profit = null;
-        continue;
+      offer.profitByShippingMode = {};
+      for (const [mode, option] of Object.entries(shippingOptions)) {
+        const p = option.pricing;
+        if (offeredTotal == null || !p) {
+          offer.profitByShippingMode[mode] = null;
+          continue;
+        }
+        const modeledOffer = estimateSupplierLandedCost({
+          provider: 'Printify', eligible: true, currency: 'USD',
+          totalUsd: offeredTotal
+        }, { countryCode: country, policy });
+        offer.profitByShippingMode[mode] = profitAtRetail({
+          quotedCostUsd: offeredTotal,
+          planningCostUsd: modeledOffer.modeledLandedUsd,
+          salePriceUsd: p.salePriceAfterDiscountUsd,
+          customerShippingUsd: p.customerShippingUsd,
+          etsyFeePercent: p.etsyFeeReservePercent,
+          cadPerUsd: p.assumedCadPerUsd
+        });
       }
-      const modeledOffer = estimateSupplierLandedCost({
-        provider: 'Printify', eligible: true, currency: 'USD',
-        totalUsd: offeredTotal
-      }, { countryCode: country, policy });
-      offer.profit = profitAtRetail({
-        quotedCostUsd: offeredTotal,
-        planningCostUsd: modeledOffer.modeledLandedUsd,
-        salePriceUsd: pricing.salePriceAfterDiscountUsd,
-        etsyFeePercent: pricing.etsyFeeReservePercent,
-        cadPerUsd: pricing.assumedCadPerUsd
-      });
+      offer.profit = offer.profitByShippingMode[selectedShippingMode];
     }
   }
-  const providerProfits = Object.fromEntries(
-    Object.entries(suppliers).map(([key, record]) => [
-      key,
-      pricing && record.eligible && numeric(record.totalUsd) !== null
-        ? profitAtRetail({
-            quotedCostUsd: record.totalUsd,
-            planningCostUsd: record.modeledLandedUsd ?? record.totalUsd,
-            salePriceUsd: pricing.salePriceAfterDiscountUsd,
-            etsyFeePercent: pricing.etsyFeeReservePercent,
-            cadPerUsd: pricing.assumedCadPerUsd
-          })
-        : null
-    ])
-  );
 
   return {
     ok: true,
@@ -538,6 +622,11 @@ export async function lookupCustomSize({
     } : null,
     pricing,
     providerProfits,
-    note: 'Custom lookup is read-only. API providers are queried for this exact size/product/country. Sensaria uses the captured full catalog and captured shipping zones because no equivalent live catalog/quote API is configured. No supplier order is created.'
+    requestedShippingMode,
+    shippingMode: selectedShippingMode,
+    recommendedShippingMode,
+    shippingThresholdUsd,
+    shippingOptions,
+    note: 'Custom lookup is read-only. API providers are queried for this exact size/product/country. Sensaria uses the captured full catalog and captured shipping zones because no equivalent live catalog/quote API is configured. No supplier order is created. These are draft custom-order selling and shipping suggestions; to charge delivery, create or select a paid-delivery Etsy shipping profile for the custom listing. This does not affect standard free-shipping listings.'
   };
 }
