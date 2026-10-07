@@ -174,8 +174,29 @@ function offerBreakdown(record,mode){
  const body=offers.map(o=>{const profit=o.profitByShippingMode?o.profitByShippingMode[mode]:o.profit;return '<tr><td>'+esc(o.product||'—')+'</td><td>'+esc(o.brand||'—')+'</td><td>'+esc(o.printProvider||'—')+'</td><td>'+esc(o.variantTitle||'—')+'</td><td>'+money(o.productionUsd)+'</td><td>'+money(o.shippingUsd)+'</td><td>'+money(o.quotedTotalUsd)+'</td><td>'+money(profit?.planningProfitUsd)+'</td><td>'+money(profit?.quotedProfitUsd)+'</td></tr>';}).join('');
  return '<details class="offers"><summary>View all '+offers.length+' Printify product / print-provider matches</summary><p>'+esc(summary)+'</p>'+errors+'<div class="offers-scroll"><table class="offer-table">'+head+'<tbody>'+body+'</tbody></table></div></details>';
 }
+let lastLookupData=null;
+function scenarioCard(info,chosen,recommended){
+ const p=info?.pricing;
+ if(!info)return '';
+ const name=info.mode==='separate'?'Customer pays shipping':'Free shipping included';
+ const state=!info.available?'Unavailable':recommended===info.mode?'Recommended for this request':'Available option';
+ return '<article class="shipping-choice'+(chosen===info.mode?' selected':'')+'"><div class="badge">'+esc(state)+'</div><h3>'+esc(name)+'</h3>'
+  +'<div class="kv"><span>Regular Etsy artwork listing</span><strong>'+money(p?.suggestedRetailPriceUsd)+'</strong></div>'
+  +'<div class="kv"><span>Artwork after shop discount</span><strong>'+money(p?.salePriceAfterDiscountUsd)+'</strong></div>'
+  +'<div class="kv"><span>Delivery charged separately</span><strong>'+money(p?.customerShippingUsd)+'</strong></div>'
+  +'<div class="kv"><span>Customer total before tax</span><strong>'+money(p?.buyerTotalUsd)+'</strong></div>'
+  +'<div class="kv"><span>Profit using planning cost</span><strong>'+money(p?.estimatedContributionUsd)+'</strong></div>'
+  +'<p>'+esc(info.warning||info.note||'')+'</p></article>';
+}
 function render(data){
- const suppliers=data.suppliers||{},providerProfits=data.providerProfits||{};const ranking=new Map((data.ranking||[]).map(x=>[x.provider,x.rank]));const fallback=['Sensaria','Prodigi','PrintShrimp','Printify','Gelato','Artelo'];
+ lastLookupData=data;
+ const requested=shippingMode.value;
+ const activeMode=requested==='auto'
+   ? (data.recommendedShippingMode||data.shippingMode||'included') : requested;
+ const option=data.shippingOptions?.[activeMode];
+ const pCurrent=option?option.pricing:data.pricing;
+ const providerProfits=option?option.providerProfits:(data.providerProfits||{});
+ const suppliers=data.suppliers||{};const ranking=new Map((data.ranking||[]).map(x=>[x.provider,x.rank]));const fallback=['Sensaria','Prodigi','PrintShrimp','Printify','Gelato','Artelo'];
  const byProvider=Object.fromEntries(Object.values(suppliers).map(r=>[r.provider,r]));
  const order=fallback.slice().sort((a,b)=>{const ra=ranking.get(a),rb=ranking.get(b);if(ra!=null&&rb!=null)return ra-rb;if(ra!=null)return -1;if(rb!=null)return 1;return fallback.indexOf(a)-fallback.indexOf(b);});
  const printifyRow=byProvider.Printify||{};
@@ -184,8 +205,15 @@ function render(data){
  libraryStatus.textContent=missingOffers.length
    ? missingOffers.length+' Printify size/provider matches need a production cost. Captured costs remain available for future lookups.'
    : 'All Printify matching offers have production prices, or no shippable provider exists.';
- rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':'',r.provider==='Gelato'&&r.meta?.shippingCountryMinimumUsd!=null?'Country minimum shipping '+money(r.meta.shippingCountryMinimumUsd)+' vs average '+money(r.meta.shippingCountryAverageUsd)+'; recipient checkout may differ':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.planningProfitUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.quotedProfitUsd)+'</td><td class="detail">'+esc(detail||'—')+offerBreakdown(r)+'</td></tr>';}).join('');
+ rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':'',r.provider==='Gelato'&&r.meta?.shippingCountryMinimumUsd!=null?'Country minimum shipping '+money(r.meta.shippingCountryMinimumUsd)+' vs average '+money(r.meta.shippingCountryAverageUsd)+'; recipient checkout may differ':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.planningProfitUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.quotedProfitUsd)+'</td><td class="detail">'+esc(detail||'—')+offerBreakdown(r,activeMode)+'</td></tr>';}).join('');
  tableWrap.classList.add('show');empty.style.display='none';
+ if(data.shippingOptions){
+  shippingScenarios.innerHTML=scenarioCard(data.shippingOptions.included,activeMode,data.recommendedShippingMode)
+    +scenarioCard(data.shippingOptions.separate,activeMode,data.recommendedShippingMode);
+  shippingScenarios.classList.add('show');
+  shippingGuidance.textContent='Automatic recommendation: '+(data.recommendedShippingMode==='separate'?'charge shipping separately':'include free shipping')+
+    ' (supplier shipping threshold '+money(data.shippingThresholdUsd)+'). This is advisory only. For paid delivery, create/select an Etsy paid-delivery profile on the CUSTOM listing.';
+ }else{shippingScenarios.classList.remove('show');}
  if(data.winner){
   hero.classList.add('show');profitNote.style.display='block';
   winner.textContent=data.winner.provider;
@@ -193,8 +221,8 @@ function render(data){
   winnerDetail.textContent=data.winner.savingsVsNextBestUsd!=null
     ? 'Saves '+money(data.winner.savingsVsNextBestUsd)+' vs next best'
     : 'Only one eligible provider';
-  if(data.pricing){
-    const p=data.pricing;
+  if(pCurrent){
+    const p=pCurrent;
     customerPrice.textContent=money(p.salePriceAfterDiscountUsd);
     regularPrice.textContent=money(p.suggestedRetailPriceUsd);
     const reference=p.referenceRetail;
@@ -207,7 +235,13 @@ function render(data){
         ? 'retail raised to cover destination shipping'
         : 'cost-based floor; outside configured shop size range';
     saleDetail.textContent='Suggested · '+sourceLabel+' · '+p.shopSaleDiscountPercent+'% store discount';
-    priceDetail.textContent='≈ CA$'+Number(p.minimumCustomerPriceCad||0).toFixed(2)+' · customer pays after sale';
+    priceDetail.textContent='≈ CA$'+Number(p.minimumCustomerPriceCad||0).toFixed(2)+' · artwork after sale';
+    customerShipping.textContent=money(p.customerShippingUsd);
+    customerShippingDetail.textContent=activeMode==='separate'
+      ? 'Add as delivery charge on custom Etsy profile · estimate'
+      : 'Free delivery to customer';
+    customerTotal.textContent=money(p.buyerTotalUsd);
+    customerTotalDetail.textContent='≈ CA$'+Number(p.buyerTotalCad||0).toFixed(2)+' · artwork + delivery, before tax';
     plannedProfit.textContent=money(p.estimatedContributionUsd);
     plannedProfit.className=p.estimatedContributionUsd<0?'loss':'gain';
     profitDetail.textContent='≈ CA$'+Number(p.estimatedContributionCad||0).toFixed(2)+' · after '+p.etsyFeeReservePercent+'% Etsy fee reserve';
@@ -216,14 +250,19 @@ function render(data){
     profitQuoteDetail.textContent='≈ CA$'+Number(p.quotedProfitCad||0).toFixed(2)+' · before planning contingency';
   }else{
     customerPrice.textContent='—';regularPrice.textContent='—';
+    customerShipping.textContent='—';customerTotal.textContent='—';
+    customerShippingDetail.textContent=option?.warning||'No delivery charge could be calculated';
+    customerTotalDetail.textContent='';
     plannedProfit.textContent='—';quotedProfit.textContent='—';
     priceDetail.textContent='';saleDetail.textContent='';
     profitDetail.textContent='';profitQuoteDetail.textContent='';
   }
  }else{
   hero.classList.remove('show');profitNote.style.display='none';
+  shippingScenarios.classList.remove('show');
  }
 }
+shippingMode.addEventListener('change',()=>{if(lastLookupData)render(lastLookupData);});
 libraryButton.addEventListener('click',async()=>{
  const hasConfirmed=window.confirm('Create up to four temporary UNPUBLISHED Printify pricing drafts for this exact size and destination? The app will capture actual production costs, save them to its price library and delete the test drafts if saved. No Etsy or supplier orders will be created.');
  if(!hasConfirmed)return;
@@ -257,7 +296,7 @@ libraryButton.addEventListener('click',async()=>{
    libraryButton.disabled=false;
  }
 });
-button.addEventListener('click',async()=>{button.disabled=true;button.innerHTML='<span class="spinner"></span>Checking providers…';status.className='status';status.textContent='Looking up the exact request across connected providers…';try{const body={countryCode:country.value.trim().toUpperCase(),productCode:product.value,width:Number(width.value),height:Number(height.value),frame:product.value==='FC'?frame.value:''};const r=await fetch('/api/custom-size/lookup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'Lookup failed');render(d);status.textContent=d.winner?'Lookup complete · '+d.request.size+' '+d.request.product+' to '+d.request.countryCode+' · best option: '+d.winner.provider+'.':'Lookup complete, but no provider returned a fully priced eligible option.';}catch(e){status.className='status bad';status.textContent=String(e.message||e);}finally{button.disabled=false;button.textContent='Find best option';}});
+button.addEventListener('click',async()=>{button.disabled=true;button.innerHTML='<span class="spinner"></span>Checking providers…';status.className='status';status.textContent='Looking up the exact request across connected providers…';try{const body={countryCode:country.value.trim().toUpperCase(),productCode:product.value,width:Number(width.value),height:Number(height.value),frame:product.value==='FC'?frame.value:'',shippingMode:shippingMode.value};const r=await fetch('/api/custom-size/lookup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'Lookup failed');render(d);status.textContent=d.winner?'Lookup complete · '+d.request.size+' '+d.request.product+' to '+d.request.countryCode+' · best option: '+d.winner.provider+'.':'Lookup complete, but no provider returned a fully priced eligible option.';}catch(e){status.className='status bad';status.textContent=String(e.message||e);}finally{button.disabled=false;button.textContent='Find best option';}});
 })();
 </script></body></html>`;
 }
