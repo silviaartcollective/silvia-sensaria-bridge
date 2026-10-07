@@ -266,7 +266,7 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode } = {}) 
     candidates = candidates
       .map(item => ({ ...item, score: compatibilityScore(row, item.product, item.catalog) }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, 6);
+      .slice(0, 1);
 
     if (!candidates.length) {
       result.set(rowKey(row), {
