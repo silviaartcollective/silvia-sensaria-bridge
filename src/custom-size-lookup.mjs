@@ -13,13 +13,16 @@ const sensariaCatalog = JSON.parse(
 );
 
 function numeric(value) {
+  if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
 function round(value) {
-  return Number.isFinite(Number(value))
-    ? Math.round((Number(value) + Number.EPSILON) * 100) / 100
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n)
+    ? Math.round((n + Number.EPSILON) * 100) / 100
     : null;
 }
 
