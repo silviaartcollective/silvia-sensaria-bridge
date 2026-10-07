@@ -26,10 +26,16 @@ function compact(value) {
 
 function classifyCatalog(catalog) {
   const text = compact(`${catalog?.catalogUid || ''} ${catalog?.title || ''}`);
-  if (/framed/.test(text) && /canvas/.test(text)) return 'FC';
-  if (/canvas/.test(text) && !/framed/.test(text)) return 'C';
-  if (/poster/.test(text) && !/framed/.test(text) && !/canvas/.test(text)) return 'P';
+  if (/framed[-_ ]*canvas/.test(text)) return 'FC';
+  if (/canvas/.test(text)) return 'C';
+  if (/poster|fine art print|art print/.test(text) && !/framed/.test(text)) return 'P';
   return '';
+}
+
+function relevantCatalog(catalog) {
+  return /poster|canvas|fine art|art print|wall art|frame/i.test(
+    `${catalog?.catalogUid || ''} ${catalog?.title || ''}`
+  );
 }
 
 function finishFamily(value) {
@@ -38,7 +44,7 @@ function finishFamily(value) {
   if (/black/.test(text)) return 'black';
   if (/white/.test(text)) return 'white';
   if (/natural|oak|beech|birch/.test(text)) return 'natural';
-  if (/brown|dark wood|walnut|espresso|mahogany/.test(text)) return 'brown';
+  if (/brown|dark wood|dark-brown|dark_brown|walnut|espresso|mahogany/.test(text)) return 'brown';
   return text;
 }
 
@@ -53,31 +59,58 @@ function measureToInches(measure) {
   return null;
 }
 
+function normalizePair(a, b) {
+  const x = Number(a);
+  const y = Number(b);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0) return null;
+  return { width: Math.min(x, y), height: Math.max(x, y) };
+}
+
+function pairFromText(value, defaultUnit = '') {
+  const text = compact(value).replace(/["']/g, '');
+  const match = text.match(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(?:[-_ ]?(mm|cm|inch|in))?/i);
+  if (!match) return null;
+  let a = Number(match[1]);
+  let b = Number(match[2]);
+  const unit = String(match[3] || defaultUnit || '').toLowerCase();
+  if (unit === 'mm') { a /= 25.4; b /= 25.4; }
+  else if (unit === 'cm') { a /= 2.54; b /= 2.54; }
+  else if (unit === 'inch' || unit === 'in' || !unit) {
+    // already inches
+  } else return null;
+  return normalizePair(a, b);
+}
+
 function productSizeInches(product) {
-  const dimensions = product?.dimensions || {};
-  const widthEntry = Object.entries(dimensions).find(([key]) => /^width$/i.test(key));
-  const heightEntry = Object.entries(dimensions).find(([key]) => /^height$/i.test(key));
-  const width = measureToInches(widthEntry?.[1]);
-  const height = measureToInches(heightEntry?.[1]);
-  if (width == null || height == null) return null;
-  return { width: Math.min(width, height), height: Math.max(width, height) };
+  const dimensions = product?.dimensions;
+  if (dimensions && typeof dimensions === 'object' && !Array.isArray(dimensions)) {
+    const widthEntry = Object.entries(dimensions).find(([key]) => /^width$/i.test(key));
+    const heightEntry = Object.entries(dimensions).find(([key]) => /^height$/i.test(key));
+    const width = measureToInches(widthEntry?.[1]);
+    const height = measureToInches(heightEntry?.[1]);
+    const pair = normalizePair(width, height);
+    if (pair) return pair;
+  }
+
+  const attrs = product?.attributes && typeof product.attributes === 'object'
+    ? product.attributes : {};
+  for (const [key, value] of Object.entries(attrs)) {
+    if (!/format|size|dimension/i.test(key)) continue;
+    const pair = pairFromText(value);
+    if (pair) return pair;
+  }
+
+  const uid = String(product?.productUid || '');
+  const mm = uid.match(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)-mm/i);
+  if (mm) return pairFromText(`${mm[1]}x${mm[2]}-mm`);
+  const inch = uid.match(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)-(?:inch|in)/i);
+  if (inch) return pairFromText(`${inch[1]}x${inch[2]}-inch`);
+
+  return null;
 }
 
 function parseTargetSize(value) {
-  const text = compact(value).replace(/["']/g, '').replace(/\s+/g, '');
-  const match = text.match(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)/);
-  if (!match) return null;
-  const a = Number(match[1]);
-  const b = Number(match[2]);
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-  return { width: Math.min(a, b), height: Math.max(a, b) };
-}
-
-function sizeCompatible(product, target, tolerance = 0.48) {
-  const actual = productSizeInches(product);
-  if (!actual || !target) return false;
-  return Math.abs(actual.width - target.width) <= tolerance &&
-    Math.abs(actual.height - target.height) <= tolerance;
+  return pairFromText(value, 'in');
 }
 
 function productText(product, catalog) {
@@ -85,6 +118,29 @@ function productText(product, catalog) {
     ? Object.entries(product.attributes).map(([k, v]) => `${k}:${v}`).join(' ')
     : '';
   return compact(`${catalog?.title || ''} ${catalog?.catalogUid || ''} ${product?.productUid || ''} ${attrs}`);
+}
+
+function productCodeForItem(product, catalog) {
+  const text = productText(product, catalog);
+  const attrs = product?.attributes && typeof product.attributes === 'object' ? product.attributes : {};
+  const frameKey = Object.keys(attrs).some(key =>
+    /^(framecolor|framecolour|framestyle|framematerial|framevariant|canvasframe)$/i.test(String(key))
+  );
+  const framedCanvas = /framed[-_ ]*canvas|canvas[-_ ].*frame|frame[-_ ].*canvas|frame_and_canvas/i.test(text) || frameKey;
+
+  if (/canvas/.test(text)) return framedCanvas ? 'FC' : 'C';
+  if (/poster|fine art print|art print/.test(text)) {
+    if (/framed[-_ ]*poster|frame_and_poster|poster[-_ ].*frame/i.test(text) || frameKey) return '';
+    return 'P';
+  }
+  return classifyCatalog(catalog);
+}
+
+function sizeCompatible(product, target, tolerance = 0.52) {
+  const actual = productSizeInches(product);
+  if (!actual || !target) return false;
+  return Math.abs(actual.width - target.width) <= tolerance &&
+    Math.abs(actual.height - target.height) <= tolerance;
 }
 
 function productFinish(product, catalog) {
@@ -102,15 +158,16 @@ function compatibilityScore(row, product, catalog) {
   const text = productText(product, catalog);
   let score = 0;
   if (row?.productCode === 'P') {
-    if (/matte|matt|uncoated/.test(text)) score += 4;
-    if (/gloss|lustre|luster|satin|silk/.test(text)) score -= 5;
+    if (/matte|matt|uncoated|170-gsm-coated-silk/.test(text)) score += 4;
+    if (/gloss|lustre|luster|satin/.test(text)) score -= 5;
   }
   if (row?.productCode === 'C') {
-    if (/canvas/.test(text)) score += 2;
-    if (/stretched/.test(text)) score += 2;
+    if (/canvas/.test(text)) score += 4;
+    if (/stretched|slim|thick/.test(text)) score += 1;
   }
   if (row?.productCode === 'FC') {
-    if (/framed/.test(text) && /canvas/.test(text)) score += 4;
+    if (/canvas/.test(text)) score += 4;
+    if (/frame/.test(text)) score += 4;
   }
   return score;
 }
@@ -133,7 +190,7 @@ async function searchAllCatalogProducts(catalogUid) {
   const products = [];
   let offset = 0;
   const limit = 100;
-  for (let page = 0; page < 50; page++) {
+  for (let page = 0; page < 100; page++) {
     const result = await searchGelatoProducts(catalogUid, { limit, offset });
     const batch = Array.isArray(result?.products) ? result.products : [];
     products.push(...batch);
@@ -149,18 +206,22 @@ async function loadProductCatalog() {
   if (productCatalogPromise) return productCatalogPromise;
 
   productCatalogPromise = (async () => {
-    const catalogs = (await listGelatoCatalogs())
-      .map(catalog => ({ ...catalog, productCode: classifyCatalog(catalog) }))
-      .filter(catalog => catalog.productCode);
+    const catalogs = (await listGelatoCatalogs()).filter(relevantCatalog);
 
     const rows = (await mapLimit(catalogs, 3, async catalog => {
       try {
         const products = await searchAllCatalogProducts(catalog.catalogUid);
-        return products.map(product => ({ catalog, product }));
+        return products
+          .map(product => ({
+            catalog,
+            product,
+            productCode: productCodeForItem(product, catalog)
+          }))
+          .filter(item => item.productCode);
       } catch (error) {
-        return [{ catalog, product: null, error: error?.message || String(error) }];
+        return [{ catalog, product: null, productCode: '', error: error?.message || String(error) }];
       }
-    })).flat().filter(item => item?.product);
+    })).flat().filter(item => item?.product && item?.productCode);
 
     productCatalogCache = { fetchedAt: Date.now(), rows };
     return rows;
@@ -176,7 +237,7 @@ async function loadProductCatalog() {
 function normalizeSizeKey(value) {
   const target = parseTargetSize(value);
   if (!target) return '';
-  return `${target.width}x${target.height}`;
+  return `${Number(target.width.toFixed(2))}x${Number(target.height.toFixed(2))}`;
 }
 
 function rowKey(row) {
@@ -256,7 +317,7 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode } = {}) 
   for (const row of rows || []) {
     const target = parseTargetSize(row?.size);
     const sizeMatches = catalogRows.filter(item =>
-      item.catalog?.productCode === row?.productCode &&
+      item.productCode === row?.productCode &&
       sizeCompatible(item.product, target) &&
       finishCompatible(row, item.product, item.catalog)
     );
@@ -281,17 +342,17 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode } = {}) 
           (Array.isArray(item.product?.supportedCountries) && item.product.supportedCountries.includes(country) ? 100 : 0)
       }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, 2);
+      .slice(0, 4);
 
     if (!candidates.length) {
       result.set(rowKey(row), {
         provider: 'Gelato', eligible: false, status: 'catalog-no-match',
-        reason: 'The Gelato catalog scan did not map an exact compatible product/size yet. This does not mean Gelato itself does not sell the size.'
+        reason: 'Gelato catalog search did not map this exact product/size. This is a mapper result, not proof that Gelato does not sell it.'
       });
       continue;
     }
 
-    const quoted = await mapLimit(candidates, 3, async candidate => {
+    const quoted = await mapLimit(candidates, 2, async candidate => {
       try {
         return { candidate, quote: await quoteProduct(candidate.product.productUid, country) };
       } catch (error) {
@@ -313,8 +374,8 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode } = {}) 
     if (!best) {
       const firstError = quoted.find(item => item.error)?.error || '';
       result.set(rowKey(row), {
-        provider: 'Gelato', eligible: false, status: firstError ? 'error' : 'price-unavailable',
-        reason: firstError || 'Gelato product matched, but product or shipping price was unavailable.'
+        provider: 'Gelato', eligible: false, status: firstError ? 'quote-error' : 'price-unavailable',
+        reason: firstError || 'Gelato matched this exact catalog product, but a complete product + shipping price was not returned for the destination.'
       });
       continue;
     }
@@ -330,7 +391,7 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode } = {}) 
       productCost: Math.round(best.productCost * 100) / 100,
       shippingCost: Math.round(best.shippingCost * 100) / 100,
       reason: '',
-      basis: 'Gelato country-specific product price + minimum normal residential shipment price.',
+      basis: 'Gelato live country-specific product price + normal residential shipment price.',
       meta: {
         catalogUid: best.candidate.catalog.catalogUid,
         catalogTitle: best.candidate.catalog.title || '',
@@ -354,4 +415,12 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode } = {}) 
   return result;
 }
 
-export const __test = { classifyCatalog, finishFamily, parseTargetSize, productSizeInches, sizeCompatible, rowKey };
+export const __test = {
+  classifyCatalog,
+  finishFamily,
+  parseTargetSize,
+  productSizeInches,
+  productCodeForItem,
+  sizeCompatible,
+  rowKey
+};
