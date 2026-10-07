@@ -49,7 +49,7 @@ function classifyBlueprint(title) {
   const text = compact(title);
   if (!text) return '';
   if (/framed/.test(text) && /canvas/.test(text)) return 'FC';
-  if (/canvas/.test(text) && !/framed/.test(text)) return 'C';
+  if (/(?:canvas|stretched[- ]?print|gallery[- ]?wrap)/.test(text) && !/framed/.test(text)) return 'C';
   if (/(poster|fine art print|art print)/.test(text) && !/framed/.test(text) && !/canvas/.test(text)) return 'P';
   return '';
 }
@@ -68,7 +68,11 @@ function variantSize(variant) {
   const fromOptions = variant?.options && !Array.isArray(variant.options)
     ? Object.entries(variant.options).find(([key]) => /size|dimension|format/i.test(key))?.[1]
     : '';
-  return normalizeSize(fromOptions || variant?.title || optionText(variant));
+  for (const candidate of [fromOptions, variant?.title, optionText(variant)]) {
+    const found = normalizeSize(candidate);
+    if (found) return found;
+  }
+  return '';
 }
 
 function finishFamily(value) {
@@ -173,11 +177,22 @@ async function loadCatalog({ fresh = false } = {}) {
       .map(item => ({ ...item, productCode: classifyBlueprint(item?.title) }))
       .filter(item => item.productCode);
 
-    const providerTasks = [];
-    for (const blueprint of wallArtBlueprints) {
-      const providers = await getPrintifyPrintProviders(blueprint.id);
-      for (const provider of providers) providerTasks.push({ blueprint, provider });
-    }
+    // Enumerate every matching wall-art blueprint, including the product
+    // "Matte Canvas, Stretched, 1.25\"", and every print provider listed
+    // under it. Do not select a preferred brand/provider before scanning.
+    const providerFailures = [];
+    const availableProviders = await mapLimit(wallArtBlueprints, 4, async blueprint => {
+      try {
+        return { blueprint, providers: await getPrintifyPrintProviders(blueprint.id) };
+      } catch (error) {
+        providerFailures.push({ blueprintId: blueprint.id, title: blueprint.title,
+          error: error?.message || String(error) });
+        return { blueprint, providers: [] };
+      }
+    });
+    const providerTasks = availableProviders.flatMap(({ blueprint, providers }) =>
+      providers.map(provider => ({ blueprint, provider }))
+    );
 
     const rows = (await mapLimit(providerTasks, 5, async ({ blueprint, provider }) => {
       try {
@@ -193,6 +208,7 @@ async function loadCatalog({ fresh = false } = {}) {
         return {
           blueprintId: blueprint.id,
           blueprintTitle: blueprint.title || '',
+          brand: blueprint.brand || '',
           productCode: blueprint.productCode,
           providerId: provider.id,
           providerTitle: provider.title || '',
@@ -204,6 +220,7 @@ async function loadCatalog({ fresh = false } = {}) {
         return {
           blueprintId: blueprint.id,
           blueprintTitle: blueprint.title || '',
+          brand: blueprint.brand || '',
           productCode: blueprint.productCode,
           providerId: provider.id,
           providerTitle: provider.title || '',
@@ -220,7 +237,14 @@ async function loadCatalog({ fresh = false } = {}) {
       shopCosts: shopCosts.map,
       shopCostWarning: shopCosts.warning,
       shopProductCount: shopCosts.productCount,
-      pricedVariantCount: shopCosts.map.size
+      pricedVariantCount: shopCosts.map.size,
+      blueprintCount: blueprints.length,
+      wallArtBlueprintCount: wallArtBlueprints.length,
+      printProviderOffersScanned: providerTasks.length,
+      providerFailures,
+      providerDetailErrors: rows.filter(item => item.error).map(item => ({
+        blueprintId: item.blueprintId, provider: item.providerTitle, error: item.error
+      }))
     };
     return catalogCache;
   })();
@@ -253,6 +277,8 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
   for (const row of rows || []) {
     const wantedSize = normalizeSize(row?.size);
     const candidates = [];
+    const missingDestination = [];
+    let exactSizeCount = 0;
 
     for (const offering of catalog) {
       if (offering.productCode !== row?.productCode) continue;
@@ -260,8 +286,16 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
         if (variantSize(variant) !== wantedSize) continue;
         if (!finishCompatible(row, variant, offering.blueprintTitle)) continue;
 
+        exactSizeCount++;
         const profile = shippingProfileForVariant(offering.shipping, variant?.id, country);
-        if (!profile) continue;
+        if (!profile) {
+          missingDestination.push({
+            product: offering.blueprintTitle,
+            printProvider: offering.providerTitle,
+            variantTitle: variant?.title || ''
+          });
+          continue;
+        }
 
         const productCost = shopCosts.get(
           costMapKey(offering.blueprintId, offering.providerId, variant?.id)
@@ -285,11 +319,39 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
       return String(a.offering.providerTitle).localeCompare(String(b.offering.providerTitle));
     });
     const best = candidates[0];
+    const offers = candidates.map(item => ({
+      product: item.offering.blueprintTitle,
+      brand: item.offering.brand || '',
+      printProvider: item.offering.providerTitle,
+      printProviderCountry: item.offering.providerLocation?.country || '',
+      blueprintId: item.offering.blueprintId,
+      providerId: item.offering.providerId,
+      variantId: item.variant?.id ?? null,
+      variantTitle: item.variant?.title || '',
+      productionUsd: item.productCost,
+      shippingUsd: item.shippingCost,
+      quotedTotalUsd: item.totalUsd,
+      priceStatus: item.totalUsd != null ? 'priced' : 'production-cost-missing'
+    }));
+    const scan = {
+      totalCatalogBlueprints: loaded.blueprintCount,
+      wallArtBlueprints: loaded.wallArtBlueprintCount,
+      blueprintProvidersScanned: loaded.printProviderOffersScanned,
+      exactSizeMatches: exactSizeCount,
+      shippableOffers: offers.length,
+      omittedForCountry: missingDestination.length,
+      catalogErrors: [...(loaded.providerFailures || []), ...(loaded.providerDetailErrors || [])],
+      omittedExamples: missingDestination.slice(0, 12)
+    };
 
     if (!best) {
       result.set(rowKey(row), {
-        provider: 'Printify', eligible: false, status: 'not-available-for-route',
-        reason: 'No matching Printify variant with a shipping profile for this destination was returned.'
+        provider: 'Printify', eligible: false,
+        status: exactSizeCount ? 'not-available-for-route' : 'catalog-no-match',
+        reason: exactSizeCount
+          ? `Printify found ${exactSizeCount} exact-size variations among all wall-art products/providers but none with confirmed shipping to ${country}.`
+          : `Printify found no ${wantedSize} variant across ${loaded.printProviderOffersScanned} wall-art blueprint/provider combinations. ${scan.catalogErrors.length} catalog requests failed.`,
+        meta: { scan, offers }
       });
       continue;
     }
@@ -315,7 +377,8 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
           variantTitle: best.variant?.title || '',
           candidates: candidates.length,
           shopProductCount: loaded.shopProductCount,
-          pricedVariantCount: loaded.pricedVariantCount
+          pricedVariantCount: loaded.pricedVariantCount,
+          scan, offers
         }
       });
       continue;
@@ -341,7 +404,8 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
         variantId: best.variant?.id,
         variantTitle: best.variant?.title || '',
         handlingTime: best.offering.shipping?.handling_time || null,
-        candidates: candidates.length
+        candidates: candidates.length,
+        scan, offers
       }
     });
   }
