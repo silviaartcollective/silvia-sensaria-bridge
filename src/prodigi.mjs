@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { SILVIA_CURRENT_MARKETS } from './markets.mjs';
 
 const PRODIGI_API_BASE_DEFAULT = 'https://api.prodigi.com/v4.0';
+
+const sensariaShipping = JSON.parse(
+  readFileSync(new URL('../config/sensaria-shipping.json', import.meta.url), 'utf8')
+);
 
 function apiBase() {
   return String(
@@ -105,22 +110,16 @@ export const PRODIGI_SILVIA_ENTRIES = Object.freeze(
   Object.values(PRODIGI_SILVIA_CATALOG).flatMap(group => group.entries)
 );
 
-const SENSARIA_ZONE_BY_COUNTRY = Object.freeze({
-  US: '1A',
-  AT: '1C', BE: '1C', FR: '1C', DE: '1C', IT: '1C', NL: '1C', PT: '1C', ES: '1C',
-  CA: '2A', CZ: '2A', DK: '2A', FI: '2A', IE: '2A', LU: '2A', AU: '2B',
-  EE: '3A', HU: '3A', PL: '3A',
-  HR: '4', GR: '4', LV: '4', LT: '4', RO: '4', SK: '4', SI: '4', SE: '4',
-  BG: '5'
-});
+const SENSARIA_ZONE_BY_COUNTRY = Object.freeze({ ...(sensariaShipping.countryZones || {}) });
 
-const SENSARIA_BASIC_SHIPPING = Object.freeze({
-  'Rolled Substrates': Object.freeze({ '1A': 0, '1C': 0, '2A': 5, '2B': 5, '3A': 5, '4': 5, '5': 25 }),
-  'Framed Prints': Object.freeze({ '1A': 0, '1C': 45, '2A': 45, '2B': 45, '3A': 45, '4': 45, '5': 45 }),
-  'Default': Object.freeze({ '1A': 0, '1C': 0, '2A': 5, '2B': 5, '3A': 10, '4': 15, '5': 45 }),
-  'Canvas Medium': Object.freeze({ '1A': 0, '1C': 30, '2A': 30, '2B': 5, '3A': 30, '4': 30, '5': 45 }),
-  'Canvas Large': Object.freeze({ '1A': 0, '1C': 75, '2A': 75, '2B': 5, '3A': 150, '4': 150, '5': 150 })
-});
+const SENSARIA_BASIC_SHIPPING = Object.freeze(
+  Object.fromEntries(
+    Object.entries(sensariaShipping.basicRates || {}).map(([group, rates]) => [
+      group,
+      Object.freeze({ ...rates })
+    ])
+  )
+);
 
 export { SILVIA_CURRENT_MARKETS };
 
