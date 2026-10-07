@@ -36,7 +36,7 @@ input,select,button{border:1px solid var(--line);border-radius:10px;background:#
 button{cursor:pointer;font-weight:700}button.primary{background:#30352e;color:#fff;border-color:#30352e}button:disabled{opacity:.5;cursor:not-allowed}
 .notice{padding:12px 14px;border-radius:10px;background:var(--green2);color:var(--green);font-size:12px;line-height:1.5;margin-bottom:18px}
 .status{font-size:12px;color:var(--muted);line-height:1.5;margin-top:13px}.status.bad{color:var(--red)}
-.hero{display:none;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:10px;margin-bottom:14px}.hero.show{display:grid}.metric{background:#f7f4ee;border:1px solid var(--line);border-radius:11px;padding:13px}.metric small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}.metric strong{font:500 22px Georgia,serif}.metric .detail{font-size:10px;color:var(--muted);margin-top:4px}
+.hero{display:none;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}.hero.show{display:grid}.metric{background:#f7f4ee;border:1px solid var(--line);border-radius:11px;padding:13px}.metric small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}.metric strong{font:500 22px Georgia,serif}.metric .detail{font-size:10px;color:var(--muted);margin-top:4px}.metric strong.loss{color:var(--red)}.metric strong.gain{color:var(--green)}
 .table-wrap{display:none;overflow:auto;border:1px solid var(--line);border-radius:11px}.table-wrap.show{display:block}table{width:100%;border-collapse:collapse;background:#fff;font-size:12px}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}th{background:#f1eee8;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}td.detail{white-space:normal;min-width:250px;max-width:390px;color:var(--muted);line-height:1.4}
 .offers{margin-top:9px;padding:9px;border:1px solid var(--line);border-radius:8px;background:#fcfaf6;color:var(--ink)}
 .offers summary{cursor:pointer;font-weight:700;font-size:11px}
@@ -109,15 +109,18 @@ table.offer-table th{font-size:9px}
 <section class="hero" id="hero">
   <div class="metric"><small>Best provider</small><strong id="winner">—</strong><div class="detail" id="winner-detail"></div></div>
   <div class="metric"><small>Estimated landed cost</small><strong id="winner-cost">—</strong><div class="detail">USD planning estimate</div></div>
-  <div class="metric"><small>Minimum customer price</small><strong id="customer-price">—</strong><div class="detail" id="price-detail"></div></div>
-  <div class="metric"><small>Regular price before shop sale</small><strong id="regular-price">—</strong><div class="detail" id="sale-detail"></div></div>
+  <div class="metric"><small>Suggested regular Etsy retail</small><strong id="regular-price">—</strong><div class="detail" id="sale-detail"></div></div>
+  <div class="metric"><small>After shop discount</small><strong id="customer-price">—</strong><div class="detail" id="price-detail"></div></div>
+  <div class="metric"><small>Est. profit (planning cost)</small><strong id="planned-profit">—</strong><div class="detail" id="profit-detail"></div></div>
+  <div class="metric"><small>Est. profit (quoted cost)</small><strong id="quoted-profit">—</strong><div class="detail" id="profit-quote-detail"></div></div>
 </section>
 
+<div class="notice" id="profit-note" style="display:none">Suggested regular retail includes this shop's discount. Profit estimates assume free customer shipping and a reserved percentage for Etsy fees. <strong>Planning profit</strong> uses the supplier cost plus the app's contingency; <strong>quoted profit</strong> uses only quoted production and shipping. Excludes ads, actual tax/duties, fixed fees, refunds and currency variation.</div>
 <section class="card">
   <h2 style="margin:0 0 5px">Provider results</h2>
   <p class="sub" style="margin-bottom:14px">Availability and price are for the exact request above. Hover/status detail explains why a provider is not ranked.</p>
   <div class="table-wrap" id="table-wrap">
-    <table><thead><tr><th>Rank</th><th>Provider</th><th>Status</th><th>Product</th><th>Shipping</th><th>Quoted total</th><th>Planning total</th><th>Details</th></tr></thead>
+    <table><thead><tr><th>Rank</th><th>Provider</th><th>Status</th><th>Product</th><th>Shipping</th><th>Quoted total</th><th>Planning total</th><th>Profit (planning)</th><th>Profit (quoted)</th><th>Details</th></tr></thead>
     <tbody id="rows"></tbody></table>
   </div>
   <div class="status" id="empty">Run a lookup to see provider results.</div>
@@ -131,7 +134,7 @@ table.offer-table th{font-size:9px}
 </main></div>
 <script>
 (function(){
-const country=document.getElementById('country'),product=document.getElementById('product'),width=document.getElementById('width'),height=document.getElementById('height'),frame=document.getElementById('frame'),frameLabel=document.getElementById('frame-label'),button=document.getElementById('lookup'),status=document.getElementById('status'),hero=document.getElementById('hero'),winner=document.getElementById('winner'),winnerCost=document.getElementById('winner-cost'),winnerDetail=document.getElementById('winner-detail'),customerPrice=document.getElementById('customer-price'),regularPrice=document.getElementById('regular-price'),priceDetail=document.getElementById('price-detail'),saleDetail=document.getElementById('sale-detail'),tableWrap=document.getElementById('table-wrap'),rows=document.getElementById('rows'),empty=document.getElementById('empty'),libraryCard=document.getElementById('printify-library-card'),libraryButton=document.getElementById('build-printify-library'),libraryStatus=document.getElementById('printify-library-status');
+const country=document.getElementById('country'),product=document.getElementById('product'),width=document.getElementById('width'),height=document.getElementById('height'),frame=document.getElementById('frame'),frameLabel=document.getElementById('frame-label'),button=document.getElementById('lookup'),status=document.getElementById('status'),hero=document.getElementById('hero'),winner=document.getElementById('winner'),winnerCost=document.getElementById('winner-cost'),winnerDetail=document.getElementById('winner-detail'),customerPrice=document.getElementById('customer-price'),regularPrice=document.getElementById('regular-price'),priceDetail=document.getElementById('price-detail'),saleDetail=document.getElementById('sale-detail'),plannedProfit=document.getElementById('planned-profit'),quotedProfit=document.getElementById('quoted-profit'),profitDetail=document.getElementById('profit-detail'),profitQuoteDetail=document.getElementById('profit-quote-detail'),profitNote=document.getElementById('profit-note'),tableWrap=document.getElementById('table-wrap'),rows=document.getElementById('rows'),empty=document.getElementById('empty'),libraryCard=document.getElementById('printify-library-card'),libraryButton=document.getElementById('build-printify-library'),libraryStatus=document.getElementById('printify-library-status');
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>v==null||!Number.isFinite(Number(v))?'—':'$'+Number(v).toFixed(2);
 function syncFrame(){frameLabel.style.display=product.value==='FC'?'grid':'none'}product.addEventListener('change',syncFrame);syncFrame();
@@ -149,7 +152,7 @@ function offerBreakdown(record){
  return '<details class="offers"><summary>View all '+offers.length+' Printify product / print-provider matches</summary><p>'+esc(summary)+'</p>'+errors+'<div class="offers-scroll"><table class="offer-table">'+head+'<tbody>'+body+'</tbody></table></div></details>';
 }
 function render(data){
- const suppliers=data.suppliers||{};const ranking=new Map((data.ranking||[]).map(x=>[x.provider,x.rank]));const fallback=['Sensaria','Prodigi','PrintShrimp','Printify','Gelato','Artelo'];
+ const suppliers=data.suppliers||{},providerProfits=data.providerProfits||{};const ranking=new Map((data.ranking||[]).map(x=>[x.provider,x.rank]));const fallback=['Sensaria','Prodigi','PrintShrimp','Printify','Gelato','Artelo'];
  const byProvider=Object.fromEntries(Object.values(suppliers).map(r=>[r.provider,r]));
  const order=fallback.slice().sort((a,b)=>{const ra=ranking.get(a),rb=ranking.get(b);if(ra!=null&&rb!=null)return ra-rb;if(ra!=null)return -1;if(rb!=null)return 1;return fallback.indexOf(a)-fallback.indexOf(b);});
  const printifyRow=byProvider.Printify||{};
@@ -158,9 +161,36 @@ function render(data){
  libraryStatus.textContent=missingOffers.length
    ? missingOffers.length+' Printify size/provider matches need a production cost. Captured costs remain available for future lookups.'
    : 'All Printify matching offers have production prices, or no shippable provider exists.';
- rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td class="detail">'+esc(detail||'—')+offerBreakdown(r)+'</td></tr>';}).join('');
+ rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.planningProfitUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.quotedProfitUsd)+'</td><td class="detail">'+esc(detail||'—')+offerBreakdown(r)+'</td></tr>';}).join('');
  tableWrap.classList.add('show');empty.style.display='none';
- if(data.winner){hero.classList.add('show');winner.textContent=data.winner.provider;winnerCost.textContent=money(data.winner.modeledLandedUsd);winnerDetail.textContent=data.winner.savingsVsNextBestUsd!=null?'Saves '+money(data.winner.savingsVsNextBestUsd)+' vs next best':'Only one eligible provider';if(data.pricing){customerPrice.textContent=money(data.pricing.minimumCustomerPriceUsd);regularPrice.textContent=money(data.pricing.regularPriceBeforeShopSaleUsd);priceDetail.textContent='≈ CA$'+Number(data.pricing.minimumCustomerPriceCad||0).toFixed(2)+' · configured safety floor';saleDetail.textContent=data.pricing.shopSaleDiscountPercent+'% current shop sale assumption';}else{customerPrice.textContent='—';regularPrice.textContent='—';priceDetail.textContent='';saleDetail.textContent='';}}else{hero.classList.remove('show');}
+ if(data.winner){
+  hero.classList.add('show');profitNote.style.display='block';
+  winner.textContent=data.winner.provider;
+  winnerCost.textContent=money(data.winner.modeledLandedUsd);
+  winnerDetail.textContent=data.winner.savingsVsNextBestUsd!=null
+    ? 'Saves '+money(data.winner.savingsVsNextBestUsd)+' vs next best'
+    : 'Only one eligible provider';
+  if(data.pricing){
+    const p=data.pricing;
+    customerPrice.textContent=money(p.salePriceAfterDiscountUsd);
+    regularPrice.textContent=money(p.suggestedRetailPriceUsd);
+    saleDetail.textContent='Suggested Etsy listing price · '+p.shopSaleDiscountPercent+'% store discount';
+    priceDetail.textContent='≈ CA$'+Number(p.minimumCustomerPriceCad||0).toFixed(2)+' · customer pays after sale';
+    plannedProfit.textContent=money(p.estimatedContributionUsd);
+    plannedProfit.className=p.estimatedContributionUsd<0?'loss':'gain';
+    profitDetail.textContent='≈ CA$'+Number(p.estimatedContributionCad||0).toFixed(2)+' · after '+p.etsyFeeReservePercent+'% Etsy fee reserve';
+    quotedProfit.textContent=money(p.quotedProfitUsd);
+    quotedProfit.className=p.quotedProfitUsd<0?'loss':'gain';
+    profitQuoteDetail.textContent='≈ CA$'+Number(p.quotedProfitCad||0).toFixed(2)+' · before planning contingency';
+  }else{
+    customerPrice.textContent='—';regularPrice.textContent='—';
+    plannedProfit.textContent='—';quotedProfit.textContent='—';
+    priceDetail.textContent='';saleDetail.textContent='';
+    profitDetail.textContent='';profitQuoteDetail.textContent='';
+  }
+ }else{
+  hero.classList.remove('show');profitNote.style.display='none';
+ }
 }
 libraryButton.addEventListener('click',async()=>{
  const hasConfirmed=window.confirm('Create up to four temporary UNPUBLISHED Printify pricing drafts for this exact size and destination? The app will capture actual production costs, save them to its price library and delete the test drafts if saved. No Etsy or supplier orders will be created.');
