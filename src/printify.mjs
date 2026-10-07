@@ -1,15 +1,40 @@
-const PRINTIFY_API_BASE = 'https://api.printify.com/v1';
+const DEFAULT_PRINTIFY_V1_BASE = 'https://api.printify.com/v1';
+const DEFAULT_PRINTIFY_V2_BASE = 'https://api.printify.com/v2';
+
+function cleanBase(value, fallback) {
+  return String(value || fallback).trim().replace(/\/+$/, '');
+}
+
+function v1Base() {
+  return cleanBase(process.env.PRINTIFY_API_URL, DEFAULT_PRINTIFY_V1_BASE);
+}
+
+function v2Base() {
+  const configured = String(process.env.PRINTIFY_API_URL || '').trim();
+  if (!configured) return DEFAULT_PRINTIFY_V2_BASE;
+  const normalized = configured.replace(/\/+$/, '');
+  if (/\/v1$/i.test(normalized)) return normalized.replace(/\/v1$/i, '/v2');
+  return DEFAULT_PRINTIFY_V2_BASE;
+}
 
 function token() {
   return String(process.env.PRINTIFY_API_TOKEN || '').trim();
+}
+
+function configuredShopId() {
+  return String(process.env.PRINTIFY_SHOP_ID || '').trim();
 }
 
 export function printifyConfigStatus() {
   return {
     ready: Boolean(token()),
     tokenConfigured: Boolean(token()),
-    apiBaseUrl: PRINTIFY_API_BASE,
-    authentication: 'Bearer personal access token'
+    shopIdConfigured: Boolean(configuredShopId()),
+    apiBaseUrl: v1Base(),
+    apiV2BaseUrl: v2Base(),
+    authentication: 'Bearer personal access token',
+    catalogReadEnabled: Boolean(token()),
+    liveSubmissionEnabled: false
   };
 }
 
@@ -24,13 +49,14 @@ function cleanErrorBody(text) {
   }
 }
 
-async function printifyRequest(pathname, { method = 'GET', body } = {}) {
+async function printifyRequest(pathname, { method = 'GET', body, apiVersion = 'v1' } = {}) {
   const apiToken = token();
   if (!apiToken) throw new Error('PRINTIFY_API_TOKEN is not configured');
 
+  const base = apiVersion === 'v2' ? v2Base() : v1Base();
   const url = pathname.startsWith('http')
     ? pathname
-    : `${PRINTIFY_API_BASE}${pathname.startsWith('/') ? '' : '/'}${pathname}`;
+    : `${base}${pathname.startsWith('/') ? '' : '/'}${pathname}`;
 
   const response = await fetch(url, {
     method,
@@ -56,11 +82,80 @@ export async function getPrintifyShops() {
   return Array.isArray(shops) ? shops : [];
 }
 
-export async function testPrintifyConnection() {
+export async function resolvePrintifyShopId(shopId) {
+  const supplied = String(shopId || configuredShopId()).trim();
+  if (supplied) return supplied;
+
   const shops = await getPrintifyShops();
+  if (shops.length === 1 && shops[0]?.id != null) return String(shops[0].id);
+  if (!shops.length) throw new Error('No Printify shops are available for this API token');
+  throw new Error('PRINTIFY_SHOP_ID is not configured and the token has access to multiple shops');
+}
+
+export async function getPrintifyBlueprints() {
+  const rows = await printifyRequest('/catalog/blueprints.json');
+  return Array.isArray(rows) ? rows : [];
+}
+
+export async function getPrintifyBlueprint(blueprintId) {
+  return printifyRequest(`/catalog/blueprints/${encodeURIComponent(blueprintId)}.json`);
+}
+
+export async function getPrintifyPrintProviders(blueprintId) {
+  const rows = await printifyRequest(
+    `/catalog/blueprints/${encodeURIComponent(blueprintId)}/print_providers.json`
+  );
+  return Array.isArray(rows) ? rows : [];
+}
+
+export async function getPrintifyVariants(blueprintId, printProviderId) {
+  return printifyRequest(
+    `/catalog/blueprints/${encodeURIComponent(blueprintId)}/print_providers/${encodeURIComponent(printProviderId)}/variants.json`
+  );
+}
+
+export async function getPrintifyShipping(blueprintId, printProviderId) {
+  return printifyRequest(
+    `/catalog/blueprints/${encodeURIComponent(blueprintId)}/print_providers/${encodeURIComponent(printProviderId)}/shipping.json`
+  );
+}
+
+export async function getPrintifyShippingMethod(
+  blueprintId,
+  printProviderId,
+  method = 'standard'
+) {
+  const shippingMethod = String(method || 'standard').trim().toLowerCase();
+  const allowed = new Set(['standard', 'priority', 'express', 'economy']);
+  if (!allowed.has(shippingMethod)) {
+    throw new Error('Printify shipping method must be standard, priority, express, or economy');
+  }
+  return printifyRequest(
+    `/catalog/blueprints/${encodeURIComponent(blueprintId)}/print_providers/${encodeURIComponent(printProviderId)}/shipping/${shippingMethod}.json`,
+    { apiVersion: 'v2' }
+  );
+}
+
+export async function findPrintifyWallArtBlueprints() {
+  const blueprints = await getPrintifyBlueprints();
+  const pattern = /(poster|canvas|framed|wall art|fine art|print)/i;
+  return blueprints.filter((item) => pattern.test(String(item?.title || '')));
+}
+
+export async function testPrintifyConnection() {
+  const [shops, blueprints] = await Promise.all([
+    getPrintifyShops(),
+    getPrintifyBlueprints()
+  ]);
+
   return {
     ok: true,
     shopCount: shops.length,
+    configuredShopId: configuredShopId() || null,
+    catalogBlueprintCount: blueprints.length,
+    wallArtBlueprintCount: blueprints.filter((item) =>
+      /(poster|canvas|framed|wall art|fine art|print)/i.test(String(item?.title || ''))
+    ).length,
     shops: shops.map(shop => ({
       id: shop?.id,
       title: shop?.title || '',
@@ -70,15 +165,19 @@ export async function testPrintifyConnection() {
 }
 
 export async function getPrintifyOrders(shopId, { page = 1, limit = 10 } = {}) {
-  const id = String(shopId || '').trim();
-  if (!id) throw new Error('Printify shop ID is required');
+  const id = await resolvePrintifyShopId(shopId);
   const query = new URLSearchParams({ page: String(page), limit: String(limit) });
   return printifyRequest(`/shops/${encodeURIComponent(id)}/orders.json?${query}`);
 }
 
 export async function createPrintifyOrder(shopId, payload = {}) {
-  const id = String(shopId || '').trim();
-  if (!id) throw new Error('Printify shop ID is required');
+  const masterEnabled = String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED || '').toLowerCase() === 'true';
+  const providerEnabled = String(process.env.PRINTIFY_FULFILLMENT_ENABLED || '').toLowerCase() === 'true';
+  if (!masterEnabled || !providerEnabled) {
+    throw new Error('Printify live order submission is disabled');
+  }
+
+  const id = await resolvePrintifyShopId(shopId);
   return printifyRequest(`/shops/${encodeURIComponent(id)}/orders.json`, {
     method: 'POST',
     body: payload
