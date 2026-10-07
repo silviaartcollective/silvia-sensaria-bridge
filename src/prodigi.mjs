@@ -536,8 +536,14 @@ export function getSensariaComparison({
   const finish = sensariaFinishCode(entry);
   const productKey = `${entry.productCode}|${entry.size}|${finish}`;
   const config = sensariaProducts?.[productKey] || null;
-  const productionCost = Number(config?.costUsd);
-  const shippingCost = zone ? Number(SENSARIA_BASIC_SHIPPING?.[group]?.[zone]) : Number.NaN;
+  // Missing supplier costs or unavailable shipping are NOT free shipping.
+  // Number(null) would silently convert a missing quote into an eligible $0 route.
+  const listedProduction = config?.costUsd;
+  const listedShipping = zone && zone !== 'UNDELIVERABLE'
+    ? SENSARIA_BASIC_SHIPPING?.[group]?.[zone]
+    : null;
+  const productionCost = listedProduction == null || listedProduction === '' ? Number.NaN : Number(listedProduction);
+  const shippingCost = listedShipping == null || listedShipping === '' ? Number.NaN : Number(listedShipping);
   const production = Number.isFinite(productionCost) ? productionCost : null;
   const shipping = Number.isFinite(shippingCost) ? shippingCost : null;
 
