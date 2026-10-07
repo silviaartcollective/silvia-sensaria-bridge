@@ -115,7 +115,7 @@ table.offer-table th{font-size:9px}
   <div class="metric"><small>Est. profit (quoted cost)</small><strong id="quoted-profit">—</strong><div class="detail" id="profit-quote-detail"></div></div>
 </section>
 
-<div class="notice" id="profit-note" style="display:none">Suggested regular retail includes this shop's discount. Profit estimates assume free customer shipping and a reserved percentage for Etsy fees. <strong>Planning profit</strong> uses the supplier cost plus the app's contingency; <strong>quoted profit</strong> uses only quoted production and shipping. Excludes ads, actual tax/duties, fixed fees, refunds and currency variation.</div>
+<div class="notice" id="profit-note" style="display:none">Suggested regular retail is based on the shop's existing size-price ladder; custom sizes between listed sizes are estimated by area, and international shipping may require a higher price. The old cost-based minimum is only a price FLOOR, not your normal retail. Profit estimates assume free customer shipping and an Etsy fee reserve. <strong>Planning profit</strong> uses the supplier cost plus the app's contingency; <strong>quoted profit</strong> uses only quoted production and shipping. Excludes ads, actual tax/duties, fixed fees, refunds and currency variation.</div>
 <section class="card">
   <h2 style="margin:0 0 5px">Provider results</h2>
   <p class="sub" style="margin-bottom:14px">Availability and price are for the exact request above. Hover/status detail explains why a provider is not ranked.</p>
@@ -161,7 +161,7 @@ function render(data){
  libraryStatus.textContent=missingOffers.length
    ? missingOffers.length+' Printify size/provider matches need a production cost. Captured costs remain available for future lookups.'
    : 'All Printify matching offers have production prices, or no shippable provider exists.';
- rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.planningProfitUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.quotedProfitUsd)+'</td><td class="detail">'+esc(detail||'—')+offerBreakdown(r)+'</td></tr>';}).join('');
+ rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':'',r.provider==='Gelato'&&r.meta?.shippingCountryMinimumUsd!=null?'Country minimum shipping '+money(r.meta.shippingCountryMinimumUsd)+' vs average '+money(r.meta.shippingCountryAverageUsd)+'; recipient checkout may differ':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.planningProfitUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.quotedProfitUsd)+'</td><td class="detail">'+esc(detail||'—')+offerBreakdown(r)+'</td></tr>';}).join('');
  tableWrap.classList.add('show');empty.style.display='none';
  if(data.winner){
   hero.classList.add('show');profitNote.style.display='block';
@@ -174,7 +174,16 @@ function render(data){
     const p=data.pricing;
     customerPrice.textContent=money(p.salePriceAfterDiscountUsd);
     regularPrice.textContent=money(p.suggestedRetailPriceUsd);
-    saleDetail.textContent='Suggested Etsy listing price · '+p.shopSaleDiscountPercent+'% store discount';
+    const reference=p.referenceRetail;
+    const source=p.retailPriceSource;
+    const referenceSizes=Array.isArray(reference?.referenceSizes)?reference.referenceSizes.join(' and '):'';
+    const sourceLabel=source==='interpolated-from-shop-sizes'
+      ? 'custom size interpolated from '+referenceSizes
+      : source==='existing-shop-size' ? 'configured shop retail'
+      : source==='raised-above-shop-reference-for-shipping'
+        ? 'retail raised to cover destination shipping'
+        : 'cost-based floor; outside configured shop size range';
+    saleDetail.textContent='Suggested · '+sourceLabel+' · '+p.shopSaleDiscountPercent+'% store discount';
     priceDetail.textContent='≈ CA$'+Number(p.minimumCustomerPriceCad||0).toFixed(2)+' · customer pays after sale';
     plannedProfit.textContent=money(p.estimatedContributionUsd);
     plannedProfit.className=p.estimatedContributionUsd<0?'loss':'gain';
