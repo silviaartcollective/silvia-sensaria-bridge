@@ -46,6 +46,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
     <a class="nav" href="/shipping-profile">Shipping Profile</a>
     <a class="nav" href="/pricing">Pricing & Shipping</a>
     <a class="nav" href="/compare">Supplier Comparison</a>
+    <a class="nav" href="/custom-size">Custom Size Lookup</a>
     <a class="nav" href="/test-order">Test Order</a>
     <a class="nav" href="/#orders">Orders</a>
     <a class="nav" href="/#artworks">Artwork Library</a>
