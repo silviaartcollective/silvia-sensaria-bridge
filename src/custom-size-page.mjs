@@ -38,6 +38,13 @@ button{cursor:pointer;font-weight:700}button.primary{background:#30352e;color:#f
 .status{font-size:12px;color:var(--muted);line-height:1.5;margin-top:13px}.status.bad{color:var(--red)}
 .hero{display:none;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:10px;margin-bottom:14px}.hero.show{display:grid}.metric{background:#f7f4ee;border:1px solid var(--line);border-radius:11px;padding:13px}.metric small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}.metric strong{font:500 22px Georgia,serif}.metric .detail{font-size:10px;color:var(--muted);margin-top:4px}
 .table-wrap{display:none;overflow:auto;border:1px solid var(--line);border-radius:11px}.table-wrap.show{display:block}table{width:100%;border-collapse:collapse;background:#fff;font-size:12px}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}th{background:#f1eee8;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}td.detail{white-space:normal;min-width:250px;max-width:390px;color:var(--muted);line-height:1.4}
+.offers{margin-top:9px;padding:9px;border:1px solid var(--line);border-radius:8px;background:#fcfaf6;color:var(--ink)}
+.offers summary{cursor:pointer;font-weight:700;font-size:11px}
+.offers p{font-size:11px;color:var(--muted);margin:7px 0}
+.offers-scroll{max-width:100%;overflow-x:auto}
+table.offer-table{min-width:650px;font-size:11px;margin-top:10px}
+table.offer-table th,table.offer-table td{padding:7px;white-space:normal;max-width:210px}
+table.offer-table th{font-size:9px}
 .pill{display:inline-block;padding:4px 7px;border-radius:999px;background:var(--green2);color:var(--green);font-size:10px}.pill.warn{background:var(--amber2);color:var(--amber)}.pill.bad{background:var(--red2);color:var(--red)}
 .rank{font-weight:700}.spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;vertical-align:-2px;margin-right:7px;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:1100px){.lookup{grid-template-columns:repeat(3,1fr)}.hero{grid-template-columns:1fr 1fr}}@media(max-width:720px){.app-shell{grid-template-columns:1fr}aside{display:none}main{padding:24px 16px}.lookup{grid-template-columns:1fr}.hero{grid-template-columns:1fr}h1{font-size:32px}}
@@ -123,11 +130,23 @@ const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const money=v=>v==null||!Number.isFinite(Number(v))?'—':'$'+Number(v).toFixed(2);
 function syncFrame(){frameLabel.style.display=product.value==='FC'?'grid':'none'}product.addEventListener('change',syncFrame);syncFrame();
 function statusPill(r){const s=String(r?.status||'unavailable');const cls=r?.eligible?'':' '+(s==='error'?'bad':'warn');return '<span class="pill'+cls+'">'+esc(s)+'</span>';}
+function offerBreakdown(record){
+ if(record.provider!=='Printify')return '';
+ const offers=Array.isArray(record.meta?.offers)?record.meta.offers:[];
+ const scan=record.meta?.scan||{};
+ const summary='Scanned '+(scan.wallArtBlueprints??'—')+' wall-art products and '+(scan.blueprintProvidersScanned??'—')+' print-provider combinations; '+(scan.exactSizeMatches??0)+' exact-size variants, '+offers.length+' shippable matches.';
+ const errorCount=Array.isArray(scan.catalogErrors)?scan.catalogErrors.length:0;
+ const errors=errorCount?'<p>'+errorCount+' Printify catalog request(s) failed; not all options could be checked.</p>':'';
+ if(!offers.length)return '<div class="offers"><p>'+esc(summary)+'</p>'+errors+'</div>';
+ const head='<thead><tr><th>Printify product</th><th>Brand</th><th>Print provider</th><th>Variant</th><th>Production</th><th>Shipping</th><th>Quote total</th></tr></thead>';
+ const body=offers.map(o=>'<tr><td>'+esc(o.product||'—')+'</td><td>'+esc(o.brand||'—')+'</td><td>'+esc(o.printProvider||'—')+'</td><td>'+esc(o.variantTitle||'—')+'</td><td>'+money(o.productionUsd)+'</td><td>'+money(o.shippingUsd)+'</td><td>'+money(o.quotedTotalUsd)+'</td></tr>').join('');
+ return '<details class="offers"><summary>View all '+offers.length+' Printify product / print-provider matches</summary><p>'+esc(summary)+'</p>'+errors+'<div class="offers-scroll"><table class="offer-table">'+head+'<tbody>'+body+'</tbody></table></div></details>';
+}
 function render(data){
  const suppliers=data.suppliers||{};const ranking=new Map((data.ranking||[]).map(x=>[x.provider,x.rank]));const fallback=['Sensaria','Prodigi','PrintShrimp','Printify','Gelato','Artelo'];
  const byProvider=Object.fromEntries(Object.values(suppliers).map(r=>[r.provider,r]));
  const order=fallback.slice().sort((a,b)=>{const ra=ranking.get(a),rb=ranking.get(b);if(ra!=null&&rb!=null)return ra-rb;if(ra!=null)return -1;if(rb!=null)return 1;return fallback.indexOf(a)-fallback.indexOf(b);});
- rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td class="detail">'+esc(detail||'—')+'</td></tr>';}).join('');
+ rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td class="detail">'+esc(detail||'—')+offerBreakdown(r)+'</td></tr>';}).join('');
  tableWrap.classList.add('show');empty.style.display='none';
  if(data.winner){hero.classList.add('show');winner.textContent=data.winner.provider;winnerCost.textContent=money(data.winner.modeledLandedUsd);winnerDetail.textContent=data.winner.savingsVsNextBestUsd!=null?'Saves '+money(data.winner.savingsVsNextBestUsd)+' vs next best':'Only one eligible provider';if(data.pricing){customerPrice.textContent=money(data.pricing.minimumCustomerPriceUsd);regularPrice.textContent=money(data.pricing.regularPriceBeforeShopSaleUsd);priceDetail.textContent='≈ CA$'+Number(data.pricing.minimumCustomerPriceCad||0).toFixed(2)+' · configured safety floor';saleDetail.textContent=data.pricing.shopSaleDiscountPercent+'% current shop sale assumption';}else{customerPrice.textContent='—';regularPrice.textContent='—';priceDetail.textContent='';saleDetail.textContent='';}}else{hero.classList.remove('show');}
 }
