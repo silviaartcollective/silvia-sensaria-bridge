@@ -136,6 +136,37 @@ export async function getPrintifyShippingMethod(
   );
 }
 
+// Price-library probes create UNPUBLISHED products only.
+export async function createPrintifyPricingDraft(payload, shopId) {
+  const id = await resolvePrintifyShopId(shopId);
+  return printifyRequest(`/shops/${encodeURIComponent(id)}/products.json`, {
+    method: 'POST',
+    body: {
+      ...payload,
+      visible: false
+    }
+  });
+}
+
+export async function deletePrintifyPricingDraft(productId, shopId) {
+  if (!productId) throw new Error('Printify pricing draft ID required');
+  const id = await resolvePrintifyShopId(shopId);
+  return printifyRequest(
+    `/shops/${encodeURIComponent(id)}/products/${encodeURIComponent(productId)}.json`,
+    { method: 'DELETE' }
+  );
+}
+
+export async function uploadPrintifyPricingImage(contents) {
+  return printifyRequest('/uploads/images.json', {
+    method: 'POST',
+    body: {
+      file_name: 'pricing-only-neutral-reference.png',
+      contents
+    }
+  });
+}
+
 export async function getPrintifyProducts(shopId, { limit = 50 } = {}) {
   const id = await resolvePrintifyShopId(shopId);
   const products = [];
