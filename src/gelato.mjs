@@ -64,8 +64,14 @@ async function gelatoRequest(url, { method = 'GET', body } = {}) {
 }
 
 export async function listGelatoCatalogs() {
-  const rows = await gelatoRequest(`${productBase()}/catalogs`);
-  return Array.isArray(rows) ? rows : [];
+  const response = await gelatoRequest(`${productBase()}/catalogs`);
+  const catalogs = Array.isArray(response) ? response :
+    Array.isArray(response?.catalogs) ? response.catalogs :
+    Array.isArray(response?.data) ? response.data : null;
+  if (!catalogs) {
+    throw new Error('Gelato catalog API returned an unexpected structure; cannot confirm product availability.');
+  }
+  return catalogs;
 }
 
 export async function getGelatoCatalog(catalogUid) {
