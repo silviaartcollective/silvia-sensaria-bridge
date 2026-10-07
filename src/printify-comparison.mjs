@@ -3,10 +3,11 @@ import {
   getPrintifyPrintProviders,
   getPrintifyVariants,
   getPrintifyShipping,
+  getPrintifyProducts,
   printifyConfigStatus
 } from './printify.mjs';
 
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const CACHE_TTL_MS = 30 * 60 * 1000;
 let catalogCache = null;
 let catalogPromise = null;
 
@@ -96,9 +97,29 @@ function finishCompatible(row, variant, blueprintTitle) {
   return wanted !== 'none' && actual === wanted;
 }
 
-function providerVariantCostUsd(variant) {
-  const cents = numeric(variant?.cost ?? variant?.price);
-  return cents == null ? null : moneyFromCents(cents);
+function costMapKey(blueprintId, providerId, variantId) {
+  return `${Number(blueprintId)}|${Number(providerId)}|${Number(variantId)}`;
+}
+
+async function buildShopCostMap() {
+  const map = new Map();
+  try {
+    const products = await getPrintifyProducts();
+    for (const product of products) {
+      const blueprintId = Number(product?.blueprint_id);
+      const providerId = Number(product?.print_provider_id);
+      if (!Number.isFinite(blueprintId) || !Number.isFinite(providerId)) continue;
+      for (const variant of product?.variants || []) {
+        const cost = moneyFromCents(variant?.cost);
+        if (cost == null || variant?.id == null) continue;
+        map.set(costMapKey(blueprintId, providerId, variant.id), cost);
+      }
+    }
+  } catch {
+    // Catalog availability can still be compared even if this shop has no
+    // created Printify products or product-list access is unavailable.
+  }
+  return map;
 }
 
 function shippingProfileForVariant(shipping, variantId, countryCode) {
@@ -135,16 +156,20 @@ async function mapLimit(items, limit, mapper) {
 
 async function loadCatalog() {
   const now = Date.now();
-  if (catalogCache && now - catalogCache.fetchedAt < CACHE_TTL_MS) return catalogCache.rows;
+  if (catalogCache && now - catalogCache.fetchedAt < CACHE_TTL_MS) return catalogCache;
   if (catalogPromise) return catalogPromise;
 
   catalogPromise = (async () => {
-    const blueprints = (await getPrintifyBlueprints())
+    const [blueprints, shopCosts] = await Promise.all([
+      getPrintifyBlueprints(),
+      buildShopCostMap()
+    ]);
+    const wallArtBlueprints = blueprints
       .map(item => ({ ...item, productCode: classifyBlueprint(item?.title) }))
       .filter(item => item.productCode);
 
     const providerTasks = [];
-    for (const blueprint of blueprints) {
+    for (const blueprint of wallArtBlueprints) {
       const providers = await getPrintifyPrintProviders(blueprint.id);
       for (const provider of providers) providerTasks.push({ blueprint, provider });
     }
@@ -185,8 +210,8 @@ async function loadCatalog() {
       }
     })).filter(Boolean);
 
-    catalogCache = { fetchedAt: Date.now(), rows };
-    return rows;
+    catalogCache = { fetchedAt: Date.now(), rows, shopCosts };
+    return catalogCache;
   })();
 
   try {
@@ -208,7 +233,9 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode } = {}
     }]));
   }
 
-  const catalog = await loadCatalog();
+  const loaded = await loadCatalog();
+  const catalog = loaded.rows || [];
+  const shopCosts = loaded.shopCosts || new Map();
   const country = String(countryCode || '').trim().toUpperCase();
   const result = new Map();
 
@@ -224,7 +251,10 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode } = {}
 
         const profile = shippingProfileForVariant(offering.shipping, variant?.id, country);
         if (!profile) continue;
-        const productCost = providerVariantCostUsd(variant);
+
+        const productCost = shopCosts.get(
+          costMapKey(offering.blueprintId, offering.providerId, variant?.id)
+        ) ?? null;
         const shippingCost = shippingCostUsd(profile);
         if (shippingCost == null) continue;
         const totalUsd = productCost != null ? productCost + shippingCost : null;
@@ -235,27 +265,28 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode } = {}
     candidates.sort((a, b) => {
       if (a.totalUsd == null && b.totalUsd != null) return 1;
       if (a.totalUsd != null && b.totalUsd == null) return -1;
-      return (a.totalUsd ?? Infinity) - (b.totalUsd ?? Infinity);
+      if (a.shippingCost !== b.shippingCost) return a.shippingCost - b.shippingCost;
+      return String(a.offering.providerTitle).localeCompare(String(b.offering.providerTitle));
     });
     const best = candidates[0];
 
     if (!best) {
       result.set(rowKey(row), {
-        provider: 'Printify', eligible: false, status: 'unavailable',
-        reason: 'No compatible Printify provider/variant with shipping to this country was found.'
+        provider: 'Printify', eligible: false, status: 'not-available-for-route',
+        reason: 'No matching Printify variant with a shipping profile for this destination was returned.'
       });
       continue;
     }
 
     if (best.productCost == null) {
       result.set(rowKey(row), {
-        provider: 'Printify', eligible: false, status: 'price-unavailable',
+        provider: 'Printify', eligible: false, status: 'available-no-live-cost',
         totalUsd: null,
         currency: 'USD',
         productCost: null,
         shippingCost: best.shippingCost,
-        reason: 'Printify catalog returned this exact variant and shipping route, but no numeric fulfillment cost was exposed.',
-        basis: 'Printify catalog availability + shipping; production cost unavailable.',
+        reason: 'Printify confirms this exact size/provider/shipping route. Its Catalog API does not expose fulfillment cost; a cost is only available from an existing Printify shop product using the same blueprint/provider/variant.',
+        basis: 'Live Printify catalog availability + destination shipping. Production cost is not exposed by the catalog endpoint.',
         meta: {
           blueprintId: best.offering.blueprintId,
           blueprintTitle: best.offering.blueprintTitle,
@@ -263,7 +294,8 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode } = {}
           printProvider: best.offering.providerTitle,
           providerCountry: best.offering.providerLocation?.country || '',
           variantId: best.variant?.id,
-          variantTitle: best.variant?.title || ''
+          variantTitle: best.variant?.title || '',
+          candidates: candidates.length
         }
       });
       continue;
@@ -279,7 +311,7 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode } = {}
       productCost: best.productCost,
       shippingCost: best.shippingCost,
       reason: '',
-      basis: 'Printify catalog fulfillment cost + first-item standard shipping.',
+      basis: 'Printify shop product fulfillment cost + live catalog first-item shipping for the same blueprint/provider/variant.',
       meta: {
         blueprintId: best.offering.blueprintId,
         blueprintTitle: best.offering.blueprintTitle,
