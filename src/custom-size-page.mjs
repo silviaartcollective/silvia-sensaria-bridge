@@ -119,9 +119,9 @@ table.offer-table th{font-size:9px}
     <select id="shipping-mode">
       <option value="auto">Automatic suggestion — separate when supplier shipping is high</option>
       <option value="included">Free shipping — include delivery in artwork price</option>
-      <option value="separate">Customer pays shipping — add a custom Etsy delivery charge</option>
+      <option value="separate">Customer pays shipping — use Etsy custom order Shipping price</option>
     </select></label>
-    <div class="help" id="shipping-guidance">Custom orders can use a paid-delivery Etsy profile while standard listings retain free shipping. This quote does not change Etsy shipping settings.</div>
+    <div class="help" id="shipping-guidance">For Etsy private custom orders, enter artwork and shipping in the separate Price and Shipping price fields. No delivery profile is needed. Standard listings stay unchanged.</div>
   </div>
   <div class="status" id="status">Ready. Choose the customer's destination country. Provider availability is checked independently of the shop's normal Etsy shipping profile.</div>
 </section>
@@ -138,7 +138,7 @@ table.offer-table th{font-size:9px}
 </section>
 <section id="shipping-scenarios" class="shipping-scenarios" aria-label="Custom order shipping comparison"></section>
 
-<div class="notice" id="profit-note" style="display:none">Suggested regular retail is based on the shop's existing size-price ladder; custom sizes between listed sizes are estimated by area, and international shipping may require a higher price. The cost-based minimum is only a price FLOOR, not your normal retail. Only custom listings should use a paid Etsy delivery profile; standard sizes keep their existing free-shipping settings. For separately charged custom shipping, the fixed delivery fee is not discounted with the artwork. The estimated Etsy fee reserve applies to BOTH artwork and shipping. <strong>Planning profit</strong> uses the supplier cost plus the app's contingency; <strong>quoted profit</strong> uses only quoted production and shipping. Excludes ads, actual tax/duties, fixed fees, refunds and currency variation.</div>
+<div class="notice" id="profit-note" style="display:none">Suggested regular retail is based on the shop's existing size-price ladder; custom sizes between listed sizes are estimated by area, and international shipping may require a higher price. The cost-based minimum is only a price FLOOR, not your normal retail. For Etsy private custom orders, enter the final artwork price and separate delivery charge directly in the Price and Shipping price fields; no delivery profile is required. Standard sizes keep their existing shipping settings. For separately charged custom shipping, the fixed delivery fee is not discounted with the artwork. The estimated Etsy fee reserve applies to BOTH artwork and shipping. <strong>Planning profit</strong> uses the supplier cost plus the app's contingency; <strong>quoted profit</strong> uses only quoted production and shipping. Excludes ads, actual tax/duties, fixed fees, refunds and currency variation.</div>
 <section class="card">
   <h2 style="margin:0 0 5px">Provider results</h2>
   <p class="sub" style="margin-bottom:14px">Availability and price are for the exact request above. Hover/status detail explains why a provider is not ranked.</p>
@@ -148,6 +148,7 @@ table.offer-table th{font-size:9px}
   </div>
   <div class="status" id="empty">Run a lookup to see provider results.</div>
 </section>
+<div class="notice" id="etsy-private-order-note" style="display:none"><strong>Etsy private custom order:</strong> Use the <strong>Artwork after shop discount</strong> figure as the intended final artwork charge in Etsy's <strong>Price</strong> field. Enter the <strong>Custom delivery charged to buyer</strong> amount directly in Etsy's <strong>Shipping price</strong> field (or US$0 for free delivery). No shipping profile is required. <strong>Check the customer's final checkout total for any additional Etsy sale or coupon</strong> before sending the private listing.</div>
 <section class="card" id="printify-library-card" style="display:none">
  <h2 style="margin:0 0 8px">Printify Production Price Library</h2>
  <p class="sub" style="margin:0 0 14px">Some Printify canvas or poster printers do not expose production cost in their catalog. This tool temporarily creates <strong>unpublished private test products in Printify</strong>, captures actual supplier variant costs, saves them in the app, and removes test drafts after they are safely saved. Nothing is published to Etsy or ordered.</p>
@@ -157,7 +158,7 @@ table.offer-table th{font-size:9px}
 </main></div>
 <script>
 (function(){
-const country=document.getElementById('country'),product=document.getElementById('product'),width=document.getElementById('width'),height=document.getElementById('height'),frame=document.getElementById('frame'),frameLabel=document.getElementById('frame-label'),button=document.getElementById('lookup'),status=document.getElementById('status'),hero=document.getElementById('hero'),winner=document.getElementById('winner'),winnerCost=document.getElementById('winner-cost'),winnerDetail=document.getElementById('winner-detail'),customerPrice=document.getElementById('customer-price'),regularPrice=document.getElementById('regular-price'),priceDetail=document.getElementById('price-detail'),saleDetail=document.getElementById('sale-detail'),shippingMode=document.getElementById('shipping-mode'),shippingGuidance=document.getElementById('shipping-guidance'),shippingScenarios=document.getElementById('shipping-scenarios'),customerShipping=document.getElementById('customer-shipping'),customerShippingDetail=document.getElementById('customer-shipping-detail'),customerTotal=document.getElementById('customer-total'),customerTotalDetail=document.getElementById('customer-total-detail'),plannedProfit=document.getElementById('planned-profit'),quotedProfit=document.getElementById('quoted-profit'),profitDetail=document.getElementById('profit-detail'),profitQuoteDetail=document.getElementById('profit-quote-detail'),profitNote=document.getElementById('profit-note'),tableWrap=document.getElementById('table-wrap'),rows=document.getElementById('rows'),empty=document.getElementById('empty'),libraryCard=document.getElementById('printify-library-card'),libraryButton=document.getElementById('build-printify-library'),libraryStatus=document.getElementById('printify-library-status');
+const country=document.getElementById('country'),product=document.getElementById('product'),width=document.getElementById('width'),height=document.getElementById('height'),frame=document.getElementById('frame'),frameLabel=document.getElementById('frame-label'),button=document.getElementById('lookup'),status=document.getElementById('status'),hero=document.getElementById('hero'),winner=document.getElementById('winner'),winnerCost=document.getElementById('winner-cost'),winnerDetail=document.getElementById('winner-detail'),customerPrice=document.getElementById('customer-price'),regularPrice=document.getElementById('regular-price'),priceDetail=document.getElementById('price-detail'),saleDetail=document.getElementById('sale-detail'),shippingMode=document.getElementById('shipping-mode'),shippingGuidance=document.getElementById('shipping-guidance'),shippingScenarios=document.getElementById('shipping-scenarios'),customerShipping=document.getElementById('customer-shipping'),customerShippingDetail=document.getElementById('customer-shipping-detail'),customerTotal=document.getElementById('customer-total'),customerTotalDetail=document.getElementById('customer-total-detail'),plannedProfit=document.getElementById('planned-profit'),quotedProfit=document.getElementById('quoted-profit'),profitDetail=document.getElementById('profit-detail'),profitQuoteDetail=document.getElementById('profit-quote-detail'),profitNote=document.getElementById('profit-note'),privateOrderNote=document.getElementById('etsy-private-order-note'),tableWrap=document.getElementById('table-wrap'),rows=document.getElementById('rows'),empty=document.getElementById('empty'),libraryCard=document.getElementById('printify-library-card'),libraryButton=document.getElementById('build-printify-library'),libraryStatus=document.getElementById('printify-library-status');
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>v==null||!Number.isFinite(Number(v))?'—':'$'+Number(v).toFixed(2);
 function syncFrame(){frameLabel.style.display=product.value==='FC'?'grid':'none'}product.addEventListener('change',syncFrame);syncFrame();
@@ -212,10 +213,10 @@ function render(data){
     +scenarioCard(data.shippingOptions.separate,activeMode,data.recommendedShippingMode);
   shippingScenarios.classList.add('show');
   shippingGuidance.textContent='Automatic recommendation: '+(data.recommendedShippingMode==='separate'?'charge shipping separately':'include free shipping')+
-    ' (supplier shipping threshold '+money(data.shippingThresholdUsd)+'). This is advisory only. For paid delivery, create/select an Etsy paid-delivery profile on the CUSTOM listing.';
+    ' (supplier shipping threshold '+money(data.shippingThresholdUsd)+'). This is advisory only. For a private custom order, enter shipping in Etsy's Shipping price field; no delivery profile is needed.';
  }else{shippingScenarios.classList.remove('show');}
  if(data.winner){
-  hero.classList.add('show');profitNote.style.display='block';
+  hero.classList.add('show');profitNote.style.display='block';privateOrderNote.style.display='block';
   winner.textContent=data.winner.provider;
   winnerCost.textContent=money(data.winner.modeledLandedUsd);
   winnerDetail.textContent=data.winner.savingsVsNextBestUsd!=null
@@ -238,7 +239,7 @@ function render(data){
     priceDetail.textContent='≈ CA$'+Number(p.minimumCustomerPriceCad||0).toFixed(2)+' · artwork after sale';
     customerShipping.textContent=money(p.customerShippingUsd);
     customerShippingDetail.textContent=activeMode==='separate'
-      ? 'Add as delivery charge on custom Etsy profile · estimate'
+      ? 'Enter directly under Shipping price in Etsy's private custom order · estimate'
       : 'Free delivery to customer';
     customerTotal.textContent=money(p.buyerTotalUsd);
     customerTotalDetail.textContent='≈ CA$'+Number(p.buyerTotalCad||0).toFixed(2)+' · artwork + delivery, before tax';
@@ -258,7 +259,7 @@ function render(data){
     profitDetail.textContent='';profitQuoteDetail.textContent='';
   }
  }else{
-  hero.classList.remove('show');profitNote.style.display='none';
+  hero.classList.remove('show');profitNote.style.display='none';privateOrderNote.style.display='none';
   shippingScenarios.classList.remove('show');
  }
 }
