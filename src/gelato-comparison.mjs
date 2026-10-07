@@ -255,23 +255,38 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode } = {}) 
 
   for (const row of rows || []) {
     const target = parseTargetSize(row?.size);
-    let candidates = catalogRows.filter(item =>
+    const sizeMatches = catalogRows.filter(item =>
       item.catalog?.productCode === row?.productCode &&
-      Array.isArray(item.product?.supportedCountries) &&
-      item.product.supportedCountries.includes(country) &&
       sizeCompatible(item.product, target) &&
       finishCompatible(row, item.product, item.catalog)
     );
 
-    candidates = candidates
-      .map(item => ({ ...item, score: compatibilityScore(row, item.product, item.catalog) }))
+    const countrySupported = sizeMatches.filter(item =>
+      Array.isArray(item.product?.supportedCountries) &&
+      item.product.supportedCountries.includes(country)
+    );
+    const countryUnknown = sizeMatches.filter(item =>
+      !Array.isArray(item.product?.supportedCountries) ||
+      item.product.supportedCountries.length === 0
+    );
+
+    let candidates = (
+      countrySupported.length ? countrySupported :
+      countryUnknown.length ? countryUnknown :
+      sizeMatches
+    )
+      .map(item => ({
+        ...item,
+        score: compatibilityScore(row, item.product, item.catalog) +
+          (Array.isArray(item.product?.supportedCountries) && item.product.supportedCountries.includes(country) ? 100 : 0)
+      }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, 1);
+      .slice(0, 2);
 
     if (!candidates.length) {
       result.set(rowKey(row), {
-        provider: 'Gelato', eligible: false, status: 'unavailable',
-        reason: 'No compatible Gelato product with this size and destination country was found.'
+        provider: 'Gelato', eligible: false, status: 'catalog-no-match',
+        reason: 'The Gelato catalog scan did not map an exact compatible product/size yet. This does not mean Gelato itself does not sell the size.'
       });
       continue;
     }
