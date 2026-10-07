@@ -154,9 +154,9 @@ async function mapLimit(items, limit, mapper) {
   return results;
 }
 
-async function loadCatalog() {
+async function loadCatalog({ fresh = false } = {}) {
   const now = Date.now();
-  if (catalogCache && now - catalogCache.fetchedAt < CACHE_TTL_MS) return catalogCache;
+  if (!fresh && catalogCache && now - catalogCache.fetchedAt < CACHE_TTL_MS) return catalogCache;
   if (catalogPromise) return catalogPromise;
 
   catalogPromise = (async () => {
@@ -225,7 +225,7 @@ function rowKey(row) {
   return `${row?.productCode || ''}|${normalizeSize(row?.size)}|${finishFamily(row?.finish)}`;
 }
 
-export async function scanPrintifyComparisonRows({ rows = [], countryCode } = {}) {
+export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh = false } = {}) {
   if (!printifyConfigStatus().ready) {
     return new Map((rows || []).map(row => [rowKey(row), {
       provider: 'Printify', eligible: false, status: 'not-configured',
@@ -233,7 +233,7 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode } = {}
     }]));
   }
 
-  const loaded = await loadCatalog();
+  const loaded = await loadCatalog({ fresh });
   const catalog = loaded.rows || [];
   const shopCosts = loaded.shopCosts || new Map();
   const country = String(countryCode || '').trim().toUpperCase();
