@@ -10,6 +10,7 @@ import {
 } from './printshrimp.mjs';
 import { scanPrintifyComparisonRows } from './printify-comparison.mjs';
 import { scanGelatoComparisonRows } from './gelato-comparison.mjs';
+import { getArteloUnframedPosterCost } from './artelo.mjs';
 
 const FX_TTL_MS = 6 * 60 * 60 * 1000;
 let gbpUsdCache = null;
@@ -144,13 +145,66 @@ function prodigiRecord(row) {
   });
 }
 
-function arteloRecord() {
-  return supplierRecord({
+function arteloRecord(row, arteloRows = new Map()) {
+  if (row?.productCode !== 'P') {
+    return supplierRecord({
+      provider: 'Artelo',
+      eligible: false,
+      status: 'not-offered',
+      reason: 'Artelo is mapped here to unframed Matte Poster only; Canvas and Framed Canvas are not treated as compatible.'
+    });
+  }
+
+  return arteloRows.get(comparisonKey(row)) || supplierRecord({
     provider: 'Artelo',
     eligible: false,
-    status: 'not-offered',
-    reason: 'Silvia currently sells Poster, Canvas and Framed Canvas. The current Artelo mapping is for framed posters, so it is intentionally not scored.'
+    status: 'unavailable',
+    reason: 'No live Artelo unframed-poster quote was returned for this exact size and destination.'
   });
+}
+
+async function scanArteloPosterRows(rows, countryCode) {
+  const map = new Map();
+  const posterRows = (rows || []).filter(row => row?.productCode === 'P');
+  const unique = [...new Map(posterRows.map(row => [comparisonKey(row), row])).values()];
+
+  await Promise.all(unique.map(async row => {
+    try {
+      const quote = await getArteloUnframedPosterCost({
+        countryCode,
+        size: row.size,
+        quantity: 1
+      });
+      const total = numeric(quote?.totalBeforeTax);
+      map.set(comparisonKey(row), supplierRecord({
+        provider: 'Artelo',
+        eligible: total != null,
+        status: total != null ? 'available' : 'price-unavailable',
+        totalUsd: total,
+        originalTotal: total,
+        currency: quote?.currency || 'USD',
+        productCost: quote?.productionCost,
+        shippingCost: quote?.shippingCost,
+        reason: total != null ? '' : 'Artelo returned the product route but no complete production + shipping total.',
+        basis: 'Live Artelo catalog cost for IndividualArtPrint, MattePoster, Unframed.',
+        meta: {
+          apiSize: quote?.apiSize || '',
+          productType: 'IndividualArtPrint',
+          frameStyle: 'Unframed',
+          paperType: 'MattePoster'
+        }
+      }));
+    } catch (error) {
+      map.set(comparisonKey(row), supplierRecord({
+        provider: 'Artelo',
+        eligible: false,
+        status: /size|unsupported|invalid/i.test(String(error?.message || '')) ? 'unsupported-size' : 'unavailable',
+        reason: error?.message || String(error)
+      }));
+    }
+  }));
+
+  return map;
 }
 
 function printShrimpRecord(row, pricing, fx) {
@@ -211,13 +265,13 @@ function printShrimpRecord(row, pricing, fx) {
 
 export function mergeSupplierComparisonRows({
   prodigiRows = [], printShrimpPricing = null, gbpUsd = null,
-  printifyRows = new Map(), gelatoRows = new Map(), riskPolicy = null
+  printifyRows = new Map(), gelatoRows = new Map(), arteloRows = new Map(), riskPolicy = null
 } = {}) {
   return (prodigiRows || []).map(row => {
     const rawSuppliers = {
       sensaria: sensariaRecord(row),
       prodigi: prodigiRecord(row),
-      artelo: arteloRecord(row),
+      artelo: arteloRecord(row, arteloRows),
       printshrimp: printShrimpRecord(row, printShrimpPricing, gbpUsd),
       printify: printifyRows.get(comparisonKey(row)) || supplierRecord({
         provider: 'Printify', eligible: false, status: 'unavailable',
@@ -308,7 +362,8 @@ export async function scanSupplierComparison({
     const baseRows = prodigiResult.rows || [];
     let printifyError = '';
     let gelatoError = '';
-    const [printifyRows, gelatoRows] = await Promise.all([
+    let arteloError = '';
+    const [printifyRows, gelatoRows, arteloRows] = await Promise.all([
       scanPrintifyComparisonRows({ rows: baseRows, countryCode }).catch(error => {
         printifyError = error?.message || String(error);
         return providerFailureMap('Printify', baseRows, error);
@@ -316,7 +371,13 @@ export async function scanSupplierComparison({
       scanGelatoComparisonRows({ rows: baseRows, countryCode }).catch(error => {
         gelatoError = error?.message || String(error);
         return providerFailureMap('Gelato', baseRows, error);
-      })
+      }),
+      products.includes('P')
+        ? scanArteloPosterRows(baseRows, countryCode).catch(error => {
+            arteloError = error?.message || String(error);
+            return providerFailureMap('Artelo', baseRows, error);
+          })
+        : Promise.resolve(new Map())
     ]);
 
     const merged = mergeSupplierComparisonRows({
@@ -325,6 +386,7 @@ export async function scanSupplierComparison({
       gbpUsd: fxResult,
       printifyRows,
       gelatoRows,
+      arteloRows,
       riskPolicy: landedCostPolicy()
     });
 
@@ -334,6 +396,7 @@ export async function scanSupplierComparison({
       printShrimpError: printShrimpResult?.error || '',
       printifyError,
       gelatoError,
+      arteloError,
       fxError: fxResult?.error || '',
       gbpToUsd: numeric(fxResult?.rate),
       fxDate: fxResult?.date || null,
@@ -354,7 +417,7 @@ export async function scanSupplierComparison({
       marginPolicy,
       shippingMethod: shippingMethod || 'cheapest available'
     },
-    note: 'Winner uses the lowest eligible risk-adjusted single-item supplier estimate in USD across Sensaria, Prodigi, PrintShrimp, Printify and Gelato. Artelo remains visible but is not scored for the current product families. Scans are planning-only and never submit an order or change live fulfillment.',
+    note: 'Winner uses the lowest eligible risk-adjusted single-item supplier estimate in USD across Sensaria, Prodigi, PrintShrimp, Printify, Gelato and compatible Artelo poster routes. Scans are planning-only and never submit an order or change live fulfillment.',
     countryMeta,
     rows
   };
