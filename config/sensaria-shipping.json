@@ -1,8 +1,8 @@
 {
   "source": "Sensaria GO Shipping",
-  "sourceUrl": "https://go.sensaria.com/shipping/#1595551396508-c4436c69-985113",
-  "capturedAt": "2026-09-17T20:43:49.414Z",
-  "note": "Captured from Sensaria GO Global Shipping Rates & Zones. Basic shipping rates are per item.",
+  "sourceUrl": "https://go.sensaria.com/shipping/#1595551396508-c4436c69-985112",
+  "capturedAt": "2026-10-07T01:33:07.838Z",
+  "note": "Captured from Sensaria GO Global Shipping Rates & Zones on 2026-10-07. Basic shipping rates are per item. The current Sensaria page exposes 13 product groups; Pillows is no longer a visible shipping control.",
   "countryZones": {
     "AD": "4",
     "AE": "ROW",
@@ -331,19 +331,6 @@
       "4NZ": 30,
       "ROW": 100
     },
-    "Pillows": {
-      "4": 25,
-      "5": 45,
-      "1A": 0,
-      "1B": 0,
-      "1C": 0,
-      "2A": 5,
-      "2B": 25,
-      "3A": 25,
-      "3B": 25,
-      "4NZ": 25,
-      "ROW": 100
-    },
     "Rigid Substrates": {
       "4": 45,
       "5": 45,
@@ -369,6 +356,58 @@
       "3B": 5,
       "4NZ": 5,
       "ROW": 25
+    },
+    "Canvas Oversized": {
+      "4": null,
+      "5": null,
+      "1A": 50,
+      "1B": 50,
+      "1C": 125,
+      "2A": 125,
+      "2B": 50,
+      "3A": null,
+      "3B": null,
+      "4NZ": null,
+      "ROW": null
     }
-  }
+  },
+  "combinationsAttempted": 98,
+  "combinationsCaptured": 91,
+  "scanErrors": [
+    {
+      "zone": "Zone 1",
+      "productGroup": "Pillows",
+      "error": "Could not find visible control: Pillows"
+    },
+    {
+      "zone": "Zone 2",
+      "productGroup": "Pillows",
+      "error": "Could not find visible control: Pillows"
+    },
+    {
+      "zone": "Zone 3",
+      "productGroup": "Pillows",
+      "error": "Could not find visible control: Pillows"
+    },
+    {
+      "zone": "Zone 4",
+      "productGroup": "Pillows",
+      "error": "Could not find visible control: Pillows"
+    },
+    {
+      "zone": "Zone 5",
+      "productGroup": "Pillows",
+      "error": "Could not find visible control: Pillows"
+    },
+    {
+      "zone": "ROW",
+      "productGroup": "Pillows",
+      "error": "Could not find visible control: Pillows"
+    },
+    {
+      "zone": "Undeliverable",
+      "productGroup": "Pillows",
+      "error": "Could not find visible control: Pillows"
+    }
+  ]
 }
