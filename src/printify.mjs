@@ -148,6 +148,14 @@ export async function createPrintifyPricingDraft(payload, shopId) {
   });
 }
 
+export async function getPrintifyPricingDraft(productId, shopId) {
+  if (!productId) throw new Error('Printify draft ID required');
+  const id = await resolvePrintifyShopId(shopId);
+  return printifyRequest(
+    `/shops/${encodeURIComponent(id)}/products/${encodeURIComponent(productId)}.json`
+  );
+}
+
 export async function deletePrintifyPricingDraft(productId, shopId) {
   if (!productId) throw new Error('Printify pricing draft ID required');
   const id = await resolvePrintifyShopId(shopId);
