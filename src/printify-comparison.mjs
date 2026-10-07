@@ -6,6 +6,7 @@ import {
   getPrintifyProducts,
   printifyConfigStatus
 } from './printify.mjs';
+import { loadPrintifyCostLibrary } from './printify-cost-store.mjs';
 
 const CACHE_TTL_MS = 30 * 60 * 1000;
 let catalogCache = null;
@@ -169,9 +170,13 @@ async function loadCatalog({ fresh = false } = {}) {
   if (catalogPromise) return catalogPromise;
 
   catalogPromise = (async () => {
-    const [blueprints, shopCosts] = await Promise.all([
+    const [blueprints, shopCosts, savedCosts] = await Promise.all([
       getPrintifyBlueprints(),
-      buildShopCostMap()
+      buildShopCostMap(),
+      loadPrintifyCostLibrary({ fresh }).then(
+        document => ({ document, error: '' }),
+        error => ({ document: { variants: {} }, error: error?.message || String(error) })
+      )
     ]);
     const wallArtBlueprints = blueprints
       .map(item => ({ ...item, productCode: classifyBlueprint(item?.title) }))
@@ -235,6 +240,9 @@ async function loadCatalog({ fresh = false } = {}) {
     catalogCache = {
       fetchedAt: Date.now(), rows,
       shopCosts: shopCosts.map,
+      savedCosts: savedCosts.document.variants || {},
+      priceLibraryError: savedCosts.error,
+      priceLibraryUpdatedAt: savedCosts.document.updatedAt || null,
       shopCostWarning: shopCosts.warning,
       shopProductCount: shopCosts.productCount,
       pricedVariantCount: shopCosts.map.size,
@@ -271,6 +279,7 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
   const loaded = await loadCatalog({ fresh });
   const catalog = loaded.rows || [];
   const shopCosts = loaded.shopCosts || new Map();
+  const savedCosts = loaded.savedCosts || {};
   const country = String(countryCode || '').trim().toUpperCase();
   const result = new Map();
 
@@ -297,13 +306,18 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
           continue;
         }
 
-        const productCost = shopCosts.get(
-          costMapKey(offering.blueprintId, offering.providerId, variant?.id)
-        ) ?? moneyFromCents(variant?.cost);
+        const costKey = costMapKey(offering.blueprintId, offering.providerId, variant?.id);
+        const saved = savedCosts[costKey];
+        const productCost = shopCosts.get(costKey) ??
+          moneyFromCents(variant?.cost) ?? moneyFromCents(saved?.costCents);
+        const costSource = shopCosts.has(costKey)
+          ? 'printify-shop-product' : numeric(variant?.cost) != null
+          ? 'printify-catalog' : saved?.costCents != null
+          ? 'r2-pricing-library' : 'unavailable';
         const shippingCost = shippingCostUsd(profile);
         if (shippingCost == null) continue;
         const totalUsd = productCost != null ? productCost + shippingCost : null;
-        candidates.push({ offering, variant, profile, productCost, shippingCost, totalUsd });
+        candidates.push({ offering, variant, profile, productCost, shippingCost, totalUsd, costSource });
       }
     }
 
@@ -331,6 +345,7 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
       productionUsd: item.productCost,
       shippingUsd: item.shippingCost,
       quotedTotalUsd: item.totalUsd,
+      costSource: item.costSource,
       priceStatus: item.totalUsd != null ? 'priced' : 'production-cost-missing'
     }));
     const scan = {
@@ -340,6 +355,8 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
       exactSizeMatches: exactSizeCount,
       shippableOffers: offers.length,
       omittedForCountry: missingDestination.length,
+      savedLibraryUpdatedAt: loaded.priceLibraryUpdatedAt,
+      priceLibraryWarning: loaded.priceLibraryError,
       catalogErrors: [...(loaded.providerFailures || []), ...(loaded.providerDetailErrors || [])],
       omittedExamples: missingDestination.slice(0, 12)
     };
@@ -394,7 +411,9 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
       productCost: best.productCost,
       shippingCost: best.shippingCost,
       reason: '',
-      basis: 'Printify shop product fulfillment cost + live catalog first-item shipping for the same blueprint/provider/variant.',
+      basis: best.costSource === 'r2-pricing-library'
+          ? 'Production price captured from an unpublished Printify test product and saved to R2; live destination shipping. Recheck when rates change.'
+          : 'Printify shop-product or catalog fulfillment cost + live catalog shipping for the same blueprint/provider/variant.',
       meta: {
         blueprintId: best.offering.blueprintId,
         blueprintTitle: best.offering.blueprintTitle,
@@ -404,6 +423,9 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
         variantId: best.variant?.id,
         variantTitle: best.variant?.title || '',
         handlingTime: best.offering.shipping?.handling_time || null,
+        costSource: best.costSource,
+        libraryCapturedAt: best.costSource === 'r2-pricing-library'
+          ? loaded.priceLibraryUpdatedAt : null,
         candidates: candidates.length,
         scan, offers
       }
@@ -413,4 +435,7 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
   return result;
 }
 
+export function invalidatePrintifyCatalogCache() {
+  catalogCache = null;
+}
 export const __test = { normalizeSize, classifyBlueprint, finishFamily, variantSize, rowKey };
