@@ -213,7 +213,7 @@ function render(data){
     +scenarioCard(data.shippingOptions.separate,activeMode,data.recommendedShippingMode);
   shippingScenarios.classList.add('show');
   shippingGuidance.textContent='Automatic recommendation: '+(data.recommendedShippingMode==='separate'?'charge shipping separately':'include free shipping')+
-    ' (supplier shipping threshold '+money(data.shippingThresholdUsd)+'). This is advisory only. For a private custom order, enter shipping in Etsy's Shipping price field; no delivery profile is needed.';
+    ' (supplier shipping threshold '+money(data.shippingThresholdUsd)+'). This is advisory only. For a private custom order, enter shipping in the Etsy Shipping price field; no delivery profile is needed.';
  }else{shippingScenarios.classList.remove('show');}
  if(data.winner){
   hero.classList.add('show');profitNote.style.display='block';privateOrderNote.style.display='block';
