@@ -239,7 +239,7 @@ function render(data){
     priceDetail.textContent='≈ CA$'+Number(p.minimumCustomerPriceCad||0).toFixed(2)+' · artwork after sale';
     customerShipping.textContent=money(p.customerShippingUsd);
     customerShippingDetail.textContent=activeMode==='separate'
-      ? 'Enter directly under Shipping price in Etsy's private custom order · estimate'
+      ? 'Enter in the private custom order Shipping price field · estimate'
       : 'Free delivery to customer';
     customerTotal.textContent=money(p.buyerTotalUsd);
     customerTotalDetail.textContent='≈ CA$'+Number(p.buyerTotalCad||0).toFixed(2)+' · artwork + delivery, before tax';
