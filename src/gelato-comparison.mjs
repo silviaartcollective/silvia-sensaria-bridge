@@ -81,32 +81,47 @@ function pairFromText(value, defaultUnit = '') {
   return normalizePair(a, b);
 }
 
-function productSizeInches(product) {
-  const dimensions = product?.dimensions;
-  if (dimensions && typeof dimensions === 'object' && !Array.isArray(dimensions)) {
-    const widthEntry = Object.entries(dimensions).find(([key]) => /^width$/i.test(key));
-    const heightEntry = Object.entries(dimensions).find(([key]) => /^height$/i.test(key));
-    const width = measureToInches(widthEntry?.[1]);
-    const height = measureToInches(heightEntry?.[1]);
-    const pair = normalizePair(width, height);
-    if (pair) return pair;
-  }
+function productSizeCandidates(product) {
+  const pairs = [];
+  const add = pair => {
+    if (!pair) return;
+    if (pairs.some(item =>
+      Math.abs(item.width - pair.width) < 0.02 &&
+      Math.abs(item.height - pair.height) < 0.02
+    )) return;
+    pairs.push(pair);
+  };
 
+  // Prefer nominal format/size metadata and UID dimensions. Canvas products can
+  // expose physical dimensions that include wrap/production allowance, while
+  // the customer-facing format remains the requested nominal size.
   const attrs = product?.attributes && typeof product.attributes === 'object'
     ? product.attributes : {};
   for (const [key, value] of Object.entries(attrs)) {
     if (!/format|size|dimension/i.test(key)) continue;
-    const pair = pairFromText(value);
-    if (pair) return pair;
+    add(pairFromText(value));
   }
 
   const uid = String(product?.productUid || '');
-  const mm = uid.match(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)-mm/i);
-  if (mm) return pairFromText(`${mm[1]}x${mm[2]}-mm`);
-  const inch = uid.match(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)-(?:inch|in)/i);
-  if (inch) return pairFromText(`${inch[1]}x${inch[2]}-inch`);
+  for (const match of uid.matchAll(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)[-_ ]?(mm|cm|inch|in)\b/gi)) {
+    add(pairFromText(`${match[1]}x${match[2]}-${match[3]}`));
+  }
 
-  return null;
+  const dimensions = product?.dimensions;
+  if (dimensions && typeof dimensions === 'object' && !Array.isArray(dimensions)) {
+    const widthEntry = Object.entries(dimensions).find(([key]) => /^width$/i.test(key));
+    const heightEntry = Object.entries(dimensions).find(([key]) => /^height$/i.test(key));
+    add(normalizePair(
+      measureToInches(widthEntry?.[1]),
+      measureToInches(heightEntry?.[1])
+    ));
+  }
+
+  return pairs;
+}
+
+function productSizeInches(product) {
+  return productSizeCandidates(product)[0] || null;
 }
 
 function parseTargetSize(value) {
@@ -146,10 +161,11 @@ function productCodeForItem(product, catalog) {
 }
 
 function sizeCompatible(product, target, tolerance = 0.52) {
-  const actual = productSizeInches(product);
-  if (!actual || !target) return false;
-  return Math.abs(actual.width - target.width) <= tolerance &&
-    Math.abs(actual.height - target.height) <= tolerance;
+  if (!target) return false;
+  return productSizeCandidates(product).some(actual =>
+    Math.abs(actual.width - target.width) <= tolerance &&
+    Math.abs(actual.height - target.height) <= tolerance
+  );
 }
 
 function productFinish(product, catalog) {
@@ -354,9 +370,31 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
       .slice(0, 4);
 
     if (!candidates.length) {
+      const familyRows = catalogRows.filter(item => item.productCode === row?.productCode);
+      const parsedSizes = familyRows.flatMap(item =>
+        productSizeCandidates(item.product).map(size => ({
+          width: size.width,
+          height: size.height,
+          distance: target
+            ? Math.abs(size.width - target.width) + Math.abs(size.height - target.height)
+            : Infinity
+        }))
+      ).sort((a, b) => a.distance - b.distance);
+      const nearest = [];
+      for (const size of parsedSizes) {
+        const label = `${Number(size.width.toFixed(2))}x${Number(size.height.toFixed(2))}`;
+        if (!nearest.includes(label)) nearest.push(label);
+        if (nearest.length >= 6) break;
+      }
       result.set(rowKey(row), {
         provider: 'Gelato', eligible: false, status: 'catalog-no-match',
-        reason: 'Gelato catalog search did not map this exact product/size. This is a mapper result, not proof that Gelato does not sell it.'
+        reason: familyRows.length
+          ? `Gelato returned ${familyRows.length} products in this product family, but none matched ${row?.size}. Nearest parsed sizes: ${nearest.join(', ') || 'none'}.`
+          : 'Gelato catalog search returned no products mapped to this product family.',
+        meta: {
+          familyProductCount: familyRows.length,
+          nearestParsedSizes: nearest
+        }
       });
       continue;
     }
@@ -428,6 +466,7 @@ export const __test = {
   classifyCatalog,
   finishFamily,
   parseTargetSize,
+  productSizeCandidates,
   productSizeInches,
   productCodeForItem,
   sizeCompatible,
