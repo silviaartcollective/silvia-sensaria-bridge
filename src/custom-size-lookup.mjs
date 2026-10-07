@@ -6,6 +6,8 @@ import { getPrintShrimpPricing, printShrimpPriceRow } from './printshrimp.mjs';
 import { getGbpToUsdRate } from './supplier-comparison.mjs';
 import { estimateSupplierLandedCost, landedCostPolicy } from './landed-cost.mjs';
 import { profitScenarioPolicy } from './retail-margin.mjs';
+import { suggestedCustomRetail, profitAtRetail } from './custom-size-profit.mjs';
+import { SILVIA_SALE_DISCOUNT_PERCENT } from './variants.mjs';
 import { getArteloUnframedPosterCost } from './artelo.mjs';
 
 const sensariaCatalog = JSON.parse(
@@ -375,40 +377,13 @@ async function arteloRecord({ productCode, size, countryCode }) {
   }
 }
 
-function priceFloor(adjustedSupplierUsd) {
-  const cost = numeric(adjustedSupplierUsd);
-  if (cost == null) return null;
-  const policy = profitScenarioPolicy();
-  const feeRate = Number(policy.etsyFeeReservePercent || 0) / 100;
-  const marginRate = Number(policy.minimumMarginPercent || 0) / 100;
-  const minContribution = Number(policy.minimumMarginUsd || 0);
-  const denominatorDollar = 1 - feeRate;
-  const denominatorPercent = 1 - feeRate - marginRate;
-  if (denominatorDollar <= 0 || denominatorPercent <= 0) return null;
-
-  const rawSale = Math.max(
-    (cost + minContribution) / denominatorDollar,
-    cost / denominatorPercent
-  );
-  const roundUp99 = value => Math.max(0.99, Math.ceil(Number(value) + 0.01) - 0.01);
-  const salePriceUsd = roundUp99(rawSale);
-  const discountRate = Number(policy.saleDiscountPercent || 0) / 100;
-  const regularPriceUsd = discountRate > 0
-    ? roundUp99(salePriceUsd / (1 - discountRate))
-    : salePriceUsd;
-
-  const etsyFeeReserveUsd = round(salePriceUsd * feeRate);
-  const contributionUsd = round(salePriceUsd - cost - etsyFeeReserveUsd);
-  return {
-    minimumCustomerPriceUsd: salePriceUsd,
-    regularPriceBeforeShopSaleUsd: regularPriceUsd,
-    minimumCustomerPriceCad: round(salePriceUsd * Number(policy.cadPerUsd || 1)),
-    etsyFeeReserveUsd,
-    estimatedContributionUsd: contributionUsd,
-    shopSaleDiscountPercent: Number(policy.saleDiscountPercent || 0),
-    assumedCadPerUsd: Number(policy.cadPerUsd || 1),
-    note: policy.note
-  };
+function priceFloor(adjustedSupplierUsd, quotedSupplierUsd, policy) {
+  return suggestedCustomRetail({
+    planningCostUsd: adjustedSupplierUsd,
+    quotedCostUsd: quotedSupplierUsd,
+    policy,
+    storeDiscountPercent: SILVIA_SALE_DISCOUNT_PERCENT
+  });
 }
 
 export async function lookupCustomSize({
@@ -477,6 +452,27 @@ export async function lookupCustomSize({
   const winner = ranked[0] || null;
   const next = ranked[1] || null;
   const winnerCost = winner ? Number(winner.modeledLandedUsd ?? winner.totalUsd) : null;
+  const retailPolicy = profitScenarioPolicy();
+  // The sale is fixed by the storefront: Silvia 25%, Japandi 20%.
+  // Compute the displayed regular price first, then Etsy's actual discounted
+  // sale price, so profit never assumes a price the customer cannot pay.
+  const pricing = winner
+    ? priceFloor(winnerCost, winner.totalUsd, retailPolicy)
+    : null;
+  const providerProfits = Object.fromEntries(
+    Object.entries(suppliers).map(([key, record]) => [
+      key,
+      pricing && record.eligible && numeric(record.totalUsd) !== null
+        ? profitAtRetail({
+            quotedCostUsd: record.totalUsd,
+            planningCostUsd: record.modeledLandedUsd ?? record.totalUsd,
+            salePriceUsd: pricing.salePriceAfterDiscountUsd,
+            etsyFeePercent: pricing.etsyFeeReservePercent,
+            cadPerUsd: pricing.assumedCadPerUsd
+          })
+        : null
+    ])
+  );
 
   return {
     ok: true,
@@ -503,7 +499,8 @@ export async function lookupCustomSize({
         ? round(Number(next.modeledLandedUsd ?? next.totalUsd) - winnerCost)
         : null
     } : null,
-    pricing: winner ? priceFloor(winnerCost) : null,
+    pricing,
+    providerProfits,
     note: 'Custom lookup is read-only. API providers are queried for this exact size/product/country. Sensaria uses the captured full catalog and captured shipping zones because no equivalent live catalog/quote API is configured. No supplier order is created.'
   };
 }
