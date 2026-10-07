@@ -32,8 +32,20 @@ services:
         value: "false"
       - key: PRINTSHRIMP_FULFILLMENT_ENABLED
         value: "false"
+      - key: PRINTIFY_FULFILLMENT_ENABLED
+        value: "false"
       - key: PRINTIFY_API_TOKEN
         sync: false
+      - key: PRINTIFY_API_URL
+        sync: false
+      - key: PRINTIFY_SHOP_ID
+        sync: false
+      - key: GELATO_API_KEY
+        sync: false
+      - key: GELATO_PRODUCT_API_URL
+        value: https://product.gelatoapis.com/v3
+      - key: GELATO_SHIPMENT_API_URL
+        value: https://shipment.gelatoapis.com/v1
       - key: ARTELO_API_KEY
         sync: false
       - key: PRODIGI_API_KEY
