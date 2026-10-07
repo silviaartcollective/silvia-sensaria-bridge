@@ -1,5 +1,6 @@
 import {
   listGelatoCatalogs,
+  getGelatoCatalog,
   searchGelatoProducts,
   getGelatoProductPrices,
   getGelatoShipmentPrices,
@@ -35,7 +36,7 @@ function classifyCatalog(catalog) {
 }
 
 function relevantCatalog(catalog) {
-  return /poster|canvas|fine art|art print|wall[-_ ]?art|frame|stretched|gallery[-_ ]?wrap/i.test(
+  return /poster|canvas|fine art|art print|wall[-_ ]?art|frame|stretched|gallery[-_ ]?wrap|wall[-_ ]?decor|photo[-_ ]?print/i.test(
     `${catalog?.catalogUid || ''} ${catalog?.title || ''}`
   );
 }
@@ -223,12 +224,14 @@ async function mapLimit(items, limit, mapper) {
   return results;
 }
 
-async function searchAllCatalogProducts(catalogUid) {
+async function searchAllCatalogProducts(catalogUid, { attributeFilters = {}, maxPages = 100 } = {}) {
   const products = [];
   let offset = 0;
   const limit = 100;
-  for (let page = 0; page < 100; page++) {
-    const result = await searchGelatoProducts(catalogUid, { limit, offset });
+  for (let page = 0; page < maxPages; page++) {
+    const result = await searchGelatoProducts(catalogUid, {
+      attributeFilters, limit, offset
+    });
     const batch = Array.isArray(result?.products) ? result.products : [];
     products.push(...batch);
     if (batch.length < limit) break;
@@ -285,6 +288,83 @@ async function loadProductCatalog({ fresh = false } = {}) {
   } finally {
     productCatalogPromise = null;
   }
+}
+
+
+function matchingGelatoFormatAttributes(catalog, target) {
+  const result = [];
+  for (const attribute of catalog?.productAttributes || []) {
+    const key = String(attribute?.productAttributeUid || '');
+    if (!/format|size|dimension/i.test(key)) continue;
+    const matchingValues = (attribute.values || [])
+      .filter(value =>
+        [value?.productAttributeValueUid, value?.title]
+          .some(text => {
+            const pair = pairFromText(text);
+            return Boolean(pair) &&
+              Math.abs(pair.width - target.width) <= 0.52 &&
+              Math.abs(pair.height - target.height) <= 0.52;
+          })
+      )
+      .map(value => value.productAttributeValueUid)
+      .filter(Boolean);
+    if (matchingValues.length) result.push({ key, values: matchingValues });
+  }
+  return result;
+}
+
+// Direct exact-format lookup avoids silently losing a 20x30 product when
+// unfiltered catalogs have thousands of frame/material/orientation variants.
+// Only performs read-only catalog and product searches.
+async function findGelatoExactFormat(row, target) {
+  const diagnostics = { catalogDetailsChecked: 0, filteredSearches: 0,
+    productsReturned: 0, failures: [] };
+  if (!target) return { matches: [], diagnostics };
+  const allCatalogs = await listGelatoCatalogs();
+  const candidates = allCatalogs.filter(relevantCatalog);
+  const catalogs = candidates.length ? candidates : allCatalogs;
+  const groups = await mapLimit(catalogs, 3, async catalog => {
+    try {
+      const detail = await getGelatoCatalog(catalog.catalogUid);
+      diagnostics.catalogDetailsChecked++;
+      const dimensions = matchingGelatoFormatAttributes(detail, target);
+      if (!dimensions.length) return [];
+      const perCatalog = [];
+      // Use a single matching format filter at a time. AND-ing all the format
+      // attributes together would exclude legitimate variants.
+      for (const dimension of dimensions) {
+        diagnostics.filteredSearches++;
+        const products = await searchAllCatalogProducts(catalog.catalogUid, {
+          attributeFilters: { [dimension.key]: dimension.values },
+          maxPages: 30
+        });
+        diagnostics.productsReturned += products.length;
+        for (const product of products) {
+          const item = {
+            catalog, product,
+            productCode: productCodeForItem(product, catalog)
+          };
+          if (item.productCode === row.productCode &&
+              sizeCompatible(product, target) &&
+              finishCompatible(row, product, catalog)) {
+            perCatalog.push(item);
+          }
+        }
+      }
+      return perCatalog;
+    } catch (error) {
+      diagnostics.failures.push({
+        catalogUid: catalog.catalogUid,
+        reason: error?.message || String(error)
+      });
+      return [];
+    }
+  });
+  const unique = new Map();
+  for (const item of groups.flat()) {
+    unique.set(item.product.productUid, item);
+  }
+  return { matches: [...unique.values()], diagnostics };
 }
 
 function normalizeSizeKey(value) {
@@ -369,11 +449,23 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
 
   for (const row of rows || []) {
     const target = parseTargetSize(row?.size);
-    const sizeMatches = catalogRows.filter(item =>
+    let sizeMatches = catalogRows.filter(item =>
       item.productCode === row?.productCode &&
       sizeCompatible(item.product, target) &&
       finishCompatible(row, item.product, item.catalog)
     );
+    let exactFormatDiagnostics = null;
+    if (!sizeMatches.length && target) {
+      try {
+        const exact = await findGelatoExactFormat(row, target);
+        sizeMatches = exact.matches;
+        exactFormatDiagnostics = exact.diagnostics;
+      } catch (error) {
+        exactFormatDiagnostics = {
+          failures: [{ reason: error?.message || String(error) }]
+        };
+      }
+    }
 
     const countrySupported = sizeMatches.filter(item =>
       Array.isArray(item.product?.supportedCountries) &&
@@ -415,7 +507,10 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
         if (nearest.length >= 6) break;
       }
       const diagnostic = catalogDiagnostics || {};
-      const failures = diagnostic.errors || [];
+      const failures = [
+        ...(diagnostic.errors || []),
+        ...(exactFormatDiagnostics?.failures || [])
+      ];
       const names = (diagnostic.relevantCatalogs || []).map(item => item.uid).slice(0, 15);
       const status = !familyRows.length && failures.length
         ? 'catalog-scan-error' : 'catalog-no-match';
@@ -429,7 +524,8 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
         meta: {
           familyProductCount: familyRows.length,
           nearestParsedSizes: nearest,
-          catalogDiagnostics: diagnostic
+          catalogDiagnostics: diagnostic,
+          exactFormatDiagnostics
         }
       });
       continue;
@@ -505,6 +601,7 @@ export const __test = {
   productSizeCandidates,
   productSizeInches,
   productCodeForItem,
+  matchingGelatoFormatAttributes,
   sizeCompatible,
   rowKey
 };
