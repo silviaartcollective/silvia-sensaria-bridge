@@ -265,7 +265,7 @@ export async function scanPrintifyComparisonRows({ rows = [], countryCode, fresh
 
         const productCost = shopCosts.get(
           costMapKey(offering.blueprintId, offering.providerId, variant?.id)
-        ) ?? null;
+        ) ?? moneyFromCents(variant?.cost);
         const shippingCost = shippingCostUsd(profile);
         if (shippingCost == null) continue;
         const totalUsd = productCost != null ? productCost + shippingCost : null;
