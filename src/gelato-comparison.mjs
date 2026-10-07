@@ -33,7 +33,7 @@ function classifyCatalog(catalog) {
 }
 
 function relevantCatalog(catalog) {
-  return /poster|canvas|fine art|art print|wall art|frame/i.test(
+  return /poster|canvas|fine art|art print|wall[-_ ]?art|frame/i.test(
     `${catalog?.catalogUid || ''} ${catalog?.title || ''}`
   );
 }
@@ -123,9 +123,11 @@ function productText(product, catalog) {
 function productCodeForItem(product, catalog) {
   const text = productText(product, catalog);
   const attrs = product?.attributes && typeof product.attributes === 'object' ? product.attributes : {};
-  const frameKey = Object.keys(attrs).some(key =>
-    /^(framecolor|framecolour|framestyle|framematerial|framevariant|canvasframe)$/i.test(String(key))
-  );
+  const frameKey = Object.entries(attrs).some(([key, value]) => {
+    if (!/^(framecolor|framecolour|framestyle|framematerial|framevariant|canvasframe)$/i.test(String(key))) return false;
+    const normalized = compact(value);
+    return Boolean(normalized) && !/^(none|no|unframed|without-frame|no-frame)$/.test(normalized);
+  });
   const framedCanvas = /framed[-_ ]*canvas|canvas[-_ ].*frame|frame[-_ ].*canvas|frame_and_canvas/i.test(text) || frameKey;
 
   if (/canvas/.test(text)) return framedCanvas ? 'FC' : 'C';
