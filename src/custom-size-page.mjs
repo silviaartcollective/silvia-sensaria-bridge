@@ -122,10 +122,16 @@ table.offer-table th{font-size:9px}
   </div>
   <div class="status" id="empty">Run a lookup to see provider results.</div>
 </section>
+<section class="card" id="printify-library-card" style="display:none">
+ <h2 style="margin:0 0 8px">Printify Production Price Library</h2>
+ <p class="sub" style="margin:0 0 14px">Some Printify canvas or poster printers do not expose production cost in their catalog. This tool temporarily creates <strong>unpublished private test products in Printify</strong>, captures actual supplier variant costs, saves them in the app, and removes test drafts after they are safely saved. Nothing is published to Etsy or ordered.</p>
+ <button class="primary" id="build-printify-library" type="button">Capture missing Printify prices for this size</button>
+ <p class="status" id="printify-library-status">Runs up to four product/provider combinations at a time. Repeat if additional providers remain.</p>
+</section>
 </main></div>
 <script>
 (function(){
-const country=document.getElementById('country'),product=document.getElementById('product'),width=document.getElementById('width'),height=document.getElementById('height'),frame=document.getElementById('frame'),frameLabel=document.getElementById('frame-label'),button=document.getElementById('lookup'),status=document.getElementById('status'),hero=document.getElementById('hero'),winner=document.getElementById('winner'),winnerCost=document.getElementById('winner-cost'),winnerDetail=document.getElementById('winner-detail'),customerPrice=document.getElementById('customer-price'),regularPrice=document.getElementById('regular-price'),priceDetail=document.getElementById('price-detail'),saleDetail=document.getElementById('sale-detail'),tableWrap=document.getElementById('table-wrap'),rows=document.getElementById('rows'),empty=document.getElementById('empty');
+const country=document.getElementById('country'),product=document.getElementById('product'),width=document.getElementById('width'),height=document.getElementById('height'),frame=document.getElementById('frame'),frameLabel=document.getElementById('frame-label'),button=document.getElementById('lookup'),status=document.getElementById('status'),hero=document.getElementById('hero'),winner=document.getElementById('winner'),winnerCost=document.getElementById('winner-cost'),winnerDetail=document.getElementById('winner-detail'),customerPrice=document.getElementById('customer-price'),regularPrice=document.getElementById('regular-price'),priceDetail=document.getElementById('price-detail'),saleDetail=document.getElementById('sale-detail'),tableWrap=document.getElementById('table-wrap'),rows=document.getElementById('rows'),empty=document.getElementById('empty'),libraryCard=document.getElementById('printify-library-card'),libraryButton=document.getElementById('build-printify-library'),libraryStatus=document.getElementById('printify-library-status');
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>v==null||!Number.isFinite(Number(v))?'—':'$'+Number(v).toFixed(2);
 function syncFrame(){frameLabel.style.display=product.value==='FC'?'grid':'none'}product.addEventListener('change',syncFrame);syncFrame();
@@ -146,10 +152,49 @@ function render(data){
  const suppliers=data.suppliers||{};const ranking=new Map((data.ranking||[]).map(x=>[x.provider,x.rank]));const fallback=['Sensaria','Prodigi','PrintShrimp','Printify','Gelato','Artelo'];
  const byProvider=Object.fromEntries(Object.values(suppliers).map(r=>[r.provider,r]));
  const order=fallback.slice().sort((a,b)=>{const ra=ranking.get(a),rb=ranking.get(b);if(ra!=null&&rb!=null)return ra-rb;if(ra!=null)return -1;if(rb!=null)return 1;return fallback.indexOf(a)-fallback.indexOf(b);});
+ const printifyRow=byProvider.Printify||{};
+ const missingOffers=(printifyRow.meta?.offers||[]).filter(item=>item.productionUsd==null);
+ libraryCard.style.display=missingOffers.length?'block':'none';
+ libraryStatus.textContent=missingOffers.length
+   ? missingOffers.length+' Printify size/provider matches need a production cost. Captured costs remain available for future lookups.'
+   : 'All Printify matching offers have production prices, or no shippable provider exists.';
  rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td class="detail">'+esc(detail||'—')+offerBreakdown(r)+'</td></tr>';}).join('');
  tableWrap.classList.add('show');empty.style.display='none';
  if(data.winner){hero.classList.add('show');winner.textContent=data.winner.provider;winnerCost.textContent=money(data.winner.modeledLandedUsd);winnerDetail.textContent=data.winner.savingsVsNextBestUsd!=null?'Saves '+money(data.winner.savingsVsNextBestUsd)+' vs next best':'Only one eligible provider';if(data.pricing){customerPrice.textContent=money(data.pricing.minimumCustomerPriceUsd);regularPrice.textContent=money(data.pricing.regularPriceBeforeShopSaleUsd);priceDetail.textContent='≈ CA$'+Number(data.pricing.minimumCustomerPriceCad||0).toFixed(2)+' · configured safety floor';saleDetail.textContent=data.pricing.shopSaleDiscountPercent+'% current shop sale assumption';}else{customerPrice.textContent='—';regularPrice.textContent='—';priceDetail.textContent='';saleDetail.textContent='';}}else{hero.classList.remove('show');}
 }
+libraryButton.addEventListener('click',async()=>{
+ const hasConfirmed=window.confirm('Create up to four temporary UNPUBLISHED Printify pricing drafts for this exact size and destination? The app will capture actual production costs, save them to its price library and delete the test drafts if saved. No Etsy or supplier orders will be created.');
+ if(!hasConfirmed)return;
+ libraryButton.disabled=true;
+ libraryStatus.textContent='Creating private price-check drafts and capturing production costs. Please keep this page open…';
+ try {
+   const body={
+     countryCode:country.value,productCode:product.value,
+     width:Number(width.value),height:Number(height.value),
+     frame:product.value==='FC'?frame.value:'',
+     maxDrafts:4,
+     confirm:'CREATE_UNPUBLISHED_PRINTIFY_PRICING_DRAFTS'
+   };
+   const response=await fetch('/api/printify/pricing-library/build',{
+     method:'POST',headers:{'content-type':'application/json'},
+     body:JSON.stringify(body)
+   });
+   const data=await response.json();
+   if(!response.ok||!data.ok)throw Error(data.error||'Unable to capture Printify prices');
+   const successes=data.created||[];
+   const failures=data.errors||[];
+   const saved=successes.filter(item=>item.savedInR2).length;
+   const retained=successes.filter(item=>item.retainedDraftId).length;
+   const warning=successes.filter(item=>item.warning).map(item=>item.printProvider+': '+item.warning).slice(0,3);
+   libraryStatus.textContent='Captured '+data.captured+' variant production costs from '+successes.length+' product/provider models. Saved to R2: '+saved+'. Unpublished drafts retained: '+retained+'. Remaining provider models: '+data.pendingProviderPairsEstimate+'.'+(failures.length?' Failures: '+failures.map(item=>item.printProvider+': '+item.error).join(' | '):'')+(warning.length?' Notes: '+warning.join(' | '):'');
+   // Refresh quotes and provider ranking using the newly saved prices.
+   button.click();
+ } catch(error) {
+   libraryStatus.textContent='Price capture could not finish: '+String(error?.message||error);
+ } finally {
+   libraryButton.disabled=false;
+ }
+});
 button.addEventListener('click',async()=>{button.disabled=true;button.innerHTML='<span class="spinner"></span>Checking providers…';status.className='status';status.textContent='Looking up the exact request across connected providers…';try{const body={countryCode:country.value.trim().toUpperCase(),productCode:product.value,width:Number(width.value),height:Number(height.value),frame:product.value==='FC'?frame.value:''};const r=await fetch('/api/custom-size/lookup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'Lookup failed');render(d);status.textContent=d.winner?'Lookup complete · '+d.request.size+' '+d.request.product+' to '+d.request.countryCode+' · best option: '+d.winner.provider+'.':'Lookup complete, but no provider returned a fully priced eligible option.';}catch(e){status.className='status bad';status.textContent=String(e.message||e);}finally{button.disabled=false;button.textContent='Find best option';}});
 })();
 </script></body></html>`;
