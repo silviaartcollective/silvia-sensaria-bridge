@@ -9,10 +9,41 @@ export function renderPricingPage() {
 <style>
 :root{--bg:#f4f1eb;--panel:#fffdfa;--ink:#20221e;--muted:#74776f;--line:#dfdcd4;--green:#536454;--green2:#e8eee7;--amber:#946b35;--amber2:#f5ead9;--red:#9b4439}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}.shell{max-width:1650px;margin:0 auto;padding:34px 22px 50px}h1{font-family:Georgia,serif;font-weight:500;font-size:38px;margin:0 0 8px}h2{font-family:Georgia,serif;font-weight:500}.sub{color:var(--muted);font-size:14px;margin:0 0 22px}.toplink{display:inline-block;margin-bottom:18px;color:var(--muted);font-size:13px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:20px;box-shadow:0 10px 28px rgba(40,40,30,.05);margin-bottom:18px}.controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap}label{display:grid;gap:7px;font-size:12px;font-weight:650}select{min-width:330px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px;font:inherit}.notice{padding:12px 14px;border-radius:10px;background:var(--amber2);color:var(--amber);font-size:12px;line-height:1.5;margin-bottom:18px}.status{font-size:12px;color:var(--muted);line-height:1.5;max-width:900px}.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:16px 0}.kpi{background:#f7f4ee;border:1px solid var(--line);border-radius:10px;padding:13px}.kpi b{display:block;font-family:Georgia,serif;font-size:22px;margin-top:4px}.muted{color:var(--muted);font-size:11px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}th{background:#f1eee8;position:sticky;top:0;z-index:1}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2),th:nth-child(7),td:nth-child(7){text-align:left}.scroll{overflow:auto;max-height:690px}.good,.ok{color:#496b51}.bad{color:var(--red)}.market-note{padding:10px 12px;background:#f7f4ee;border:1px solid var(--line);border-radius:10px;margin-top:12px;font-size:12px;line-height:1.5;color:var(--muted)}.btn{border:0;border-radius:10px;background:#30352e;color:#fff;padding:11px 14px;font-weight:700;cursor:pointer}.btn.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}.btn:disabled{opacity:.55;cursor:not-allowed}.sync-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}.sync-list{margin-top:12px;display:grid;gap:8px}.sync-item{padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#f7f4ee;font-size:12px;line-height:1.5}.sync-item b{font-weight:700}@media(max-width:800px){.kpis{grid-template-columns:1fr 1fr}h1{font-size:32px}select{min-width:260px}}
+
+.app-shell{min-height:100vh;display:grid;grid-template-columns:238px minmax(0,1fr)}
+.app-sidebar{background:#252820;color:#f8f5ee;padding:28px 20px;display:flex;flex-direction:column;min-height:100vh}
+.app-sidebar .brand{font-family:Georgia,serif;font-size:24px;line-height:1.08;margin-bottom:30px}
+.app-sidebar .brand small{display:block;font-size:12px;color:#b9beb3;margin-top:8px}
+.app-sidebar nav{display:grid;gap:7px}
+.app-sidebar .nav{padding:11px 12px;border-radius:9px;color:#cdd1c7;font-size:14px;text-decoration:none}
+.app-sidebar .nav.active,.app-sidebar .nav:hover{background:#373b33;color:#fff}
+.app-sidebar .foot{margin-top:auto;color:#aeb3a8;font-size:12px;line-height:1.5}
+.app-shell>main{min-width:0;width:100%}
+@media(max-width:720px){.app-shell{grid-template-columns:1fr}.app-sidebar{display:none}}
+
 </style>
 </head>
-<body><main class="shell">
-<a class="toplink" href="/">← Dashboard</a>
+<body><div class="app-shell">
+<aside class="app-sidebar">
+  <div class="brand">Silvia<br>Fulfillment <small>Etsy → Sensaria</small></div>
+  <nav>
+    <a class="nav" href="/">Dashboard</a>
+    <a class="nav" href="/product-creator">Product Creator</a>
+    <a class="nav" href="/listing-converter">Gelato → Silvia Converter</a>
+    <a class="nav" href="/shipping-profile">Shipping Profile</a>
+    <a class="nav active" href="/pricing">Pricing & Shipping</a>
+    <a class="nav" href="/compare">Supplier Comparison</a>
+    <a class="nav" href="/test-order">Test Order</a>
+    <a class="nav" href="/#orders">Orders</a>
+    <a class="nav" href="/#artworks">Artwork Library</a>
+    <a class="nav" href="/#mappings">Product SKUs</a>
+    <a class="nav" href="/etsy/status" target="_blank">Etsy Status</a>
+    <a class="nav" href="/r2/status" target="_blank">R2 Status</a>
+    <a class="nav" href="/logout">Log out</a>
+  </nav>
+  <div class="foot">Silvia Art Collective<br>Private fulfillment service</div>
+</aside>
+<main class="shell">
 <h1>Silvia pricing & profitability</h1>
 <p class="sub">Current Silvia CAD price ladder → Etsy USD, current shop sale, free customer shipping, Sensaria fulfillment, and destination planning tax.</p>
 <div class="notice"><strong>Important:</strong> Silvia now uses free shipping on Etsy. Sensaria Basic shipping is absorbed by Silvia and reduces profit. Tax outside the verified British Columbia example is a planning assumption only; actual Sensaria supplier tax can differ.</div>
@@ -60,6 +91,7 @@ export function renderPricingPage() {
   <div class="sync-list" id="price-sync-list"></div>
 </section>
 </main>
+</div>
 
 <script>
 const market=document.getElementById('market');
