@@ -10,16 +10,48 @@ export function renderListingConverterPage() {
 :root{--bg:#f4f1eb;--panel:#fffdfa;--ink:#20221e;--muted:#74776f;--line:#dfdcd4;--green:#536454;--green2:#e8eee7;--amber:#946b35;--amber2:#f5ead9;--red:#9b4439}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}.shell{max-width:1500px;margin:0 auto;padding:34px 24px 55px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:20px}.toplinks{display:flex;gap:10px;flex-wrap:wrap}.btn,a.btn{border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);padding:10px 13px;font:inherit;font-size:13px;font-weight:700;text-decoration:none;cursor:pointer}.btn.primary{background:#30352e;color:#fff;border-color:#30352e}.btn:disabled{opacity:.5;cursor:not-allowed}h1{font-family:Georgia,serif;font-weight:500;font-size:38px;margin:0 0 7px}.sub{margin:0;color:var(--muted);font-size:14px;line-height:1.55}.statusbar{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:14px 16px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px}.status{font-size:12px;color:var(--muted);line-height:1.5}.status.ok{color:var(--green)}.status.bad{color:var(--red)}.status.warn{color:var(--amber)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;overflow:hidden;box-shadow:0 10px 28px rgba(40,40,30,.05)}.preview{aspect-ratio:4/3;background:#ebe8e1;display:grid;place-items:center;overflow:hidden}.preview img{width:100%;height:100%;object-fit:cover}.preview .empty{font-size:12px;color:var(--muted)}.body{padding:15px}.title{font-weight:700;font-size:14px;line-height:1.4;margin-bottom:6px}.meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px}.pill{font-size:10px;padding:5px 7px;border-radius:999px;background:#f1eee8;color:var(--muted)}.pill.done{background:var(--green2);color:var(--green)}.pill.warn{background:var(--amber2);color:var(--amber)}.upload{display:grid;gap:9px;margin-top:11px}.upload input[type=file]{width:100%;font-size:12px}.progress{height:6px;background:#e7e3dc;border-radius:99px;overflow:hidden}.progress span{display:block;width:0;height:100%;background:#667867;transition:width .2s}.cardstatus{font-size:11px;line-height:1.45;color:var(--muted);min-height:34px}.cardstatus.ok{color:var(--green)}.cardstatus.bad{color:var(--red)}.cardstatus.warn{color:var(--amber)}.search{width:min(460px,100%);padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font:inherit}
 @media(max-width:1050px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.grid{grid-template-columns:1fr}.top{flex-direction:column}h1{font-size:31px}}
+
+.app-shell{min-height:100vh;display:grid;grid-template-columns:238px minmax(0,1fr)}
+.app-sidebar{background:#252820;color:#f8f5ee;padding:28px 20px;display:flex;flex-direction:column;min-height:100vh}
+.app-sidebar .brand{font-family:Georgia,serif;font-size:24px;line-height:1.08;margin-bottom:30px}
+.app-sidebar .brand small{display:block;font-size:12px;color:#b9beb3;margin-top:8px}
+.app-sidebar nav{display:grid;gap:7px}
+.app-sidebar .nav{padding:11px 12px;border-radius:9px;color:#cdd1c7;font-size:14px;text-decoration:none}
+.app-sidebar .nav.active,.app-sidebar .nav:hover{background:#373b33;color:#fff}
+.app-sidebar .foot{margin-top:auto;color:#aeb3a8;font-size:12px;line-height:1.5}
+.app-shell>main{min-width:0;width:100%}
+@media(max-width:720px){.app-shell{grid-template-columns:1fr}.app-sidebar{display:none}}
+
 </style>
 </head>
 <body>
+<div class="app-shell">
+<aside class="app-sidebar">
+  <div class="brand">Silvia<br>Fulfillment <small>Etsy → Sensaria</small></div>
+  <nav>
+    <a class="nav" href="/">Dashboard</a>
+    <a class="nav" href="/product-creator">Product Creator</a>
+    <a class="nav active" href="/listing-converter">Gelato → Silvia Converter</a>
+    <a class="nav" href="/shipping-profile">Shipping Profile</a>
+    <a class="nav" href="/pricing">Pricing & Shipping</a>
+    <a class="nav" href="/compare">Supplier Comparison</a>
+    <a class="nav" href="/test-order">Test Order</a>
+    <a class="nav" href="/#orders">Orders</a>
+    <a class="nav" href="/#artworks">Artwork Library</a>
+    <a class="nav" href="/#mappings">Product SKUs</a>
+    <a class="nav" href="/etsy/status" target="_blank">Etsy Status</a>
+    <a class="nav" href="/r2/status" target="_blank">R2 Status</a>
+    <a class="nav" href="/logout">Log out</a>
+  </nav>
+  <div class="foot">Silvia Art Collective<br>Private fulfillment service</div>
+</aside>
 <main class="shell">
   <div class="top">
     <div>
       <h1>Gelato → Silvia listing converter</h1>
       <p class="sub">Choose the existing Etsy listing by its first mockup, upload the matching master artwork, and the app will assign the next SAC ID, store it in Cloudflare R2, run the shared cropper, replace the Gelato variants with Silvia variants/SKUs and apply the current Silvia price ladder. Existing Etsy title, description, tags, photos and video stay in place.</p>
     </div>
-    <div class="toplinks"><a class="btn" href="/">Dashboard</a><a class="btn" href="/pricing">Pricing</a></div>
+    
   </div>
 
   <div class="statusbar">
@@ -35,6 +67,7 @@ export function renderListingConverterPage() {
 
   <section class="grid" id="cards"></section>
 </main>
+</div>
 
 <script>
 const cards=document.getElementById('cards');
