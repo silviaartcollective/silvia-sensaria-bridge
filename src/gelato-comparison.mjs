@@ -121,10 +121,17 @@ function productText(product, catalog) {
 }
 
 function productCodeForItem(product, catalog) {
+  // Gelato separates the main wall-art families into catalogs. Prefer that
+  // explicit catalog identity before inspecting variant attributes. A normal
+  // stretched canvas can legitimately contain "canvas frame" / stretcher-bar
+  // metadata, which must not turn it into a decorative Framed Canvas.
+  const catalogCode = classifyCatalog(catalog);
+  if (catalogCode) return catalogCode;
+
   const text = productText(product, catalog);
   const attrs = product?.attributes && typeof product.attributes === 'object' ? product.attributes : {};
   const frameKey = Object.entries(attrs).some(([key, value]) => {
-    if (!/^(framecolor|framecolour|framestyle|framematerial|framevariant|canvasframe)$/i.test(String(key))) return false;
+    if (!/^(framecolor|framecolour|framestyle|framematerial|framevariant)$/i.test(String(key))) return false;
     const normalized = compact(value);
     return Boolean(normalized) && !/^(none|no|unframed|without-frame|no-frame)$/.test(normalized);
   });
@@ -135,7 +142,7 @@ function productCodeForItem(product, catalog) {
     if (/framed[-_ ]*poster|frame_and_poster|poster[-_ ].*frame/i.test(text) || frameKey) return '';
     return 'P';
   }
-  return classifyCatalog(catalog);
+  return '';
 }
 
 function sizeCompatible(product, target, tolerance = 0.52) {
