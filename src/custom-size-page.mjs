@@ -147,8 +147,8 @@ function offerBreakdown(record){
  const errorCount=Array.isArray(scan.catalogErrors)?scan.catalogErrors.length:0;
  const errors=errorCount?'<p>'+errorCount+' Printify catalog request(s) failed; not all options could be checked.</p>':'';
  if(!offers.length)return '<div class="offers"><p>'+esc(summary)+'</p>'+errors+'</div>';
- const head='<thead><tr><th>Printify product</th><th>Brand</th><th>Print provider</th><th>Variant</th><th>Production</th><th>Shipping</th><th>Quote total</th></tr></thead>';
- const body=offers.map(o=>'<tr><td>'+esc(o.product||'—')+'</td><td>'+esc(o.brand||'—')+'</td><td>'+esc(o.printProvider||'—')+'</td><td>'+esc(o.variantTitle||'—')+'</td><td>'+money(o.productionUsd)+'</td><td>'+money(o.shippingUsd)+'</td><td>'+money(o.quotedTotalUsd)+'</td></tr>').join('');
+ const head='<thead><tr><th>Printify product</th><th>Brand</th><th>Print provider</th><th>Variant</th><th>Production</th><th>Shipping</th><th>Quote total</th><th>Profit (planning)</th><th>Profit (quoted)</th></tr></thead>';
+ const body=offers.map(o=>'<tr><td>'+esc(o.product||'—')+'</td><td>'+esc(o.brand||'—')+'</td><td>'+esc(o.printProvider||'—')+'</td><td>'+esc(o.variantTitle||'—')+'</td><td>'+money(o.productionUsd)+'</td><td>'+money(o.shippingUsd)+'</td><td>'+money(o.quotedTotalUsd)+'</td><td>'+money(o.profit?.planningProfitUsd)+'</td><td>'+money(o.profit?.quotedProfitUsd)+'</td></tr>').join('');
  return '<details class="offers"><summary>View all '+offers.length+' Printify product / print-provider matches</summary><p>'+esc(summary)+'</p>'+errors+'<div class="offers-scroll"><table class="offer-table">'+head+'<tbody>'+body+'</tbody></table></div></details>';
 }
 function render(data){
