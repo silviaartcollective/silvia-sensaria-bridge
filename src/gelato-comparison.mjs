@@ -443,28 +443,36 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
     }]));
   }
 
-  const catalogRows = await loadProductCatalog({ fresh });
   const country = String(countryCode || '').trim().toUpperCase();
   const result = new Map();
+  // Custom Size Lookup requests one exact size. Search directly by Gelato's
+  // CanvasFormat/PaperFormat catalog attribute instead of exhausting a huge
+  // unfiltered product catalog. Bulk comparisons still use the shared cache.
+  const exactSizeLookup = (rows || []).length <= 2;
+  let catalogRows = exactSizeLookup ? null : await loadProductCatalog({ fresh });
 
   for (const row of rows || []) {
     const target = parseTargetSize(row?.size);
-    let sizeMatches = catalogRows.filter(item =>
-      item.productCode === row?.productCode &&
-      sizeCompatible(item.product, target) &&
-      finishCompatible(row, item.product, item.catalog)
-    );
+    let sizeMatches = [];
     let exactFormatDiagnostics = null;
-    if (!sizeMatches.length && target) {
+    if (exactSizeLookup && target) {
       try {
         const exact = await findGelatoExactFormat(row, target);
         sizeMatches = exact.matches;
         exactFormatDiagnostics = exact.diagnostics;
       } catch (error) {
-        exactFormatDiagnostics = {
-          failures: [{ reason: error?.message || String(error) }]
-        };
+        exactFormatDiagnostics = { failures: [{
+          reason: error?.message || String(error)
+        }] };
       }
+    }
+    if (!sizeMatches.length) {
+      if (!catalogRows) catalogRows = await loadProductCatalog({ fresh });
+      sizeMatches = catalogRows.filter(item =>
+        item.productCode === row?.productCode &&
+        sizeCompatible(item.product, target) &&
+        finishCompatible(row, item.product, item.catalog)
+      );
     }
 
     const countrySupported = sizeMatches.filter(item =>
@@ -490,7 +498,7 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
       .slice(0, 4);
 
     if (!candidates.length) {
-      const familyRows = catalogRows.filter(item => item.productCode === row?.productCode);
+      const familyRows = (catalogRows || []).filter(item => item.productCode === row?.productCode);
       const parsedSizes = familyRows.flatMap(item =>
         productSizeCandidates(item.product).map(size => ({
           width: size.width,
