@@ -59,20 +59,31 @@ export function referenceRetailForSize({
   };
 }
 
-export function profitAtRetail({ quotedCostUsd, planningCostUsd, salePriceUsd, etsyFeePercent = 10, cadPerUsd = 1.39 } = {}) {
+export function profitAtRetail({
+  quotedCostUsd, planningCostUsd, salePriceUsd, customerShippingUsd = 0,
+  etsyFeePercent = 10, cadPerUsd = 1.39
+} = {}) {
   const sale = validMoney(salePriceUsd);
-  if (sale === null) return null;
+  const shippingCharged = validMoney(customerShippingUsd);
+  if (sale === null || shippingCharged === null) return null;
   const quoted = validMoney(quotedCostUsd);
   const planning = validMoney(planningCostUsd);
   const feeRate = Number(etsyFeePercent) / 100;
   const fx = Number(cadPerUsd);
   if (!Number.isFinite(feeRate) || feeRate < 0 || feeRate >= 1 ||
       !Number.isFinite(fx) || fx <= 0) return null;
-  const etsyFeeReserveUsd = round(sale * feeRate);
-  const quotedProfitUsd = quoted === null ? null : round(sale - etsyFeeReserveUsd - quoted);
-  const planningProfitUsd = planning === null ? null : round(sale - etsyFeeReserveUsd - planning);
+  // Etsy transaction/payment fee reserves apply to the ARTWORK + the
+  // separately charged shipping amount, not only to the artwork.
+  // The shop discount applies to the artwork price, not to the custom
+  // shipping profile's fixed charge.
+  const buyerTotalUsd = round(sale + shippingCharged);
+  const etsyFeeReserveUsd = round(buyerTotalUsd * feeRate);
+  const quotedProfitUsd = quoted === null ? null : round(buyerTotalUsd - etsyFeeReserveUsd - quoted);
+  const planningProfitUsd = planning === null ? null : round(buyerTotalUsd - etsyFeeReserveUsd - planning);
   return {
     salePriceUsd: sale,
+    customerShippingUsd: shippingCharged,
+    buyerTotalUsd,
     etsyFeeReserveUsd,
     quotedCostUsd: quoted,
     planningCostUsd: planning,
@@ -81,7 +92,7 @@ export function profitAtRetail({ quotedCostUsd, planningCostUsd, salePriceUsd, e
     quotedProfitCad: quotedProfitUsd === null ? null : round(quotedProfitUsd * fx),
     planningProfitCad: planningProfitUsd === null ? null : round(planningProfitUsd * fx),
     planningMarginPercent: planningProfitUsd === null || sale === 0 ? null :
-      round((planningProfitUsd / sale) * 100)
+      round((planningProfitUsd / buyerTotalUsd) * 100)
   };
 }
 
@@ -90,10 +101,12 @@ export function suggestedCustomRetail({
   quotedCostUsd,
   policy = {},
   storeDiscountPercent,
-  referenceRetail = null
+  referenceRetail = null,
+  customerShippingUsd = 0
 } = {}) {
   const cost = validMoney(planningCostUsd);
-  if (cost === null) return null;
+  const shippingCharged = validMoney(customerShippingUsd);
+  if (cost === null || shippingCharged === null) return null;
   const discountPercent = Number(storeDiscountPercent);
   const feePercent = Number(policy.etsyFeeReservePercent ?? 10);
   const contributionMinimum = Number(policy.minimumMarginUsd ?? 7.5);
@@ -107,9 +120,14 @@ export function suggestedCustomRetail({
 
   const discount = discountPercent / 100;
   const feeRate = feePercent / 100;
+  // The buyer's separate shipping payment offsets fulfillment cost, while
+  // the Etsy fee reserve still applies to both artwork and shipping. The
+  // profit floor is defined on the after-discount artwork price.
   const minSale = Math.max(
-    (cost + contributionMinimum) / (1 - feeRate),
-    cost / (1 - feeRate - marginPercent / 100)
+    0.01,
+    (cost + contributionMinimum) / (1 - feeRate) - shippingCharged,
+    (cost - shippingCharged * (1 - feeRate)) /
+      (1 - feeRate - marginPercent / 100)
   );
   // End the REGULAR LISTING PRICE in .99 and compute the sale price that Etsy
   // would actually show after 20% Japandi or 25% Silvia discount. Never treat
@@ -134,6 +152,7 @@ export function suggestedCustomRetail({
     quotedCostUsd,
     planningCostUsd: cost,
     salePriceUsd: sale,
+    customerShippingUsd: shippingCharged,
     etsyFeePercent: feePercent,
     cadPerUsd: fx
   });
@@ -150,6 +169,10 @@ export function suggestedCustomRetail({
     minimumCustomerPriceUsd: sale,
     salePriceAfterDiscountUsd: sale,
     minimumCustomerPriceCad: round(sale * fx),
+    customerShippingUsd: shippingCharged,
+    customerShippingCad: round(shippingCharged * fx),
+    buyerTotalUsd: profit.buyerTotalUsd,
+    buyerTotalCad: round(profit.buyerTotalUsd * fx),
     suggestedRetailPriceCad: round(regular * fx),
     shopSaleDiscountPercent: discountPercent,
     etsyFeeReservePercent: feePercent,
@@ -165,4 +188,19 @@ export function suggestedCustomRetail({
     minimumRequiredSaleUsd: round(minSale),
     note: policy.note || 'Conservative planning only: supplier pricing, taxes, Etsy fees and FX may change. Etsy ads, fixed fees and refunds are not included.'
   };
+}
+
+/**
+ * A suggested fixed, separately payable shipping amount for a custom Etsy
+ * listing. Uses the destination's quoted supplier shipping in USD. Does not
+ * imply that Etsy will charge this automatically, or that Gelato's
+ * country-level shipping estimate is an address-specific quote.
+ */
+export function recommendedCustomShippingCharge(quotedShippingUsd, etsyFeePercent = 10) {
+  const quote = validMoney(quotedShippingUsd);
+  const feeRate = Number(etsyFeePercent) / 100;
+  if (quote === null || !Number.isFinite(feeRate) || feeRate < 0 || feeRate >= 1) {
+    return null;
+  }
+  return quote === 0 ? 0 : next99AtOrAbove(quote / (1 - feeRate));
 }
