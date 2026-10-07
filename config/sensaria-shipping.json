@@ -2,7 +2,7 @@
   "source": "Sensaria GO Shipping",
   "sourceUrl": "https://go.sensaria.com/shipping/#1595551396508-c4436c69-985112",
   "capturedAt": "2026-10-07T01:33:07.838Z",
-  "note": "Captured from Sensaria GO Global Shipping Rates & Zones on 2026-10-07. Basic shipping rates are per item. The current Sensaria page exposes 13 product groups; Pillows is no longer a visible shipping control.",
+  "note": "Rates captured from Sensaria GO on 2026-10-07. Per-item Basic shipping. Zone 1–3 countries normalized; US AK/HI and GB Channel Islands require region-level exceptions. Undeliverable / null is NOT zero shipping. Pills/Pillows omitted because the current page does not expose a shipping tab.",
   "countryZones": {
     "AD": "4",
     "AE": "ROW",
@@ -56,7 +56,7 @@
     "FK": "UNDELIVERABLE",
     "FO": "ROW",
     "GA": "ROW",
-    "GB": "5",
+    "GB": "1B",
     "GD": "5",
     "GE": "4",
     "GF": "ROW",
@@ -115,7 +115,7 @@
     "MM": "UNDELIVERABLE",
     "MN": "5",
     "MO": "5",
-    "MP": "5",
+    "MP": "3B",
     "MQ": "5",
     "MR": "ROW",
     "MS": "ROW",
@@ -198,7 +198,37 @@
     "YE": "ROW",
     "ZA": "ROW",
     "ZM": "ROW",
-    "ZW": "ROW"
+    "ZW": "ROW",
+    "US": "1A",
+    "AT": "1C",
+    "BE": "1C",
+    "FR": "1C",
+    "DE": "1C",
+    "IT": "1C",
+    "NL": "1C",
+    "PT": "1C",
+    "ES": "1C",
+    "CA": "2A",
+    "CZ": "2A",
+    "DK": "2A",
+    "FI": "2A",
+    "IE": "2A",
+    "LU": "2A",
+    "NO": "2A",
+    "AU": "2B",
+    "CY": "3A",
+    "EE": "3A",
+    "HU": "3A",
+    "MT": "3A",
+    "PL": "3A",
+    "CH": "3A",
+    "AS": "3B",
+    "GU": "3B",
+    "FM": "3B",
+    "MH": "3B",
+    "PR": "3B",
+    "PW": "3B",
+    "VI": "3B"
   },
   "basicRates": {
     "Default": {
@@ -409,5 +439,11 @@
       "productGroup": "Pillows",
       "error": "Could not find visible control: Pillows"
     }
-  ]
+  ],
+  "regionExceptions": {
+    "US-AK": "3A (Alaska): state-specific rate instead of US mainland 1A",
+    "US-HI": "3A (Hawaii): state-specific rate instead of US mainland 1A",
+    "GB-Channel-Islands": "5: special-zone exception; postcode-level confirmation required",
+    "AU-Norfolk-Island": "2B: Sensaria treats this destination with the Australian zone"
+  }
 }
