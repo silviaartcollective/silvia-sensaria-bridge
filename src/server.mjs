@@ -13,6 +13,7 @@ import { scanSupplierComparison } from './supplier-comparison.mjs';
 import { renderSupplierComparisonPage } from './supplier-comparison-page.mjs';
 import { renderCustomSizeLookupPage } from './custom-size-page.mjs';
 import { lookupCustomSize } from './custom-size-lookup.mjs';
+import { buildPrintifyCostsForRequest } from './printify-cost-builder.mjs';
 import { buildTestReceipt } from './test-order.mjs';
 import { etsyReceiptToSensariaCsvFromR2 } from './fulfillment.mjs';
 import {
@@ -1781,6 +1782,21 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       return sendJson(res, 200, await lookupCustomSize(body));
+    } catch (error) {
+      return sendJson(res, 400, {
+        ok: false,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  // Deliberately admin-only and explicitly confirmed: this may create
+  // temporary UNPUBLISHED Printify draft products, never orders or listings.
+  if (req.method === 'POST' && url.pathname === '/api/printify/pricing-library/build') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const body = await readJsonBody(req);
+      return sendJson(res, 200, await buildPrintifyCostsForRequest(body));
     } catch (error) {
       return sendJson(res, 400, {
         ok: false,
