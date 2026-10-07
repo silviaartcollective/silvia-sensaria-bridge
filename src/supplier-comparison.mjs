@@ -8,6 +8,8 @@ import {
   PRINTSHRIMP_PRINT_PAPER_TYPE,
   printShrimpPriceRow
 } from './printshrimp.mjs';
+import { scanPrintifyComparisonRows } from './printify-comparison.mjs';
+import { scanGelatoComparisonRows } from './gelato-comparison.mjs';
 
 const FX_TTL_MS = 6 * 60 * 60 * 1000;
 let gbpUsdCache = null;
@@ -21,6 +23,39 @@ function numeric(value) {
 function roundMoney(value) {
   if (value === null || value === undefined || value === '') return null;
   return Number.isFinite(Number(value)) ? Math.round(Number(value) * 100) / 100 : null;
+}
+
+function comparisonSize(value) {
+  const text = String(value || '').toLowerCase().replace(/[×]/g, 'x').replace(/\s+/g, '');
+  const match = text.match(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)/);
+  if (!match) return '';
+  const a = Number(match[1]);
+  const b = Number(match[2]);
+  return `${Math.min(a, b)}x${Math.max(a, b)}`;
+}
+
+function comparisonFinish(value) {
+  const text = String(value || '').toLowerCase();
+  if (!text || text === '—' || text === '-') return 'none';
+  if (/black/.test(text)) return 'black';
+  if (/white/.test(text)) return 'white';
+  if (/natural|oak|beech|birch/.test(text)) return 'natural';
+  if (/brown|dark wood|walnut|espresso|mahogany/.test(text)) return 'brown';
+  return text.trim();
+}
+
+function comparisonKey(row) {
+  return `${row?.productCode || ''}|${comparisonSize(row?.size)}|${comparisonFinish(row?.finish)}`;
+}
+
+function providerFailureMap(provider, rows, error) {
+  const message = error?.message || String(error || 'Provider scan failed');
+  return new Map((rows || []).map(row => [comparisonKey(row), supplierRecord({
+    provider,
+    eligible: false,
+    status: 'error',
+    reason: message
+  })]));
 }
 
 export async function getGbpToUsdRate() {
@@ -175,14 +210,23 @@ function printShrimpRecord(row, pricing, fx) {
 }
 
 export function mergeSupplierComparisonRows({
-  prodigiRows = [], printShrimpPricing = null, gbpUsd = null, riskPolicy = null
+  prodigiRows = [], printShrimpPricing = null, gbpUsd = null,
+  printifyRows = new Map(), gelatoRows = new Map(), riskPolicy = null
 } = {}) {
   return (prodigiRows || []).map(row => {
     const rawSuppliers = {
       sensaria: sensariaRecord(row),
       prodigi: prodigiRecord(row),
       artelo: arteloRecord(row),
-      printshrimp: printShrimpRecord(row, printShrimpPricing, gbpUsd)
+      printshrimp: printShrimpRecord(row, printShrimpPricing, gbpUsd),
+      printify: printifyRows.get(comparisonKey(row)) || supplierRecord({
+        provider: 'Printify', eligible: false, status: 'unavailable',
+        reason: 'No Printify comparison record was returned for this variant.'
+      }),
+      gelato: gelatoRows.get(comparisonKey(row)) || supplierRecord({
+        provider: 'Gelato', eligible: false, status: 'unavailable',
+        reason: 'No Gelato comparison record was returned for this variant.'
+      })
     };
 
     const suppliers = riskPolicy
@@ -261,10 +305,26 @@ export async function scanSupplierComparison({
         : Promise.resolve(null)
     ]);
 
+    const baseRows = prodigiResult.rows || [];
+    let printifyError = '';
+    let gelatoError = '';
+    const [printifyRows, gelatoRows] = await Promise.all([
+      scanPrintifyComparisonRows({ rows: baseRows, countryCode }).catch(error => {
+        printifyError = error?.message || String(error);
+        return providerFailureMap('Printify', baseRows, error);
+      }),
+      scanGelatoComparisonRows({ rows: baseRows, countryCode }).catch(error => {
+        gelatoError = error?.message || String(error);
+        return providerFailureMap('Gelato', baseRows, error);
+      })
+    ]);
+
     const merged = mergeSupplierComparisonRows({
-      prodigiRows: prodigiResult.rows || [],
+      prodigiRows: baseRows,
       printShrimpPricing: printShrimpResult,
       gbpUsd: fxResult,
+      printifyRows,
+      gelatoRows,
       riskPolicy: landedCostPolicy()
     });
 
@@ -272,6 +332,8 @@ export async function scanSupplierComparison({
     countryMeta.push({
       countryCode,
       printShrimpError: printShrimpResult?.error || '',
+      printifyError,
+      gelatoError,
       fxError: fxResult?.error || '',
       gbpToUsd: numeric(fxResult?.rate),
       fxDate: fxResult?.date || null,
@@ -292,7 +354,7 @@ export async function scanSupplierComparison({
       marginPolicy,
       shippingMethod: shippingMethod || 'cheapest available'
     },
-    note: 'Winner uses the lowest eligible risk-adjusted single-item supplier estimate in USD. Scans are planning-only and never submit an order or change live fulfillment.',
+    note: 'Winner uses the lowest eligible risk-adjusted single-item supplier estimate in USD across Sensaria, Prodigi, PrintShrimp, Printify and Gelato. Artelo remains visible but is not scored for the current product families. Scans are planning-only and never submit an order or change live fulfillment.',
     countryMeta,
     rows
   };
