@@ -622,6 +622,7 @@ export const __test = {
   productSizeInches,
   productCodeForItem,
   matchingGelatoFormatAttributes,
+  parseShipmentPrice,
   sizeCompatible,
   rowKey
 };
