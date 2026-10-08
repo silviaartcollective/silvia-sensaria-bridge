@@ -6,7 +6,7 @@ import { renderOrdersPage } from '../src/orders-page.mjs';
 import { renderCustomOrdersPage } from '../src/custom-orders-page.mjs';
 
 const expected = [
-  'Dashboard', 'Product Creator', 'Gelato → Silvia Converter', 'Shipping Profile',
+  'Dashboard','System Readiness', 'Product Creator', 'Gelato → Silvia Converter', 'Shipping Profile',
   'Pricing & Shipping', 'Supplier Comparison', 'Custom Size Lookup', 'Custom Orders',
   'Description Updater', 'Order Tracking', 'Test Order', 'All Orders',
   'Artwork Library', 'Product SKUs', 'Etsy Status', 'R2 Status', 'Log out'

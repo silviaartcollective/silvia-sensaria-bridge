@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { renderDashboard } from './dashboard.mjs';
+import { renderReadinessPage } from './readiness-page.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
 import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment } from './order-tracking.mjs';
@@ -2660,6 +2661,11 @@ const server = http.createServer(async (req, res) => {
         process.env.R2_BUCKET_NAME
       )
     }));
+  }
+
+  if (req.method === 'GET' && url.pathname === '/readiness') {
+    if (!requireAdminPage(req, res, '/readiness')) return;
+    return sendHtml(res, 200, renderReadinessPage('Silvia Art Collective'));
   }
 
   if (req.method === 'GET' && url.pathname === '/api/status') {

@@ -1,6 +1,7 @@
 // One source of truth for the Silvia administrator sidebar.
 export const ADMIN_LINKS = Object.freeze([
   { href:'/', label:'Dashboard' },
+  { href:'/readiness', label:'System Readiness' },
   { href:'/product-creator', label:'Product Creator' },
   { href:'/listing-converter', label:'Gelato → Silvia Converter' },
   { href:'/shipping-profile', label:'Shipping Profile' },
