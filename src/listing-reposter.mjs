@@ -233,6 +233,7 @@ export async function prepareReplacement(session,sourceId,input) {
     let managedArtworkId=null;
     let stagedArtwork=null;
     if(seo.artworkMode==='replace') {
+      if(seo.mockupMode!=='replace')throw new Error('Upload new Etsy mockups for the new artwork before reposting.');
       managedArtworkId=artworkIdFromInventory(inventory);
       stagedArtwork=await assertArtworkRevisionReady(shop,id,managedArtworkId);
       const active=await loadArtworkManifest(managedArtworkId);

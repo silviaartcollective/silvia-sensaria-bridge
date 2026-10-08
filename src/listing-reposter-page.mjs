@@ -179,6 +179,7 @@ async function prepare(){
  const id=selected.listing.listing_id,p=values();
  if(![2,3].includes(p.confirmedRenewals))throw Error('Confirm the actual renewal count.');
  if(p.artworkMode==='replace'){
+  if(p.mockupMode!=='replace')throw Error('Upload new Etsy mockups so listing photos match the replacement artwork.');
   await cropProgress();
   if(!cropState?.ready)throw Error('PC cropper has not finished and verified all production files.');
  }
@@ -216,7 +217,11 @@ $('prepare').addEventListener('click',()=>run(prepare));
 $('finalize').addEventListener('click',()=>run(finalize));
 $('close').addEventListener('click',()=>$('editor').classList.add('hidden'));
 $('mockup-mode').addEventListener('change',()=>$('upload-wrap').classList.toggle('hidden',$('mockup-mode').value!=='replace'));
-$('artwork-mode').addEventListener('change',()=>$('artwork-upload-wrap').classList.toggle('hidden',$('artwork-mode').value!=='replace'));
+$('artwork-mode').addEventListener('change',()=>{
+  const isNew=$('artwork-mode').value==='replace';
+  $('artwork-upload-wrap').classList.toggle('hidden',!isNew);
+  if(isNew){$('mockup-mode').value='replace';$('upload-wrap').classList.remove('hidden');}
+ });
 $('crop-start').addEventListener('click',()=>run(uploadAndCrop));
 $('crop-check').addEventListener('click',()=>run(cropProgress));
 $('refresh-worker').addEventListener('click',()=>run(workerStatus));
