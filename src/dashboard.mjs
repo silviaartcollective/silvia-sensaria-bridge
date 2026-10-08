@@ -59,6 +59,7 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
     <a class="nav" href="/compare">Supplier Comparison</a>
     <a class="nav" href="/custom-size">Custom Size Lookup</a>
     <a class="nav" href="/description-updater">Description Updater</a>
+    <a class="nav" href="/tracking">Order Tracking</a>
     <a class="nav" href="/test-order">Test Order</a>
     <a class="nav" href="/#orders">Orders</a>
     <a class="nav" href="/#artworks">Artwork Library</a>
