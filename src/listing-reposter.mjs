@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import { getShopListings, getListingInventory, updateListingInventory, createDraftListing, updateListing, uploadListingImage, getListingProperties, updateListingProperty } from './etsy.mjs';
 import { getEtsyListingImages } from './mockup-sorter.mjs';
 import { getJsonObject, putJsonObject, getArtworkObject, artworkObjectExists, signedArtworkUploadUrl } from './r2.mjs';
+import { artworkIdFromInventory, getArtworkRevisionStatus, assertArtworkRevisionReady, activateArtworkRevision } from './artwork-revision.mjs';
+import { loadArtworkManifest } from './artwork-storage.mjs';
 
 const ETSY='https://api.etsy.com/v3/application';
 const DAY=86400;
@@ -106,7 +108,13 @@ export async function getDetails(session,id) {
   let replacement=null;
   try {replacement=await getJsonObject(key(session.shop.shop_id,id));}
   catch(e){if(e?.$metadata?.httpStatusCode!==404&&!['NoSuchKey','NotFound'].includes(e?.name))throw e;}
-  return {listing,images:images.map(x=>({id:x.listing_image_id,url:x.url_570xN||x.url_fullxfull,rank:x.rank,alt:x.alt_text||''})),
+  let managedArtworkId=null,artworkRevision=null;
+  try {
+    const inventory=await getListingInventory({listingId:id,...args(session)});
+    managedArtworkId=artworkIdFromInventory(inventory);
+    artworkRevision=await getArtworkRevisionStatus(session.shop.shop_id,id);
+  }catch{ /* Gelato legacy and unconverted listings do not have managed artwork IDs. */ }
+  return {listing,managedArtworkId,artworkRevision,images:images.map(x=>({id:x.listing_image_id,url:x.url_570xN||x.url_fullxfull,rank:x.rank,alt:x.alt_text||''})),
     videosCount:videos.length,variationImagesCount:variations.length,assessment:age,
     replacement:replacement?{draftId:replacement.draftId,status:replacement.status,sourceId:replacement.sourceId,
       preparedAt:replacement.preparedAt,error:replacement.error||null,seo:replacement.seo||null}:null};
@@ -147,7 +155,8 @@ export function validateSeo(input) {
   if(![2,3].includes(Number(input?.confirmedRenewals)))
     throw new Error('Confirm 2 or 3 renewals from Etsy Shop Manager before reposting.');
   if(!['keep','replace'].includes(input?.mockupMode))throw new Error('Select keep or replace mockups.');
-  return {title,description,tags,confirmedRenewals:Number(input.confirmedRenewals),mockupMode:input.mockupMode};
+  if(!['keep','replace'].includes(input?.artworkMode||'keep'))throw new Error('Select keep or replace artwork.');
+  return {title,description,tags,confirmedRenewals:Number(input.confirmedRenewals),mockupMode:input.mockupMode,artworkMode:input.artworkMode||'keep'};
 }
 function listingCopy(listing,seo,inventory) {
   const enabled=(inventory.products||[]).flatMap(p=>p.offerings||[]).filter(o=>o.is_enabled);
@@ -221,6 +230,14 @@ export async function prepareReplacement(session,sourceId,input) {
       getEtsyListingImages({listingId:id,...args(session)}),
       getListingVideos(session,id),getVariationImages(session,id)
     ]);
+    const managedArtworkId=artworkIdFromInventory(inventory);
+    let stagedArtwork=null;
+    if(seo.artworkMode==='replace') {
+      stagedArtwork=await assertArtworkRevisionReady(shop,id,managedArtworkId);
+      const active=await loadArtworkManifest(managedArtworkId);
+      if(active.master.key!==stagedArtwork.record.previousMasterKey)
+        throw new Error('Artwork source changed since the replacement crop was queued.');
+    }
     const images=seo.mockupMode==='keep'?originalImages:
       (Array.isArray(input.mockups)?input.mockups:[]);
     if(!images.length||images.length>MAX_IMAGES)throw new Error('A replacement requires 1–10 mockups.');
@@ -231,7 +248,8 @@ export async function prepareReplacement(session,sourceId,input) {
     try{record=await getJsonObject(key(shop,id));}
     catch(e){if(e?.$metadata?.httpStatusCode!==404&&!['NoSuchKey','NotFound'].includes(e?.name))throw e;}
     const fingerprint=crypto.createHash('sha256').update(JSON.stringify({
-      title:seo.title,description:seo.description,tags:seo.tags,mode:seo.mockupMode,
+      title:seo.title,description:seo.description,tags:seo.tags,mode:seo.mockupMode,artworkMode:seo.artworkMode,
+      artworkRevision:stagedArtwork?.record.revision||'',
       keys:seo.mockupMode==='replace'?images.map(x=>x.key):images.map(x=>x.listing_image_id)
     })).digest('hex');
     if(record && record.status==='completed')throw new Error('This listing has already been reposted.');
@@ -246,7 +264,11 @@ export async function prepareReplacement(session,sourceId,input) {
       draftId=Number(draft.listing_id);
       if(!Number.isSafeInteger(draftId)||draftId<=0)throw new Error('Etsy draft creation returned no listing ID.');
       record={sourceId:id,draftId,shopId:String(shop),fingerprint,
-        status:'building',preparedAt:now(),seo:{title:seo.title,description:seo.description,tags:seo.tags,mockupMode:seo.mockupMode},imageMap:{},completedImages:[],videoIds:[]};
+        status:'building',preparedAt:now(),
+        artworkId:managedArtworkId,artworkMode:seo.artworkMode,
+        artworkRevision:stagedArtwork?.record.revision||null,
+        seo:{title:seo.title,description:seo.description,tags:seo.tags,mockupMode:seo.mockupMode,artworkMode:seo.artworkMode},
+        imageMap:{},completedImages:[],videoIds:[]};
       await putJsonObject(key(shop,id),record);
     }
     // Etsy does not support atomic copying; all operations are resumable and the original stays live.
@@ -331,6 +353,12 @@ export async function finalizeReplacement(session,sourceId,confirmation) {
     if(original.state!=='active' && record.status!=='published')
       throw new Error('Original listing is no longer active. Review manually.');
     if(await listingSalesCount(session,id)!==0)throw new Error('Original listing has sales since preparation. Stop and review.');
+    if(record.artworkMode==='replace'){
+      if(!record.artworkId||!record.artworkRevision)throw new Error('Replacement artwork metadata missing.');
+      const revised=await assertArtworkRevisionReady(shop,id,record.artworkId);
+      if(revised.record.revision!==record.artworkRevision)
+        throw new Error('Artwork revision changed since draft creation.');
+    }
     const newListing=await getListing(session,record.draftId);
     const [originalInventory,draftInventory,draftImages,sourceImages,draftVideos,sourceVideos]=await Promise.all([
       getListingInventory({listingId:id,...args(session)}),
@@ -357,6 +385,13 @@ export async function finalizeReplacement(session,sourceId,confirmation) {
       const online=await getListing(session,record.draftId);
       if(online.state!=='active')throw new Error('Replacement could not be verified active. Original remains unchanged.');
       record.status='published';record.publishedAt=now();
+      await putJsonObject(key(shop,id),record);
+    }
+    if(record.artworkMode==='replace'){
+      // Commit the already-verified new master and production ratios together.
+      // Old master and crop files are archived by key and never overwritten.
+      await activateArtworkRevision(shop,id,record.artworkId);
+      record.artworkActivatedAt=record.artworkActivatedAt||now();
       await putJsonObject(key(shop,id),record);
     }
     if(original.state==='active'){
