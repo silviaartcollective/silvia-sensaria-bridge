@@ -32,8 +32,10 @@ export function renderAdminSidebar(activePath='/') {
   const active=String(activePath);
   const nav=ADMIN_LINKS.map(({href,label}) => {
     const selected=href===active;
+    const diagnostic=href==='/etsy/status'||href==='/r2/status';
     return '<a class="nav shared-nav-link'+(selected?' active is-current':'')+
       '" href="'+escapeHtml(href)+'"'+(selected?' aria-current="page"':'')+
+      (diagnostic?' target="_blank" rel="noopener noreferrer"':'')+
       '>'+escapeHtml(label)+'</a>';
   }).join('\n');
   return '<aside class="shared-admin-sidebar app-sidebar" aria-label="Admin navigation">'+
