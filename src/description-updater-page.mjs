@@ -23,6 +23,7 @@ textarea{width:100%;min-height:135px;padding:12px;border:1px solid var(--line);b
 <a class="nav" href="/pricing">Pricing & Shipping</a><a class="nav" href="/compare">Supplier Comparison</a>
 <a class="nav" href="/custom-size">Custom Size Lookup</a>
 <a class="nav active" href="/description-updater">Description Updater</a>
+    <a class="nav" href="/tracking">Order Tracking</a>
 <a class="nav" href="/test-order">Test Order</a></nav><div class="foot">Silvia Art Collective<br>Private listing editor</div></aside>
 <main><h1>Description Updater</h1>
 <p>Find and replace any text in your existing Etsy listing descriptions. Preview every matching listing and approve exactly which ones to update.</p>
