@@ -33,7 +33,7 @@ button:disabled{opacity:.6;cursor:wait}
 </style></head><body><div class="shell"><aside><nav><a class="nav active" href="/readiness">System Readiness</a></nav></aside>
 <main><h1>System readiness</h1><p class="sub">${shop} · Live connection diagnostics and order workflow checks.</p>
 <div class="toolbar"><button class="primary" id="refresh">Refresh readiness</button>
-<button id="test-all">Test all supplier connections</button><a class="btn" href="/orders">All Orders</a>
+<button id="test-all">Run supplier diagnostics</button><a class="btn" href="/orders">All Orders</a>
 <a class="btn" href="/custom-orders">Custom Orders</a><a class="btn" href="/test-order">Dry-run Test Order</a></div>
 <p id="page-status" role="status">Checking systems…</p>
 <div class="columns">
@@ -89,7 +89,7 @@ button:disabled{opacity:.6;cursor:wait}
    try{const data=await request('/api/providers/test',{method:'POST',headers:{'content-type':'application/json'},
      body:JSON.stringify({provider:name.toLowerCase()})});
      badge.className='result '+(data.ok===true?'':'warn');
-     badge.textContent=data.ok===true?'Connected':'Needs attention';
+     badge.textContent=data.ok===true?(name==='Sensaria'?'Manual CSV (no API)':'Connected'):'Needs attention';
      if(data.error||data.reason)badge.title=String(data.error||data.reason);
    }catch(error){badge.className='result error';badge.textContent='Failed';badge.title=error.message;}
    finally{button.disabled=false;}
