@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { getJsonObject, putJsonObject } from './r2.mjs';
+import { getJsonObject, putJsonObject, isMissingR2Object } from './r2.mjs';
 import { FULFILLMENT_RATIOS } from './artwork-ratios.mjs';
 
 const DEFAULT_STORE_KEY = 'state/crop-jobs.json';
@@ -44,16 +44,15 @@ function normalizeStore(raw) {
   };
 }
 
-async function readStore() {
+export async function readCropJobStore(readObject=getJsonObject) {
   try {
-    return normalizeStore(await getJsonObject(storeKey()));
+    return normalizeStore(await readObject(storeKey()));
   } catch (error) {
-    if (/not.?found|404|nosuchkey/i.test(String(error?.message || error))) {
-      return { version: 1, jobs: [] };
-    }
+    if (isMissingR2Object(error)) return { version: 1, jobs: [] };
     throw error;
   }
 }
+async function readStore() { return readCropJobStore(); }
 
 async function writeStore(store) {
   const jobs = [...(store.jobs || [])]

@@ -2536,6 +2536,23 @@ const server = http.createServer(async (req, res) => {
 
       const converterMap = await loadListingConverterMap();
       const existing = converterMap.listings?.[String(listingId)];
+      if(existing?.status==='reserved' && existing.artworkId){
+        // Interrupted conversion: reuse saved manifest and artwork ID, not a new one.
+        const previous=await loadArtworkManifest(existing.artworkId);
+        if(Number(previous.sourceEtsyListingId)!==listingId)
+          throw new Error('Prior artwork reservation belongs to another Etsy listing.');
+        if(String(previous.master?.originalFilename||'')!==String(body.master.filename||'') ||
+           Number(previous.master?.size||0)!==Number(body.master.size||0))
+          return sendJson(res,409,{ok:false,existingArtworkId:existing.artworkId,
+            error:'Listing is already reserved as '+existing.artworkId+
+              ' with another file. Select the original master to resume; no new ID was created.'});
+        const uploadAlreadyPresent=await artworkObjectExists(previous.master.key);
+        return sendJson(res,200,{ok:true,resumed:true,listingId,
+          artworkId:existing.artworkId,orientation:previous.orientation,
+          uploadAlreadyPresent,cropJobId:previous.cropWorkerJobId||null,
+          upload:{key:previous.master.key,contentType:previous.master.contentType,
+            uploadUrl:await signedArtworkUploadUrl(previous.master.key,previous.master.contentType)}});
+      }
       if (existing?.status === 'converted') {
         return sendJson(res, 409, {
           ok: false,

@@ -123,6 +123,16 @@ export async function downloadArtworkObjectToFile(key, filePath) {
   };
 }
 
+export function isMissingR2Object(error) {
+  // New Cloudflare R2 buckets report S3 NoSuchKey with this exact message:
+  // "The specified key does not exist." Missing queue data means empty queue.
+  const status=Number(error?.$metadata?.httpStatusCode||0);
+  const code=String(error?.name||error?.Code||error?.code||'').toLowerCase();
+  const message=String(error?.message||'').toLowerCase();
+  return status===404 || ['nosuchkey','notfound','nosuchobject'].includes(code) ||
+    /the specified key does not exist|(?:key|object) does not exist|not.?found|no such key/i.test(message);
+}
+
 export async function artworkObjectExists(key) {
   const config = r2Config();
   const client = r2Client();
@@ -130,8 +140,7 @@ export async function artworkObjectExists(key) {
     await client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: key }));
     return true;
   } catch (error) {
-    const code = error?.$metadata?.httpStatusCode;
-    if (code === 404 || error?.name === 'NotFound') return false;
+    if (isMissingR2Object(error)) return false;
     throw error;
   }
 }
