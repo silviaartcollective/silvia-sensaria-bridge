@@ -23,6 +23,9 @@ th,td{padding:11px 9px;border-bottom:1px solid var(--line);text-align:left;verti
 @media(max-width:800px){.shell{grid-template-columns:1fr}aside{display:none}main{padding:22px 13px}.formgrid{grid-template-columns:1fr}.imageGrid{grid-template-columns:repeat(3,1fr)}h1{font-size:30px}}
 </style></head><body><div class="shell"><aside><nav><a class="nav active" href="/listing-reposter">Listing Reposter</a></nav></aside>
 <main><div class="flex"><div><h1>Listing Reposter</h1><p class="sub">__SHOP__ · Safely refresh zero-sale listings while retaining their product details.</p></div><a class="button" href="/">Dashboard</a></div>
+<div class="card flex" style="gap:14px"><div><strong>PC Crop Worker</strong>
+<p id="crop-worker-status" class="muted">Checking connection…</p></div>
+<button id="refresh-worker">Check worker</button></div>
 <div class="alert"><strong>Renewals are estimates.</strong> Etsy verifies sales, but does not expose an exact renewal counter. Candidates are listings approximately 240–479 days old. Confirm 2–3 actual renewals in Etsy Shop Manager. Etsy listing fees may apply. The original stays active until a new listing has been published and verified.</div>
 <div class="card"><div class="flex"><h2>Repost candidates</h2><div class="actions"><button id="scan" class="primary">Scan listings</button>
 <input id="lookup" placeholder="Etsy listing ID" style="width:160px"><button id="by-id">Open listing</button></div></div>
@@ -38,6 +41,20 @@ th,td{padding:11px 9px;border-bottom:1px solid var(--line);text-align:left;verti
 <div class="formgrid"><div><label for="mockup-mode">Mockup selection</label><select id="mockup-mode">
 <option value="keep">Keep original Etsy mockups</option><option value="replace">Replace with new JPEG mockups</option></select></div>
 <div id="upload-wrap" class="hidden"><label for="mockups">New JPEGs (1–10, each max 20MB)</label><input id="mockups" type="file" accept="image/jpeg" multiple></div></div>
+<div class="card"><h2>Artwork & production files</h2>
+<p class="muted">Both choices keep the exact same artwork ID and original SAC/JAC variant SKUs. Replacing the artwork updates the stored source and fulfillment ratio files only after the PC cropper completes and the new Etsy listing is verified.</p>
+<label for="artwork-mode">Artwork source</label>
+<select id="artwork-mode"><option value="keep">Keep existing artwork and production files</option>
+<option value="replace">Replace artwork source and re-crop for every size</option></select>
+<div id="artwork-upload-wrap" class="hidden">
+<label for="artwork-upload">New source artwork · JPG, PNG, WebP or TIFF (up to 200MB)</label>
+<input id="artwork-upload" type="file" accept="image/jpeg,image/png,image/webp,image/tiff">
+<div class="actions"><button id="crop-start" type="button">Upload artwork & queue PC crops</button>
+<button id="crop-check" type="button">Refresh crop progress</button></div>
+<p id="crop-progress" class="muted">No new artwork queued.</p>
+<div class="alert">If the artwork changes, update your mockups so the Etsy photos accurately show the new design. The old production files are preserved as a backup.</div>
+</div>
+</div>
 <label for="renewals">Verify actual renewals in Etsy before reposting</label>
 <select id="renewals"><option value="">Choose verified count…</option><option value="2">2 renewals</option><option value="3">3 renewals</option></select>
 <div class="actions"><button class="primary" id="prepare">Prepare replacement draft</button>
@@ -57,6 +74,7 @@ const api=async(path,body)=>{
  return d;
 };
 let selected=null,busy=false;
+let cropState=null;
 const message=(t,error=false)=>{$('message').textContent=String(t);$('message').className='message'+(error?' error':'');};
 async function run(fn){
  if(busy)return;busy=true;for(const b of document.querySelectorAll('button'))b.disabled=true;
@@ -81,6 +99,43 @@ async function scan(){
   (d.limitReached?' Scan limit reached; some listings may not be shown.':'');
  message('Scan complete. Only listings with verified zero sales can be prepared.');
 }
+async function workerStatus(){
+ try{
+  const d=await api('/api/crop-worker/status');const w=d.worker||{};
+  $('crop-worker-status').textContent=w.online?
+   (w.busy?'Connected · processing '+(w.jobId||'crop job'):'Connected · idle')+
+   ' · '+(w.workerId||'PC worker'):
+   (w.configured?'Offline · Start worker/start-worker.cmd on your PC.':'Not configured · Set CROP_WORKER_TOKEN in Render first.');
+  $('crop-worker-status').style.color=w.online?'#3e7652':'#aa6938';
+ }catch(e){$('crop-worker-status').textContent='Worker status unavailable: '+e.message;}
+}
+async function cropProgress(){
+ if(!selected)return;
+ try {
+  const d=await api('/api/reposter/'+selected.listing.listing_id+'/artwork/status'),r=d.revision||{};
+  cropState=r;
+  $('crop-progress').textContent=!r.exists?'No replacement source uploaded.':
+   'Artwork '+r.artworkId+' · '+r.status+' · '+(r.progress||0)+'% · '+
+   (r.message||'')+(r.upscaledRatios?.length?' · Upscaled: '+r.upscaledRatios.join(', '):'');
+  if(r.ready)$('crop-progress').textContent+=' · Verified: ready for draft';
+ }catch(e){$('crop-progress').textContent='Crop check failed: '+e.message;}
+}
+async function uploadAndCrop(){
+ if(!selected?.managedArtworkId)throw Error('This listing needs converted SAC/JAC SKUs before replacing its production artwork.');
+ const file=$('artwork-upload').files?.[0];
+ if(!file)throw Error('Select your new master artwork first.');
+ if(file.size>200*1024*1024 || file.size<1024)throw Error('Master must be 1KB–200MB.');
+ const id=selected.listing.listing_id;
+ message('Reserving a new immutable artwork revision. Existing source stays unchanged.');
+ const reservation=await api('/api/reposter/'+id+'/artwork/reserve',{
+  file:{name:file.name,size:file.size,type:file.type}
+ });
+ const up=await fetch(reservation.uploadUrl,{method:'PUT',headers:{'content-type':file.type},body:file});
+ if(!up.ok)throw Error('Master artwork upload failed (HTTP '+up.status+'). Retry the same upload reservation rather than creating another listing.');
+ const result=await api('/api/reposter/'+id+'/artwork/crop',{});
+ message('Master stored. PC crop job '+result.job.id+' is queued. Keep the PC worker running; existing artwork is unchanged.');
+ await cropProgress();await workerStatus();
+}
 async function open(id){
  const d=await api('/api/reposter/'+encodeURIComponent(id));selected=d;
  $('editor').classList.remove('hidden');
@@ -90,6 +145,7 @@ async function open(id){
  $('title').value=d.listing.title||'';$('tags').value=(d.listing.tags||[]).join(', ');
  $('description').value=d.listing.description||'';$('renewals').value='';
  $('mockup-mode').value='keep';$('upload-wrap').classList.add('hidden');$('mockups').value='';
+ $('artwork-mode').value='keep';$('artwork-upload-wrap').classList.add('hidden');
  const root=$('photos');root.replaceChildren();
  for(const p of d.images){const img=document.createElement('img');img.src=p.url;img.alt=p.alt||'Listing photo';img.loading='lazy';root.append(img);}
  const draft=d.replacement;
@@ -100,20 +156,32 @@ async function open(id){
  if(draft?.draftId){$('new-link').href='https://www.etsy.com/your/shops/me/tools/listings';
  $('new-link').textContent='Open Etsy Shop Manager · Draft #'+draft.draftId;}
  $('prepare').disabled=!!draft;
+ $('artwork-mode').disabled=!!draft;
+ if(!d.managedArtworkId){
+  $('artwork-mode').querySelector('option[value="replace"]').disabled=true;
+ }else{$('artwork-mode').querySelector('option[value="replace"]').disabled=false;}
+ if(draft?.artworkMode==='replace'||draft?.seo?.artworkMode==='replace'){
+  $('artwork-mode').value='replace';$('artwork-upload-wrap').classList.remove('hidden');
+ }
  if(draft?.seo){$('title').value=draft.seo.title||'';
  $('description').value=draft.seo.description||'';
  $('tags').value=(draft.seo.tags||[]).join(', ');}
  if(d.assessment.status!=='review_renewals')message('Not eligible: this listing needs zero verified sales and an estimated 2–3 renewal cycles.',true);
  else message('Verify renewal count, update SEO or mockups, then prepare the new draft.');
+ await cropProgress();await workerStatus();
  $('editor').scrollIntoView({block:'start',behavior:'smooth'});
 }
 function values(){return {title:$('title').value.trim(),description:$('description').value.trim(),
  tags:$('tags').value.split(',').map(v=>v.trim()).filter(Boolean),
- confirmedRenewals:Number($('renewals').value),mockupMode:$('mockup-mode').value};}
+ confirmedRenewals:Number($('renewals').value),mockupMode:$('mockup-mode').value,artworkMode:$('artwork-mode').value};}
 async function prepare(){
  if(!selected)throw Error('Select a listing.');
  const id=selected.listing.listing_id,p=values();
  if(![2,3].includes(p.confirmedRenewals))throw Error('Confirm the actual renewal count.');
+ if(p.artworkMode==='replace'){
+  await cropProgress();
+  if(!cropState?.ready)throw Error('PC cropper has not finished and verified all production files.');
+ }
  p.mockups=[];
  if(p.mockupMode==='replace'){
  const files=[...$('mockups').files];
@@ -148,6 +216,12 @@ $('prepare').addEventListener('click',()=>run(prepare));
 $('finalize').addEventListener('click',()=>run(finalize));
 $('close').addEventListener('click',()=>$('editor').classList.add('hidden'));
 $('mockup-mode').addEventListener('change',()=>$('upload-wrap').classList.toggle('hidden',$('mockup-mode').value!=='replace'));
+$('artwork-mode').addEventListener('change',()=>$('artwork-upload-wrap').classList.toggle('hidden',$('artwork-mode').value!=='replace'));
+$('crop-start').addEventListener('click',()=>run(uploadAndCrop));
+$('crop-check').addEventListener('click',()=>run(cropProgress));
+$('refresh-worker').addEventListener('click',()=>run(workerStatus));
+workerStatus();
+setInterval(()=>{workerStatus();if(selected?.artworkRevision?.exists||cropState?.exists)cropProgress();},10000);
 })();
 </script></body></html>`.replaceAll('__SHOP__',e(shop));
 }

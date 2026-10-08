@@ -79,6 +79,10 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
     <div class="live"><span class="dot"></span> Service live</div>
   </div>
 
+  <div class="card" style="margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap">
+    <div><strong>PC Crop Worker</strong><div id="crop-worker-dashboard" class="section-sub">Checking worker connection…</div></div>
+    <a class="btn" href="/listing-reposter">Open Listing Reposter</a>
+  </div>
   <section class="cards">
     <div class="card">
       <div class="eyebrow">Etsy</div><div class="big" id="etsy-title">Checking…</div>
@@ -125,6 +129,19 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
 </div>
 <script>
 (async()=>{
+  async function checkCropWorker(){
+   const el=document.getElementById('crop-worker-dashboard');
+   try{const r=await fetch('/api/crop-worker/status',{cache:'no-store'}),d=await r.json();
+     if(!r.ok||!d.ok)throw Error('unavailable');
+     const w=d.worker||{};
+     el.textContent=w.online?(w.busy?'Connected · processing a crop job':'Connected · idle')+
+       ' · '+(w.workerId||'PC workstation') :
+       w.configured?'Offline · Start the PC crop worker':'Not configured · Set CROP_WORKER_TOKEN in Render';
+     el.style.color=w.online?'#477153':'#a46b3d';
+   }catch{el.textContent='Could not read crop worker status';}
+  }
+  await checkCropWorker();
+  setInterval(checkCropWorker,12000);
   const t=document.getElementById('etsy-title'),s=document.getElementById('etsy-status');
   try{const r=await fetch('/etsy/status',{cache:'no-store'}),d=await r.json();if(r.ok&&d.connected){t.textContent=d.shopName||'Connected';s.className='status';s.innerHTML='<span class="s-dot"></span><span>Connected · Shop ID '+String(d.shopId||'')+'</span>'}else throw new Error()}catch{t.textContent='Needs attention';s.className='status warn';s.innerHTML='<span class="s-dot"></span><span>Etsy connection check failed</span>'}
 
