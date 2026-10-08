@@ -3,6 +3,9 @@ import { r2Client, r2Config, getJsonObject, putJsonObject } from './r2.mjs';
 import { getShopReceipt, createReceiptShipment } from './etsy.mjs';
 import { getGelatoOrderTracking } from './gelato.mjs';
 import { getPrintifyOrderTracking } from './printify.mjs';
+import { getProdigiOrder } from './prodigi.mjs';
+import { getArteloOrder } from './artelo.mjs';
+import { getPrintShrimpOrder } from './printshrimp.mjs';
 
 const base = 'tracking/etsy/';
 const SUPPLIERS = new Set(['sensaria','gelato','printify','prodigi','artelo','printshrimp']);
@@ -235,6 +238,40 @@ export function supplierShipments(supplier,payload) {
       trackingNumber:s.number,trackingUrl:s.url,carrier:text(s.carrier),
       shipmentId:text(s.id||''),status:'shipped',source:'printify_api'}))};
   }
+
+  if(supplier==='prodigi'){
+    const order=payload?.order||payload;
+    const rows=Array.isArray(order?.shipments)?order.shipments:[];
+    return {status:text(order?.status?.stage||'unknown').toLowerCase(),
+      shipments:rows.filter(s=>text(s?.status).toLowerCase()==='shipped'&&s?.tracking?.number)
+        .map(s=>({trackingNumber:s.tracking.number,trackingUrl:s.tracking.url||'',
+          carrier:text(typeof s.carrier==='string'?s.carrier:s.carrier?.name||s.carrier?.code)||
+            suggestCarrier(s.tracking.url),
+          shipmentId:text(s.id),status:'shipped',source:'prodigi_api'}))};
+  }
+  if(supplier==='artelo'){
+    const order=payload?.order||payload;
+    const state=text(order?.shippingStatus||order?.status).toLowerCase();
+    if(!['shipped','delivered'].includes(state))return {status:state||'unknown',shipments:[]};
+    return {status:state,
+      shipments:(Array.isArray(order?.shipments)?order.shipments:[])
+        .filter(s=>s.trackingNumber)
+        .map(s=>({trackingNumber:s.trackingNumber,trackingUrl:s.trackingUrl||'',
+          carrier:text(s.carrierCode||s.carrier)||suggestCarrier(s.trackingUrl),
+          shipmentId:text(s.id),status:'shipped',source:'artelo_api'}))};
+  }
+  if(supplier==='printshrimp'){
+    const order=payload?.order||payload?.data?.order||payload;
+    const state=text(order?.shipping_status||order?.shippingStatus||order?.status).toLowerCase();
+    if(!['shipped','delivered','fulfilled'].includes(state))
+      return {status:state||'unknown',shipments:[]};
+    // No verified PrintShrimp response example yet: require an explicit shipped
+    // state AND shipment-level tracking to avoid false shipment notifications.
+    const rows=Array.isArray(order?.shipments)?order.shipments:[];
+    return {status:state,shipments:rows.filter(s=>s?.tracking_number && s?.carrier)
+      .map(s=>({trackingNumber:s.tracking_number,trackingUrl:s.tracking_url||'',
+        carrier:text(s.carrier),shipmentId:text(s.id),status:'shipped',source:'printshrimp_api'}))};
+  }
   return {status:'api_adapter_pending',shipments:[]};
 }
 export async function checkSupplierTracking(session,id) {
@@ -244,6 +281,9 @@ export async function checkSupplierTracking(session,id) {
   let fetched;
   if(doc.supplier==='gelato')fetched=await getGelatoOrderTracking(doc.supplierOrderId);
   else if(doc.supplier==='printify')fetched=await getPrintifyOrderTracking(doc.supplierOrderId);
+  else if(doc.supplier==='prodigi')fetched=await getProdigiOrder(doc.supplierOrderId);
+  else if(doc.supplier==='artelo')fetched=await getArteloOrder(doc.supplierOrderId);
+  else if(doc.supplier==='printshrimp')fetched=await getPrintShrimpOrder({orderId:doc.supplierOrderId});
   else throw new Error('This provider needs a CSV upload or a tracking adapter. API lookup is not active yet.');
   const normalized=supplierShipments(doc.supplier,fetched);
   const saved=[];

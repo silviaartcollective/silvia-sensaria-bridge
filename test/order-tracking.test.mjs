@@ -89,3 +89,27 @@ test('shipment submission is disabled unless explicitly configured',async()=>{
  try{await assert.rejects(()=>sendStagedShipmentToEtsy({},{}),/disabled/);}
  finally{if(current===undefined)delete process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;else process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED=current;}
 });
+
+test('Prodigi order lookup only queues shipments explicitly shipped',()=>{
+ const result=supplierShipments('prodigi',{order:{status:{stage:'Complete'},shipments:[
+  {id:'s1',status:'Processing',tracking:{number:'PENDING123',url:'https://www.ups.com'}},
+  {id:'s2',status:'Shipped',carrier:'UPS',tracking:{number:'1Z9999ABCD',url:'https://www.ups.com'}}
+ ]}});
+ assert.equal(result.shipments.length,1);
+ assert.equal(result.shipments[0].trackingNumber,'1Z9999ABCD');
+ assert.equal(result.shipments[0].carrier,'UPS');
+});
+test('Artelo staging requires the order itself to be marked shipped',()=>{
+ const shipment={trackingNumber:'TRACKABC123',carrierCode:'FedEx',trackingUrl:'https://www.fedex.com'};
+ assert.equal(supplierShipments('artelo',{shippingStatus:'Packaging',shipments:[shipment]}).shipments.length,0);
+ const shipped=supplierShipments('artelo',{shippingStatus:'Shipped',shipments:[shipment]});
+ assert.equal(shipped.shipments.length,1);
+ assert.equal(shipped.shipments[0].carrier,'FedEx');
+});
+test('PrintShrimp needs explicit shipment-level tracking and shipped status',()=>{
+ assert.equal(supplierShipments('printshrimp',{status:'processing',shipments:[
+ {tracking_number:'XYZ12345',carrier:'UPS'}]}).shipments.length,0);
+ assert.equal(supplierShipments('printshrimp',{status:'shipped',shipments:[
+ {tracking_number:'XYZ12345',carrier:'UPS'}]}).shipments.length,1);
+ assert.equal(supplierShipments('printshrimp',{status:'shipped',tracking_number:'XYZ12345'}).shipments.length,0);
+});
