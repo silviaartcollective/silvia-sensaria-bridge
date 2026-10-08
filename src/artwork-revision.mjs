@@ -43,7 +43,16 @@ export async function reserveArtworkRevision({shopId,listingId,inventory,file}){
  const id=listId(listingId),artworkId=artworkIdFromInventory(inventory);
  const manifest=await loadArtworkManifest(artworkId);
  if(manifest?.status!=='ready'||!manifest.master?.key)throw Error('Artwork master is not ready in R2.');
- if(await optionalRecord(shopId,id))throw Error('An artwork revision already exists for this listing. Continue its existing crop job.');
+ const previous=await optionalRecord(shopId,id);
+ if(previous){
+  if(previous.status==='awaiting_upload' && !previous.jobId &&
+     previous.filename===String(file?.name).slice(0,180) && previous.size===Number(file?.size)){
+    return {artworkId:previous.artworkId,revision:previous.revision,
+      masterKey:previous.masterKey,orientation:previous.orientation,resumed:true,
+      uploadUrl:await signedArtworkUploadUrl(previous.masterKey,previous.contentType,45*60)};
+  }
+  throw Error('An artwork revision already exists. Continue or review the existing crop job.');
+ }
  const size=Number(file?.size||0), ext=String(file?.name||'').toLowerCase().match(/\.(jpg|jpeg|png|webp|tif|tiff)$/)?.[1];
  if(!ext)throw Error('Artwork source must be JPG, PNG, WebP, or TIFF.');
  if(!Number.isSafeInteger(size)||size<1024||size>200*1024*1024)throw Error('Master must be 1KB–200MB.');

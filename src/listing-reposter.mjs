@@ -230,9 +230,10 @@ export async function prepareReplacement(session,sourceId,input) {
       getEtsyListingImages({listingId:id,...args(session)}),
       getListingVideos(session,id),getVariationImages(session,id)
     ]);
-    const managedArtworkId=artworkIdFromInventory(inventory);
+    let managedArtworkId=null;
     let stagedArtwork=null;
     if(seo.artworkMode==='replace') {
+      managedArtworkId=artworkIdFromInventory(inventory);
       stagedArtwork=await assertArtworkRevisionReady(shop,id,managedArtworkId);
       const active=await loadArtworkManifest(managedArtworkId);
       if(active.master.key!==stagedArtwork.record.previousMasterKey)
