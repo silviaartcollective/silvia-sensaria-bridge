@@ -224,6 +224,13 @@ export async function testPrintifyConnection() {
   };
 }
 
+export async function getPrintifyOrderTracking(orderId, shopId) {
+  const id = String(orderId || '').trim();
+  if (!/^[a-zA-Z0-9_-]{5,100}$/.test(id)) throw new Error('Valid Printify order ID required');
+  const shop = await resolvePrintifyShopId(shopId);
+  return printifyRequest('/shops/' + encodeURIComponent(shop) + '/orders/' + encodeURIComponent(id) + '.json');
+}
+
 export async function getPrintifyOrders(shopId, { page = 1, limit = 10 } = {}) {
   const id = await resolvePrintifyShopId(shopId);
   const query = new URLSearchParams({ page: String(page), limit: String(limit) });
