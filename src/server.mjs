@@ -3,6 +3,10 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { renderDashboard } from './dashboard.mjs';
+import { renderTrackingPage } from './tracking-page.mjs';
+import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment } from './order-tracking.mjs';
+
+const TRACKING_SHOP_NAME="Silvia Art Collective";
 import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates } from './description-updater.mjs';
 
@@ -544,6 +548,17 @@ async function readJsonBody(req) {
   const raw = (await readRawBody(req)).toString('utf8');
   if (!raw) return {};
   return JSON.parse(raw);
+}
+
+
+async function readTrackingJsonBody(req) {
+  const chunks=[];let size=0;
+  for await (const chunk of req) {
+    size+=chunk.length;
+    if(size>1_800_000) throw new Error('Tracking request exceeds 1.8MB; split the CSV report.');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');
 }
 
 async function readFormBody(req) {
@@ -1852,6 +1867,83 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: String(error?.message || error) });
     }
+  }
+
+
+  // Tracking is review-only. These endpoints NEVER call Etsy's shipment creation API.
+  if (req.method === 'GET' && url.pathname === '/tracking') {
+    if (!requireAdminPage(req, res, '/tracking')) return;
+    return sendHtml(res, 200, renderTrackingPage(TRACKING_SHOP_NAME));
+  }
+  if (req.method === 'GET' && url.pathname === '/tracking-client.js') {
+    if (!requireAdminApi(req, res)) return;
+    const js=readFileSync(new URL('./tracking-client.js',import.meta.url),'utf8');
+    res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
+      'cache-control':'no-store','x-content-type-options':'nosniff'});
+    return res.end(js);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/tracking/orders') {
+    if (!requireAdminApi(req,res)) return;
+    try {
+      const session=await getEtsySession({forceRefresh:true});
+      return sendJson(res,200,{ok:true,...(await listTrackingRecords(session))});
+    }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
+  }
+  if (req.method === 'POST' && /^\/api\/tracking\/(link|check-supplier|check-etsy|csv-preview|csv-import)$/.test(url.pathname)) {
+    if (!requireAdminApi(req,res)) return;
+    const origin=String(req.headers.origin||'');
+    const host=String(req.headers.host||'');
+    if(!host || (origin && origin!==(String(req.headers['x-forwarded-proto']||'https')+'://'+host)) ||
+       req.headers['sec-fetch-site']==='cross-site')
+      return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+      return sendJson(res,415,{ok:false,error:'JSON request required.'});
+    let body;
+    try {body=await readTrackingJsonBody(req);}
+    catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
+    try {
+      const session=await getEtsySession({forceRefresh:true});
+      const scopes=new Set(String(session.scope||'').split(/\s+/).filter(Boolean));
+      if(!scopes.has('transactions_r')) return sendJson(res,403,{ok:false,error:'Etsy transactions_r access required.'});
+      if(url.pathname==='/api/tracking/link'){
+        const record=await linkTrackingOrder(session,body);
+        return sendJson(res,200,{ok:true,record});
+      }
+      if(url.pathname==='/api/tracking/check-supplier'){
+        return sendJson(res,200,{ok:true,...(await checkSupplierTracking(session,body.receiptId))});
+      }
+      if(url.pathname==='/api/tracking/check-etsy'){
+        const record=await checkEtsyShipmentStatus(session,body.receiptId);
+        return sendJson(res,200,{ok:true,record});
+      }
+      if(url.pathname==='/api/tracking/csv-preview'){
+        const docs=await listTrackingRecords(session);
+        return sendJson(res,200,{ok:true,...sensariaCandidates(body.csv,docs.records)});
+      }
+      if(url.pathname==='/api/tracking/csv-import'){
+        if(body.confirm!=='IMPORT TRACKING')throw new Error('Explicit CSV import confirmation required.');
+        const docs=await listTrackingRecords(session);
+        const {rows,skipped}=sensariaCandidates(body.csv,docs.records);
+        const chosen=Array.isArray(body.selected)?body.selected:[];
+        if(!chosen.length||chosen.length>30)throw new Error('Select 1–30 shipments per import.');
+        const unique=new Set(),errors=[];let saved=0,duplicates=0;
+        for(const selection of chosen){
+          const k=String(selection.receiptId)+'|'+String(selection.trackingNumber).toUpperCase();
+          if(unique.has(k)){errors.push({receiptId:selection.receiptId,error:'Duplicate selection'});continue;}
+          unique.add(k);
+          const item=rows.find(v=>v.receiptId===String(selection.receiptId)&&
+            v.trackingNumber.toUpperCase()===String(selection.trackingNumber).toUpperCase());
+          if(!item){errors.push({receiptId:selection.receiptId,error:'Shipment not in the verified preview.'});continue;}
+          if(!String(selection.carrier||'').trim()){errors.push({receiptId:item.receiptId,error:'Carrier not confirmed.'});continue;}
+          try{
+            const data=await stageShipment(session,{...item,carrier:String(selection.carrier).trim()});
+            if(data.duplicate)duplicates++;else saved++;
+          }catch(error){errors.push({receiptId:item.receiptId,error:String(error.message||error)});}
+        }
+        return sendJson(res,200,{ok:true,saved,duplicates,failed:errors.length,errors,
+          skippedRows:skipped.length,etsySubmitted:false});
+      }
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
   }
 
   if (req.method === 'GET' && url.pathname === '/custom-size') {
