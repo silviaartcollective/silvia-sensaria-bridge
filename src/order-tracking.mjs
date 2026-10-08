@@ -203,7 +203,9 @@ export function sensariaCandidates(csv, records) {
       errors.push({row:row.row,reason:'Sensaria order number does not match the linked order.'});continue;
     }
     const state=row.status.toLowerCase();
-    if(!/shipped|delivered|fulfilled/.test(state)&&!row.shippingDate){
+    const validShipmentDate=/^\d{4}-\d{2}-\d{2}/.test(row.shippingDate);
+    const shippedStatus=/^(shipped|delivered|fulfilled)$/.test(state);
+    if(!shippedStatus&&!validShipmentDate){
       errors.push({row:row.row,reason:'Not confirmed shipped; waiting for shipping date/status.'});continue;
     }
     const key=linked.receiptId+'|'+row.trackingNumber.toUpperCase();
