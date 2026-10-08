@@ -83,7 +83,7 @@ test('custom private order requires a linked SAC ID before approval', () => {
   const order = testOrder();
   delete order.review.plan.artworkId;
   assert.throws(() => validateApproval(order, accepted()), /Link a verified SAC artwork ID/);
-  assert.equal(validCustomArtworkId('jac0003'), 'SAC0003');
+  assert.equal(validCustomArtworkId('sac0003'), 'SAC0003');
   assert.throws(() => validCustomArtworkId(''), /valid Silvia artwork ID/);
   assert.throws(() => validCustomArtworkId('SAC../../3'), /valid Silvia artwork ID/);
 });
