@@ -45,7 +45,12 @@ export async function resolveProviderArtworkAsset({
   if (issue) throw new Error(`Artwork ${id} ${ratio} crop is unsafe: ${issue}`);
 
   const expectedKey = fulfillmentRatioObjectKey(id, ratio);
-  if (String(asset.key) !== expectedKey) {
+  const revisionExpected = /^artworks\/(?:SAC\d+)\/revisions\/[0-9a-f-]{36}\/fulfillment\/(?:2x3|3x4|4x5|11x14)\.jpg$/;
+  const revisionValid=revisionExpected.test(String(asset.key)) &&
+    String(asset.key).startsWith('artworks/'+id+'/') &&
+    String(asset.key).endsWith('/'+ratio+'.jpg') &&
+    String(asset.sourceMasterKey||'')===String(manifest.master.key);
+  if (String(asset.key) !== expectedKey && !revisionValid) {
     throw new Error(`Artwork ${id} ${ratio} crop is stored at an unexpected R2 key`);
   }
 

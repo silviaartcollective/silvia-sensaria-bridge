@@ -5,6 +5,10 @@ import sharp from 'sharp';
 import { renderDashboard } from './dashboard.mjs';
 import { renderReadinessPage } from './readiness-page.mjs';
 import { renderListingReposterPage } from './listing-reposter-page.mjs';
+import {
+  cropOutputKeyForJob, isStagedRevisionJob, reserveArtworkRevision,
+  startArtworkRevisionCrop, getArtworkRevisionStatus, artworkIdFromInventory
+} from './artwork-revision.mjs';
 import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement } from './listing-reposter.mjs';
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
@@ -1271,7 +1275,7 @@ const server = http.createServer(async (req, res) => {
       const uploadUrls = {};
       const targets = {};
       for (const ratio of job.ratios || FULFILLMENT_RATIOS) {
-        const key = fulfillmentRatioObjectKey(job.artworkId, ratio);
+        const key = cropOutputKeyForJob(job, ratio);
         targets[ratio] = cropTarget(ratio, job.orientation);
         uploadUrls[ratio] = await signedArtworkUploadUrl(key, 'image/jpeg', 2 * 60 * 60);
       }
@@ -1336,7 +1340,10 @@ const server = http.createServer(async (req, res) => {
         if (!currentJob) return sendJson(res, 404, { ok: false, error: 'Crop job not found' });
 
         const manifest = await loadArtworkManifest(currentJob.artworkId);
-        if (!manifest?.master?.key || manifest.master.key !== currentJob.masterKey) {
+        if (isStagedRevisionJob(currentJob)) {
+          if (!manifest?.master?.key || !(await artworkObjectExists(currentJob.masterKey)))
+            throw new Error('Staged replacement master missing while crop job was running');
+        } else if (!manifest?.master?.key || manifest.master.key !== currentJob.masterKey) {
           throw new Error('Artwork master changed while crop job was running');
         }
 
@@ -1352,7 +1359,7 @@ const server = http.createServer(async (req, res) => {
               `${ratio} output is ${width}×${height}; expected ${target.width}×${target.height}`
             );
           }
-          const key = fulfillmentRatioObjectKey(currentJob.artworkId, ratio);
+          const key = cropOutputKeyForJob(currentJob, ratio);
           if (!(await artworkObjectExists(key))) {
             throw new Error(`Uploaded ${ratio} crop is missing from R2`);
           }
@@ -1375,6 +1382,7 @@ const server = http.createServer(async (req, res) => {
           };
         }
 
+        if (!isStagedRevisionJob(currentJob)) {
         manifest.fulfillmentRatios = assets;
         manifest.fulfillmentRatioInsufficient = {};
         manifest.fulfillmentRatiosReady = FULFILLMENT_RATIOS.every(
@@ -1384,8 +1392,9 @@ const server = http.createServer(async (req, res) => {
         manifest.cropWorkerJobId = currentJob.id;
         await saveArtworkManifest(manifest);
 
+        }
         const job = await completeCropJob(jobId, workerId, assets);
-        await writeFulfillmentStatus(currentJob.artworkId, {
+        if (!isStagedRevisionJob(currentJob)) await writeFulfillmentStatus(currentJob.artworkId, {
           status: 'completed',
           jobId: currentJob.id,
           workerId,
@@ -2373,6 +2382,42 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+
+  const reposterArtworkRoute=url.pathname.match(/^\/api\/reposter\/([1-9]\d{0,19})\/artwork(?:\/(reserve|crop|status))?$/);
+  if(reposterArtworkRoute){
+    if(!requireAdminApi(req,res))return;
+    if(!['GET','POST'].includes(req.method))return sendJson(res,405,{ok:false,error:'Unsupported method'});
+    const origin=String(req.headers.origin||''),host=String(req.headers.host||'');
+    if(req.method==='POST' && (!host||(origin&&origin!==String(req.headers['x-forwarded-proto']||'https')+'://'+host)||
+       req.headers['sec-fetch-site']==='cross-site'))
+      return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    try{
+      const session=await getEtsySession({forceRefresh:true});
+      const scopes=new Set(String(session.scope||'').split(/\s+/));
+      const action=reposterArtworkRoute[2]||'status',id=reposterArtworkRoute[1];
+      if(action==='status'&&req.method==='GET')
+        return sendJson(res,200,{ok:true,revision:await getArtworkRevisionStatus(session.shop.shop_id,id),
+          worker:cropWorkerStatus()});
+      if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'POST required'});
+      if(!scopes.has('listings_r')||!scopes.has('listings_w')||!scopes.has('transactions_r'))
+        return sendJson(res,403,{ok:false,error:'Etsy listings_r, listings_w and transactions_r scopes required'});
+      if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+        return sendJson(res,415,{ok:false,error:'JSON request required'});
+      const source=await getDetails(session,id);
+      if(source.assessment.status!=='review_renewals'||source.listing.state!=='active')
+        throw Error('This original listing is not a verified zero-sale repost candidate.');
+      const body=await readJsonBody(req);
+      if(action==='reserve'){
+        const inventory=await getListingInventory({listingId:id,
+          shopId:session.shop.shop_id,keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+        return sendJson(res,200,{ok:true,...await reserveArtworkRevision({
+          shopId:session.shop.shop_id,listingId:id,inventory,file:body.file})});
+      }
+      if(action==='crop')return sendJson(res,200,{ok:true,...await startArtworkRevisionCrop({
+        shopId:session.shop.shop_id,listingId:id})});
+      return sendJson(res,404,{ok:false,error:'Unknown artwork revision action'});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
+  }
 
   // Repost only after verifying a separate draft; retain the source until publish succeeds.
   if (req.method === 'GET' && url.pathname === '/listing-reposter') {
