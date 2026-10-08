@@ -5,6 +5,7 @@ import { printifyConfigStatus, testPrintifyConnection } from './printify.mjs';
 import { gelatoConfigStatus, testGelatoConnection } from './gelato.mjs';
 
 export function podProviderStatus() {
+  const masterSubmissionEnabled=String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED||'').toLowerCase()==='true';
   return {
     Sensaria: {
       ready: true,
@@ -14,15 +15,15 @@ export function podProviderStatus() {
     },
     Prodigi: {
       ...prodigiConfigStatus(),
-      liveSubmissionEnabled: String(process.env.PRODIGI_FULFILLMENT_ENABLED || '').toLowerCase() === 'true'
+      liveSubmissionEnabled: masterSubmissionEnabled && String(process.env.PRODIGI_FULFILLMENT_ENABLED || '').toLowerCase() === 'true'
     },
     Artelo: {
       ...arteloConfigStatus(),
-      liveSubmissionEnabled: String(process.env.ARTELO_FULFILLMENT_ENABLED || '').toLowerCase() === 'true'
+      liveSubmissionEnabled: masterSubmissionEnabled && String(process.env.ARTELO_FULFILLMENT_ENABLED || '').toLowerCase() === 'true'
     },
     PrintShrimp: {
       ...printShrimpConfigStatus(),
-      liveSubmissionEnabled: String(process.env.PRINTSHRIMP_FULFILLMENT_ENABLED || '').toLowerCase() === 'true'
+      liveSubmissionEnabled: masterSubmissionEnabled && String(process.env.PRINTSHRIMP_FULFILLMENT_ENABLED || '').toLowerCase() === 'true'
     },
     Printify: {
       ...printifyConfigStatus(),
@@ -32,7 +33,7 @@ export function podProviderStatus() {
     },
     Gelato: {
       ...gelatoConfigStatus(),
-      liveSubmissionEnabled: false
+      liveSubmissionEnabled: masterSubmissionEnabled && String(process.env.GELATO_FULFILLMENT_ENABLED || '').toLowerCase() === 'true'
     }
   };
 }
