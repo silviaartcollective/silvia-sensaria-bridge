@@ -54,6 +54,7 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
     <a class="nav active" href="/">Dashboard</a>
     <a class="nav" href="/readiness">System Readiness</a>
     <a class="nav" href="/product-creator">Product Creator</a>
+    <a class="nav" href="/listing-reposter">Listing Reposter</a>
     <a class="nav" href="/listing-converter">Gelato → Silvia Converter</a>
     <a class="nav" href="/shipping-profile">Shipping Profile</a>
     <a class="nav" href="/pricing">Pricing & Shipping</a>

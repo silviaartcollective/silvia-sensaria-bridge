@@ -3,6 +3,7 @@ export const ADMIN_LINKS = Object.freeze([
   { href:'/', label:'Dashboard' },
   { href:'/readiness', label:'System Readiness' },
   { href:'/product-creator', label:'Product Creator' },
+  { href:'/listing-reposter', label:'Listing Reposter' },
   { href:'/listing-converter', label:'Gelato → Silvia Converter' },
   { href:'/shipping-profile', label:'Shipping Profile' },
   { href:'/pricing', label:'Pricing & Shipping' },

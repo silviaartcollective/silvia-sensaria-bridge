@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { renderDashboard } from './dashboard.mjs';
 import { renderReadinessPage } from './readiness-page.mjs';
+import { renderListingReposterPage } from './listing-reposter-page.mjs';
+import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement } from './listing-reposter.mjs';
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
@@ -2369,6 +2371,52 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       return sendJson(res, 502, { ok: false, error: error?.message || String(error) });
     }
+  }
+
+
+  // Repost only after verifying a separate draft; retain the source until publish succeeds.
+  if (req.method === 'GET' && url.pathname === '/listing-reposter') {
+    if (!requireAdminPage(req,res,'/listing-reposter')) return;
+    return sendHtml(res,200,renderListingReposterPage('Silvia Art Collective'));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/reposter/candidates') {
+    if (!requireAdminApi(req,res)) return;
+    try {
+      const session=await getEtsySession({forceRefresh:true});
+      return sendJson(res,200,{ok:true,...await findCandidates(session)});
+    }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
+  }
+  const reposterRoute=url.pathname.match(/^\/api\/reposter\/([1-9]\d{0,19})(?:\/(prepare|finalize|uploads\/reserve))?$/);
+  if(req.method==='GET'&&reposterRoute&&!reposterRoute[2]){
+    if(!requireAdminApi(req,res))return;
+    try {
+      const session=await getEtsySession({forceRefresh:true});
+      return sendJson(res,200,{ok:true,...await getDetails(session,reposterRoute[1])});
+    }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
+  }
+  if(req.method==='POST'&&reposterRoute&&reposterRoute[2]){
+    if(!requireAdminApi(req,res))return;
+    const origin=String(req.headers.origin||'');
+    const host=String(req.headers.host||'');
+    if(!host||(origin&&origin!==String(req.headers['x-forwarded-proto']||'https')+'://'+host)||
+       req.headers['sec-fetch-site']==='cross-site')
+      return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+      return sendJson(res,415,{ok:false,error:'JSON required.'});
+    try{
+      const body=await readJsonBody(req);
+      const session=await getEtsySession({forceRefresh:true});
+      const scopes=new Set(String(session.scope||'').split(/\s+/));
+      if(!scopes.has('listings_r')||!scopes.has('listings_w')||!scopes.has('transactions_r'))
+        return sendJson(res,403,{ok:false,error:'Etsy listings_r, listings_w and transactions_r scopes required.'});
+      const id=reposterRoute[1],action=reposterRoute[2];
+      if(action==='uploads/reserve')
+        return sendJson(res,200,{ok:true,uploads:await reserveMockups(session,id,body.files)});
+      if(action==='prepare')
+        return sendJson(res,200,{ok:true,...await prepareReplacement(session,id,body)});
+      if(action==='finalize')
+        return sendJson(res,200,{ok:true,...await finalizeReplacement(session,id,body.confirm)});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
   }
 
   if (req.method === 'GET' && url.pathname === '/listing-converter') {
