@@ -58,8 +58,8 @@ export function renderListingConverterPage() {
   </div>
 
   <div class="statusbar">
-    <div><strong>Shared crop worker</strong><div class="status" id="worker-status">Checking worker…</div></div>
-    <a class="btn primary" id="launch-worker" href="pod-crop-worker://start">Launch Shared Crop Worker</a>
+    <div><strong>Silvia PC crop worker</strong><div class="status" id="worker-status">Checking worker…</div></div>
+    <a class="btn primary" id="launch-worker" href="silvia-worker://start">Launch Silvia PC Crop Worker</a>
   </div>
 
   <div class="statusbar">
@@ -142,7 +142,7 @@ launchWorker.addEventListener('click',()=>{
     await refreshWorker();
     if(workerStatus.textContent.includes('Offline')){
       workerStatus.className='status warn';
-      workerStatus.textContent='Still offline. Re-run the latest Arté Antica worker/setup-worker.cmd once to register pod-crop-worker:// on this PC.';
+      workerStatus.textContent='Still offline. Run worker/setup-worker.cmd from the Silvia repository to install silvia-worker:// on this PC, then launch worker/start-worker.cmd.';
     }
   },3000);
 });
@@ -182,10 +182,6 @@ function renderCards(){
 }
 
 async function convertListing(item,card){
-  // Keep this synchronous with the user's button click so Windows can open the
-  // registered pod-crop-worker:// protocol without a second manual action.
-  try{ window.location.href='pod-crop-worker://start'; }catch{}
-
   const input=card.querySelector('.master');
   const button=card.querySelector('.convert');
   const status=card.querySelector('.cardstatus');
@@ -204,6 +200,8 @@ async function convertListing(item,card){
     'The listing stays live/draft as it is. Its existing photos, video, title, description and tags stay in place. Its variants, SKUs, pricing and Silvia structural settings will be replaced after the artwork crop finishes.'
   );
   if(!confirmed)return;
+  // Start the PC worker for this shop, not the unrelated Arté Antica worker.
+  try{window.location.href='silvia-worker://start';}catch{}
 
   button.disabled=true;
   input.disabled=true;
@@ -222,9 +220,15 @@ async function convertListing(item,card){
     let d=await r.json();
     if(!r.ok)throw new Error(d.error||'Could not reserve artwork');
     const artworkId=d.artworkId;
-
-    status.textContent='Uploading '+artworkId+' master to Cloudflare R2…';
-    await putFile(d.upload.uploadUrl,file,p=>{bar.style.width=p+'%'});
+    const previouslyQueuedCropJobId=d.cropJobId||null;
+    if(d.resumed)status.textContent='Resuming artwork '+artworkId+' with the existing ID…';
+    if(d.uploadAlreadyPresent){
+      status.textContent='Artwork '+artworkId+' already in R2; reusing the uploaded source…';
+      bar.style.width='65%';
+    }else{
+      status.textContent='Uploading '+artworkId+' master to Cloudflare R2…';
+      await putFile(d.upload.uploadUrl,file,p=>{bar.style.width=p+'%'});
+    }
 
     r=await fetch('/api/artworks/'+encodeURIComponent(artworkId)+'/complete',{method:'POST'});
     d=await r.json();
@@ -232,20 +236,33 @@ async function convertListing(item,card){
     bar.style.width='68%';
 
     status.textContent='Queueing production crops for '+artworkId+'…';
-    r=await fetch('/api/crop-jobs',{
-      method:'POST',
-      headers:{'content-type':'application/json'},
-      body:JSON.stringify({artworkId,orientation})
-    });
-    d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Could not queue crop job');
-
-    if(!d.worker?.online){
-      status.className='cardstatus warn';
-      status.textContent='Artwork uploaded as '+artworkId+'. The shared crop worker is offline — launch it above. Conversion will continue when the crop job finishes.';
+    let completedCrop=null;
+    if(previouslyQueuedCropJobId){
+      const previous=await fetch('/api/crop-jobs/'+encodeURIComponent(previouslyQueuedCropJobId),{cache:'no-store'});
+      if(previous.ok){
+        const result=await previous.json();
+        if(result.job?.status==='completed')completedCrop=result.job;
+      }
     }
-
-    await waitForCrop(d.job.id,text=>{status.textContent=text},p=>{bar.style.width=p+'%'});
+    if(!completedCrop){
+      r=await fetch('/api/crop-jobs',{
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({artworkId,orientation})
+      });
+      d=await r.json();
+      if(!r.ok)throw new Error(d.error||'Could not queue crop job');
+      if(!d.worker?.online){
+        status.className='cardstatus warn';
+        status.textContent='Artwork '+artworkId+' is uploaded and its crop job queued. Silvia PC worker is offline. Start worker/start-worker.cmd, then click Upload artwork & convert again to resume the SAME artwork ID. Etsy was not changed.';
+        button.disabled=false;input.disabled=false;
+        return;
+      }
+      await waitForCrop(d.job.id,text=>{status.textContent=text},p=>{bar.style.width=p+'%'});
+    }else{
+      bar.style.width='94%';
+      status.textContent='Reusing already completed crops for '+artworkId+'…';
+    }
 
     status.className='cardstatus';
     status.textContent='Crops ready. Replacing Gelato variants with Silvia variants and SKUs…';
