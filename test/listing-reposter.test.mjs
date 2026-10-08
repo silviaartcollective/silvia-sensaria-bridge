@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {estimatedRenewals,scanCandidate,validateSeo,listingId} from '../src/listing-reposter.mjs';
+import {estimatedRenewals,scanCandidate,validateSeo,listingId,assertSameInventory} from '../src/listing-reposter.mjs';
 const old={listing_id:12345,state:'active',original_creation_timestamp:100000000};
 const at=(days)=> (old.original_creation_timestamp+days*86400)*1000;
 test('age only suggests renewals and never claims exact history',()=>{
@@ -20,4 +20,14 @@ test('reposter demands confirmed renewals, safe listing ID and valid Etsy SEO',(
  assert.throws(()=>validateSeo({...valid,confirmedRenewals:0}),/Confirm 2 or 3/);
  assert.throws(()=>validateSeo({...valid,tags:['x'.repeat(21)]}),/20 characters/);
  assert.throws(()=>validateSeo({...valid,mockupMode:'unsupported'}),/keep or replace/);
+});
+
+test('SKU, offering price, and quantities must be unchanged in replacement',()=>{
+ const old={products:[{sku:'SAC0001-P-1624',property_values:[{property_id:1,value_ids:[3]}],
+   offerings:[{price:{amount:7199,divisor:100},quantity:999,is_enabled:true}]}]};
+ const good={products:[{sku:'SAC0001-P-1624',property_values:[{property_id:1,value_ids:[3]}],
+   offerings:[{price:71.99,quantity:999,is_enabled:true}]}]};
+ assert.equal(assertSameInventory(old,good),true);
+ assert.throws(()=>assertSameInventory(old,{products:[{...good.products[0],sku:'WRONG'}]}),/differ/);
+ assert.throws(()=>assertSameInventory(old,{products:[{...good.products[0],offerings:[{price:72,quantity:999,is_enabled:true}]}]}),/differ/);
 });

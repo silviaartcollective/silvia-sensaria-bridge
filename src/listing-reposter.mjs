@@ -109,8 +109,33 @@ export async function getDetails(session,id) {
   return {listing,images:images.map(x=>({id:x.listing_image_id,url:x.url_570xN||x.url_fullxfull,rank:x.rank,alt:x.alt_text||''})),
     videosCount:videos.length,variationImagesCount:variations.length,assessment:age,
     replacement:replacement?{draftId:replacement.draftId,status:replacement.status,sourceId:replacement.sourceId,
-      preparedAt:replacement.preparedAt,error:replacement.error||null}:null};
+      preparedAt:replacement.preparedAt,error:replacement.error||null,seo:replacement.seo||null}:null};
 }
+
+function priceNumber(value) {
+  if(value && typeof value==='object')return Number(value.amount)/Number(value.divisor||100);
+  return Number(value);
+}
+export function inventorySignature(inventory) {
+  return (inventory?.products||[]).map(p=>({
+    sku:String(p.sku||''),
+    properties:(p.property_values||[]).map(v=>({
+      id:Number(v.property_id),
+      values:(v.value_ids?.length?v.value_ids:v.values||[]).map(String).sort()
+    })).sort((a,b)=>a.id-b.id),
+    offers:(p.offerings||[]).map(o=>({
+      price:Math.round(priceNumber(o.price)*100)/100,
+      quantity:Number(o.quantity||0),enabled:!!o.is_enabled
+    })).sort((a,b)=>a.price-b.price)
+  })).sort((a,b)=>a.sku.localeCompare(b.sku));
+}
+export function assertSameInventory(original,cloned) {
+  const a=inventorySignature(original),b=inventorySignature(cloned);
+  if(!a.length||JSON.stringify(a)!==JSON.stringify(b))
+    throw new Error('Copied variants, SKUs, prices, or quantities differ from the original. Original listing kept active.');
+  return true;
+}
+
 export function validateSeo(input) {
   const title=safe(input?.title,200);
   const description=safe(input?.description,40000);
@@ -221,7 +246,7 @@ export async function prepareReplacement(session,sourceId,input) {
       draftId=Number(draft.listing_id);
       if(!Number.isSafeInteger(draftId)||draftId<=0)throw new Error('Etsy draft creation returned no listing ID.');
       record={sourceId:id,draftId,shopId:String(shop),fingerprint,
-        status:'building',preparedAt:now(),imageMap:{},completedImages:[],videoIds:[]};
+        status:'building',preparedAt:now(),seo:{title:seo.title,description:seo.description,tags:seo.tags,mockupMode:seo.mockupMode},imageMap:{},completedImages:[],videoIds:[]};
       await putJsonObject(key(shop,id),record);
     }
     // Etsy does not support atomic copying; all operations are resumable and the original stays live.
@@ -284,8 +309,10 @@ export async function prepareReplacement(session,sourceId,input) {
     const verified=await getEtsyListingImages({listingId:draftId,...args(session)});
     if(verified.length!==images.length)throw new Error('Draft does not yet have the same number of expected mockups.');
     const latestInventory=await getListingInventory({listingId:draftId,...args(session)});
-    if((latestInventory.products||[]).length!==(inventory.products||[]).length)
-      throw new Error('Draft inventory count differs from original. Original listing kept active.');
+    assertSameInventory(inventory,latestInventory);
+    const verifiedVideos=await getListingVideos(session,draftId);
+    if(verifiedVideos.length!==originalVideos.length)
+      throw new Error('Draft video count differs from original. Original listing kept active.');
     record.status='prepared';record.preparedAt=now();
     await putJsonObject(key(shop,id),record);
     return {record,reused:false};

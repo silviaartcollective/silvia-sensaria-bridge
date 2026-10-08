@@ -72,7 +72,7 @@ async function scan(){
  const tr=document.createElement('tr');td(tr,v.title+' (#'+v.listingId+')');
  td(tr,v.ageDays+' days / approx. '+v.estimatedRenewals);
  td(tr,v.salesVerified?v.salesCount:'Not verified');
- td(tr,v.status==='review_renewals'?'Review renewals':'Not ready');
+ td(tr,v.status==='review_renewals'?'Ready to repost · confirm renewals':'Not ready');
  const cell=document.createElement('td'),b=document.createElement('button');
  b.textContent='Edit';b.addEventListener('click',()=>run(()=>open(v.listingId)));cell.append(b);tr.append(cell);root.append(tr);
  }
@@ -97,8 +97,12 @@ async function open(id){
   'Preparing creates a draft only. The original remains active.';
  $('finalize').classList.toggle('hidden',!draft||!['prepared','published'].includes(draft.status));
  $('new-link').classList.toggle('hidden',!draft?.draftId);
- if(draft?.draftId)$('new-link').href='https://www.etsy.com/listing/'+draft.draftId;
+ if(draft?.draftId){$('new-link').href='https://www.etsy.com/your/shops/me/tools/listings';
+ $('new-link').textContent='Open Etsy Shop Manager · Draft #'+draft.draftId;}
  $('prepare').disabled=!!draft;
+ if(draft?.seo){$('title').value=draft.seo.title||'';
+ $('description').value=draft.seo.description||'';
+ $('tags').value=(draft.seo.tags||[]).join(', ');}
  if(d.assessment.status!=='review_renewals')message('Not eligible: this listing needs zero verified sales and an estimated 2–3 renewal cycles.',true);
  else message('Verify renewal count, update SEO or mockups, then prepare the new draft.');
  $('editor').scrollIntoView({block:'start',behavior:'smooth'});
