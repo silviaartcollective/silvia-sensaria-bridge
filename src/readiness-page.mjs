@@ -50,6 +50,10 @@ button:disabled{opacity:.6;cursor:wait}
 <div class="check"><div><strong>Supplier registry</strong><div class="detail" id="provider-detail">Credentials present is different from passing a connection test</div></div><span id="provider-result" class="result checking">Checking</span></div>
 <div id="provider-list"></div>
 </section></div>
+<section class="card" style="margin-top:16px"><h2>Order API endpoints</h2>
+<div class="detail" id="order-endpoints-result">Loading supplier order capabilities…</div>
+<div class="detail" id="etsy-shipment-result">Etsy shipment creation requires separate approval.</div>
+</section>
 <p class="note">Connection tests are read-only and do not place supplier orders, change Etsy listings, or enable automatic fulfillment. A successful check still does not substitute for reviewing one real paid order, its artwork, exact size, shipping quote, and tracking.</p>
 </main></div>
 <script>
@@ -106,6 +110,14 @@ button:disabled{opacity:.6;cursor:wait}
    ];
    const providerState=await check('provider','/api/providers/status',d=>Boolean(d.providers),'Loaded',d=>d.providers?Object.keys(d.providers).length+' suppliers registered':'Supplier registry unavailable');
    await check('mode','/api/providers/status',d=>d.masterLiveSubmissionEnabled===false,'Review-only',d=>'Mode: '+String(d.fulfillmentMode||'unknown')+' · Live submission: '+(d.masterLiveSubmissionEnabled?'enabled':'disabled'));
+   try {
+     const info=await request('/api/orders/endpoints');
+     byId('order-endpoints-result').textContent=info.suppliers.map(x=>x.name+': '+
+       (x.apiAvailable?'order API client':'manual CSV')+
+       (x.orderSubmissionWorkflowConnected?' · Connected to checkout':' · Manual approval/order routing pending')).join(' | ');
+     byId('etsy-shipment-result').textContent='Etsy tracking submission: '+
+       (info.etsyTrackingSubmissionEnabled?'enabled, subject to Etsy endpoint approval':'disabled; CSV staging only');
+   }catch(error){byId('order-endpoints-result').textContent='Order endpoint readiness unavailable: '+error.message;}
    const others=await Promise.all(tasks);
    const count=others.filter(Boolean).length+Number(basic)+Number(providerState);
    byId('page-status').textContent='Read-only readiness checks completed: '+count+'/7 core checks passed. Supplier connections require individual tests.';

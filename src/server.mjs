@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { renderDashboard } from './dashboard.mjs';
 import { renderReadinessPage } from './readiness-page.mjs';
+import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
 import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy } from './order-tracking.mjs';
@@ -2698,6 +2699,11 @@ const server = http.createServer(async (req, res) => {
       unresolvedSizes,
       podProviders: podProviderStatus()
     });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/orders/endpoints') {
+    if (!requireAdminApi(req,res)) return;
+    return sendJson(res,200,{ok:true,...supplierOrderEndpointStatus()});
   }
 
   if (req.method === 'GET' && url.pathname === '/api/providers/status') {

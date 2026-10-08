@@ -24,6 +24,10 @@ services:
         value: shadow
       - key: FULFILLMENT_LIVE_SUBMISSION_ENABLED
         value: "false"
+      - key: ETSY_SHIPMENT_SUBMISSION_ENABLED
+        value: "false"
+      - key: GELATO_FULFILLMENT_ENABLED
+        value: "false"
       - key: PRODIGI_FULFILLMENT_ENABLED
         value: "false"
       - key: ARTELO_FULFILLMENT_ENABLED

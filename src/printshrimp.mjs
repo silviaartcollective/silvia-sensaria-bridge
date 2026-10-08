@@ -261,6 +261,9 @@ function validateOrderProduct(product = {}) {
 }
 
 export async function createPrintShrimpOrder(payload = {}) {
+  if(String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED||'').toLowerCase()!=='true' ||
+     String(process.env.PRINTSHRIMP_FULFILLMENT_ENABLED||'').toLowerCase()!=='true')
+    throw new Error('PrintShrimp production order submission is disabled.');
   validateCustomerInfo(payload.customerInfo || {});
   if (!Array.isArray(payload.products) || !payload.products.length) {
     throw new Error('PrintShrimp order requires at least one product');

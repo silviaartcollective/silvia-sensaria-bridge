@@ -157,6 +157,19 @@ export async function getGelatoShipmentPrices({
   });
 }
 
+// This is a billable production endpoint and must never be used as an API connectivity test.
+export async function createGelatoOrder(payload = {}) {
+  if (String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED||'').toLowerCase()!=='true' ||
+      String(process.env.GELATO_FULFILLMENT_ENABLED||'').toLowerCase()!=='true')
+    throw new Error('Gelato production order submission is disabled.');
+  if(!payload?.orderReferenceId || !payload?.customerReferenceId || !payload.currency ||
+     !Array.isArray(payload.items) || !payload.items.length || !payload.shippingAddress)
+    throw new Error('Gelato order needs reference IDs, currency, items and shippingAddress.');
+  return gelatoRequest('https://order.gelatoapis.com/v4/orders',{
+    method:'POST',body:{...payload,orderType:'order'}
+  });
+}
+
 export async function getGelatoOrderTracking(orderId) {
   const id = String(orderId || '').trim();
   if (!/^[a-zA-Z0-9_-]{5,100}$/.test(id)) throw new Error('Valid Gelato order ID required');

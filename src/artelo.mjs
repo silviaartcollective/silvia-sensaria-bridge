@@ -221,7 +221,15 @@ export async function getArteloPriceCheck({
   };
 }
 
+export async function getArteloOrder(orderId) {
+  const id=String(orderId||'').trim();
+  if(!id||id.length>120||/[\r\n]/.test(id))throw new Error('Valid Artelo order ID required.');
+  return arteloRequest('/orders/get-by-id?orderId='+encodeURIComponent(id));
+}
 export async function createArteloOrder(payload = {}) {
+  if(String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED||'').toLowerCase()!=='true' ||
+     String(process.env.ARTELO_FULFILLMENT_ENABLED||'').toLowerCase()!=='true')
+    throw new Error('Artelo production order submission is disabled.');
   const customerAddress = payload?.customerAddress || {};
   const items = Array.isArray(payload?.items) ? payload.items : [];
 

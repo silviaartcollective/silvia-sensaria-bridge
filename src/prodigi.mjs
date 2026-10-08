@@ -738,7 +738,15 @@ async function mapLimit(items, limit, fn) {
   return results;
 }
 
+export async function getProdigiOrder(orderId) {
+  const id=String(orderId||'').trim();
+  if(!/^[A-Za-z0-9_-]{2,120}$/.test(id))throw new Error('Valid Prodigi order ID required.');
+  return prodigiRequest('/orders/'+encodeURIComponent(id));
+}
 export async function createProdigiOrder(payload = {}) {
+  if(String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED||'').toLowerCase()!=='true' ||
+     String(process.env.PRODIGI_FULFILLMENT_ENABLED||'').toLowerCase()!=='true')
+    throw new Error('Prodigi production order submission is disabled.');
   const shippingMethod = String(payload?.shippingMethod || '').trim();
   const recipient = payload?.recipient || {};
   const items = Array.isArray(payload?.items) ? payload.items : [];
