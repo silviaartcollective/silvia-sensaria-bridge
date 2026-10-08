@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { renderDashboard } from './dashboard.mjs';
+import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
 import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment } from './order-tracking.mjs';
 
@@ -419,7 +420,7 @@ function sendJson(res, status, value) {
 }
 
 function sendHtml(res, status, html) {
-  const body = String(html);
+  const body = decorateAdminHtml(html);
   res.writeHead(status, {
     'content-type': 'text/html; charset=utf-8',
     'content-length': Buffer.byteLength(body),
