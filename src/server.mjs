@@ -21,6 +21,11 @@ import { scanSupplierComparison } from './supplier-comparison.mjs';
 import { renderSupplierComparisonPage } from './supplier-comparison-page.mjs';
 import { renderCustomSizeLookupPage } from './custom-size-page.mjs';
 import { lookupCustomSize } from './custom-size-lookup.mjs';
+import { renderCustomOrdersPage } from './custom-orders-page.mjs';
+import { renderOrdersPage } from './orders-page.mjs';
+import { listOrders, readOrder, recordImportedReceipt } from './custom-order-store.mjs';
+import { classify, quote, savePlan, approve, markOrdered } from './custom-order-workflow.mjs';
+import { recentPaidReceipts, receiptTransactions } from './etsy-orders-read.mjs';
 import { buildPrintifyCostsForRequest } from './printify-cost-builder.mjs';
 import { buildTestReceipt } from './test-order.mjs';
 import { etsyReceiptToSensariaCsvFromR2 } from './fulfillment.mjs';
@@ -30,6 +35,7 @@ import {
   signedArtworkUrl,
   signedArtworkUploadUrl,
   artworkObjectExists,
+  listArtworkManifestKeys,
   getJsonObject,
   putJsonObject
 } from './r2.mjs';
@@ -1789,6 +1795,159 @@ const server = http.createServer(async (req, res) => {
         rollbackError
       });
     }
+  }
+
+  // Private, read-only Etsy staging plus explicit human supplier approval.
+  // No route here submits orders to Printify, Gelato, Prodigi, Sensaria, Artelo or PrintShrimp.
+  if (req.method === 'GET' && url.pathname === '/orders') {
+    if (!requireAdminPage(req, res, '/orders')) return;
+    return sendHtml(res, 200, renderOrdersPage());
+  }
+  if (req.method === 'GET' && url.pathname === '/orders-client.js') {
+    if (!requireAdminApi(req, res)) return;
+    const js = readFileSync(new URL('./orders-client.js', import.meta.url), 'utf8');
+    res.writeHead(200, {
+      'content-type': 'application/javascript; charset=utf-8',
+      'cache-control': 'no-store', 'x-content-type-options': 'nosniff'
+    });
+    return res.end(js);
+  }
+  if (req.method === 'GET' && url.pathname === '/custom-orders') {
+    if (!requireAdminPage(req, res, '/custom-orders')) return;
+    return sendHtml(res, 200, renderCustomOrdersPage());
+  }
+  if (req.method === 'GET' && url.pathname === '/custom-orders-client.js') {
+    if (!requireAdminApi(req, res)) return;
+    const js = readFileSync(new URL('./custom-orders-client.js', import.meta.url), 'utf8');
+    res.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8',
+      'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+    return res.end(js);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/custom-orders/artworks') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const keys = await listArtworkManifestKeys();
+      const rows = [];
+      for (let i = 0; i < keys.length; i += 12) {
+        const page = await Promise.all(keys.slice(i, i + 12).map(async key => {
+          try {
+            const manifest = await getJsonObject(key);
+            if (!/^SAC[0-9]{4,}$/.test(String(manifest?.artworkId || '')) ||
+                manifest.status !== 'ready' || !manifest.master?.key) return null;
+            return {
+              artworkId: manifest.artworkId,
+              title: String(manifest.title || ''),
+              orientation: String(manifest.orientation || ''),
+              masterReady: Boolean(await artworkObjectExists(manifest.master.key))
+            };
+          } catch { return null; }
+        }));
+        rows.push(...page.filter(Boolean));
+      }
+      rows.sort((a,b)=> a.artworkId.localeCompare(b.artworkId,undefined,{numeric:true}));
+      return sendJson(res, 200, { ok: true, artworks: rows });
+    } catch(error) {
+      return sendJson(res, 500, { ok: false, error: String(error.message || error) });
+    }
+  }
+  if (req.method === 'GET' && url.pathname === '/api/orders') {
+    if (!requireAdminApi(req, res)) return;
+    try { return sendJson(res, 200, { ok: true, ...(await listOrders()) }); }
+    catch (error) { return sendJson(res, 500, { ok: false, error: String(error.message || error) }); }
+  }
+  if (req.method === 'GET' && url.pathname === '/api/custom-orders') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const data = await listOrders();
+      const custom = data.orders.filter(order => order.classification === 'custom' ||
+        (order.classification === 'unclassified' && order.inference?.categoryHint === 'possible_custom'));
+      return sendJson(res, 200, { ok: true, orders: custom, count: custom.length, stagedCount: data.count,
+        truncated: data.truncated });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: String(error.message || error) });
+    }
+  }
+  const customOrderRoute = url.pathname.match(/^\/api\/custom-orders\/([1-9]\d{0,19})(?:\/(quote|plan|classify|approve|mark-ordered))?$/);
+  if (req.method === 'POST' && (url.pathname === '/api/custom-orders/import' || url.pathname === '/api/custom-orders/sync' || customOrderRoute)) {
+    if (!requireAdminApi(req, res)) return;
+    const origin = String(req.headers.origin || '');
+    const expectedOrigin = (req.headers['x-forwarded-proto'] || 'https') + '://' + req.headers.host;
+    if ((origin && origin !== expectedOrigin) || req.headers['sec-fetch-site'] === 'cross-site') {
+      return sendJson(res, 403, { ok: false, error: 'Cross-site request blocked.' });
+    }
+    if (!String(req.headers['content-type'] || '').toLowerCase().includes('application/json')) {
+      return sendJson(res, 415, { ok: false, error: 'JSON request required.' });
+    }
+    try {
+      const body = await readJsonBody(req);
+      if (url.pathname === '/api/custom-orders/sync') {
+        const session = await getEtsySession();
+        const receipts = await recentPaidReceipts(session, 15);
+        const imported = [];
+        const failures = [];
+        for (const item of receipts) {
+          try {
+            const receipt = await getShopReceipt({
+              shopId: session.shop.shop_id, receiptId: item.receipt_id,
+              keystring: session.keystring, sharedSecret: session.sharedSecret,
+              accessToken: session.accessToken
+            });
+            if (!Array.isArray(receipt.transactions) || !receipt.transactions.length) {
+              receipt.transactions = await receiptTransactions(session, item.receipt_id);
+            }
+            imported.push((await recordImportedReceipt(receipt, session.shop.shop_id)).receiptId);
+          } catch (error) {
+            failures.push({ receiptId: String(item.receipt_id || ''), error: String(error.message || error) });
+          }
+        }
+        return sendJson(res, 200, { ok: true, imported, failures,
+          note: 'Synced only paid Etsy receipts. No supplier orders submitted.' });
+      }
+      if (url.pathname === '/api/custom-orders/import') {
+        const receiptId = String(body.receiptId || '').trim();
+        if (!/^[1-9]\d{0,19}$/.test(receiptId)) throw new Error('Valid Etsy receipt ID required.');
+        const session = await getEtsySession();
+        const shopId = Number(session.shop.shop_id);
+        const receipt = await getShopReceipt({
+          shopId, receiptId, keystring: session.keystring,
+          sharedSecret: session.sharedSecret, accessToken: session.accessToken
+        });
+        if (!Array.isArray(receipt.transactions) || !receipt.transactions.length) {
+          receipt.transactions = await receiptTransactions(session, receiptId);
+        }
+        return sendJson(res, 200, { ok: true, summary: await recordImportedReceipt(receipt, shopId) });
+      }
+      const [, id, action] = customOrderRoute;
+      if (action === 'classify') return sendJson(res, 200, { ok: true, review: await classify(id, body.classification) });
+      if (action === 'quote') return sendJson(res, 200, { ok: true, ...(await quote(id, body)) });
+      if (action === 'plan') return sendJson(res, 200, { ok: true, review: await savePlan(id, body) });
+      if (action === 'mark-ordered') return sendJson(res, 200, { ok: true, review: await markOrdered(id, body) });
+      if (action === 'approve') {
+        const previous = await readOrder(id);
+        const session = await getEtsySession();
+        const shopId = Number(session.shop.shop_id);
+        const latest = await getShopReceipt({
+          shopId, receiptId: id, keystring: session.keystring,
+          sharedSecret: session.sharedSecret, accessToken: session.accessToken
+        });
+        if (!Array.isArray(latest.transactions) || !latest.transactions.length) {
+          latest.transactions = await receiptTransactions(session, id);
+          if (!latest.transactions.length) {
+            latest.transactions = previous.staged.receipt?.transactions || [];
+          }
+        }
+        await recordImportedReceipt(latest, shopId);
+        return sendJson(res, 200, { ok: true, review: await approve(id, body) });
+      }
+      return sendJson(res, 400, { ok: false, error: 'Unsupported custom order action.' });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: String(error.message || error) });
+    }
+  }
+  if (req.method === 'GET' && customOrderRoute && !customOrderRoute[2]) {
+    if (!requireAdminApi(req, res)) return;
+    try { return sendJson(res, 200, { ok: true, ...(await readOrder(customOrderRoute[1])) }); }
+    catch (error) { return sendJson(res, 404, { ok: false, error: String(error.message || error) }); }
   }
 
   if (req.method === 'GET' && url.pathname === '/description-updater') {

@@ -58,10 +58,11 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
     <a class="nav" href="/pricing">Pricing & Shipping</a>
     <a class="nav" href="/compare">Supplier Comparison</a>
     <a class="nav" href="/custom-size">Custom Size Lookup</a>
+    <a class="nav" href="/custom-orders">Custom Orders</a>
     <a class="nav" href="/description-updater">Description Updater</a>
     <a class="nav" href="/tracking">Order Tracking</a>
     <a class="nav" href="/test-order">Test Order</a>
-    <a class="nav" href="/#orders">Orders</a>
+    <a class="nav" href="/orders">All Orders</a>
     <a class="nav" href="/#artworks">Artwork Library</a>
     <a class="nav" href="/#mappings">Product SKUs</a>
     <a class="nav" href="/etsy/status" target="_blank">Etsy Status</a>
@@ -86,8 +87,9 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
       <div class="status"><span class="s-dot"></span><span>Manufacturing configurations loaded</span></div>
     </div>
     <div class="card" id="orders">
-      <div class="eyebrow">Orders</div><div class="big">Not active</div>
-      <div class="status warn"><span class="s-dot"></span><span>Webhook + test order still required</span></div>
+      <div class="eyebrow">Orders</div><div class="big" id="order-count">Checking…</div>
+      <div class="status" id="order-status"><span class="spinner"></span><span>Loading paid receipts</span></div>
+      <div class="actions" style="margin-top:13px"><a class="btn primary" href="/orders">Open All Orders</a><a class="btn" href="/custom-orders">Custom Orders</a></div>
     </div>
     <div class="card" id="artworks">
       <div class="eyebrow">Artwork storage</div>
@@ -123,6 +125,14 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
 (async()=>{
   const t=document.getElementById('etsy-title'),s=document.getElementById('etsy-status');
   try{const r=await fetch('/etsy/status',{cache:'no-store'}),d=await r.json();if(r.ok&&d.connected){t.textContent=d.shopName||'Connected';s.className='status';s.innerHTML='<span class="s-dot"></span><span>Connected · Shop ID '+String(d.shopId||'')+'</span>'}else throw new Error()}catch{t.textContent='Needs attention';s.className='status warn';s.innerHTML='<span class="s-dot"></span><span>Etsy connection check failed</span>'}
+
+  const oc=document.getElementById('order-count'),os=document.getElementById('order-status');
+  try{
+    const r=await fetch('/api/orders',{cache:'no-store'}),d=await r.json();
+    if(!r.ok||!d.ok)throw new Error('Order inbox unavailable');
+    oc.textContent=String(d.count||0)+' staged';
+    os.className='status';os.innerHTML='<span class="s-dot"></span><span>All paid orders · view details</span>';
+  }catch{oc.textContent='Needs attention';os.className='status warn';os.innerHTML='<span class="s-dot"></span><span>Could not read Etsy order inbox</span>'}
 
   const rt=document.getElementById('r2-title'),rs=document.getElementById('r2-status');
   if(rt&&rs&&rt.textContent!=='Not configured'){try{const r=await fetch('/r2/status',{cache:'no-store'}),d=await r.json();if(r.ok&&d.connected){rt.textContent=d.bucket||'Connected';rs.className='status';rs.innerHTML='<span class="s-dot"></span><span>Private R2 storage connected</span>'}else throw new Error()}catch{rt.textContent='Needs attention';rs.className='status warn';rs.innerHTML='<span class="s-dot"></span><span>R2 connection failed</span>'}}
