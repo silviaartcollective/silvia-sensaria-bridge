@@ -6,9 +6,10 @@ import sharp from 'sharp';
 import {
   downloadArtworkObjectToFile,
   putArtworkFile,
-  signedArtworkUrl
+  signedArtworkUrl,
+  getJsonObject
 } from './r2.mjs';
-import { loadArtworkManifest } from './artwork-storage.mjs';
+import { manifestObjectKey } from './production.mjs';
 
 sharp.cache(false);
 sharp.concurrency(1);
@@ -180,7 +181,7 @@ export async function generateFulfillmentRatios({ artworkId, masterKey, orientat
 
 export async function signedFulfillmentRatioUrl({ artworkId, size, ratio, expiresIn = 7 * 24 * 60 * 60 }) {
   const resolvedRatio = ratio || fulfillmentRatioForSize(size);
-  const manifest=await loadArtworkManifest(artworkId);
+  const manifest=await getJsonObject(manifestObjectKey(artworkId));
   const asset=manifest.fulfillmentRatios?.[resolvedRatio];
   if(!asset?.productionReady||!asset.key)throw new Error('No verified '+resolvedRatio+' production crop');
   return signedArtworkUrl(asset.key, expiresIn);

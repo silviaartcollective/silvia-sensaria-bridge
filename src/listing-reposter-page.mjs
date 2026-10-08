@@ -162,6 +162,9 @@ async function open(id){
  }else{$('artwork-mode').querySelector('option[value="replace"]').disabled=false;}
  if(draft?.artworkMode==='replace'||draft?.seo?.artworkMode==='replace'){
   $('artwork-mode').value='replace';$('artwork-upload-wrap').classList.remove('hidden');
+ }else if(d.artworkRevision?.exists && !draft){
+  $('artwork-mode').value='replace';$('artwork-upload-wrap').classList.remove('hidden');
+  $('mockup-mode').value='replace';$('upload-wrap').classList.remove('hidden');
  }
  if(draft?.seo){$('title').value=draft.seo.title||'';
  $('description').value=draft.seo.description||'';
