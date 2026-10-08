@@ -62,7 +62,7 @@ async function run(fn){
  if(busy)return;busy=true;for(const b of document.querySelectorAll('button'))b.disabled=true;
  try{await fn()}catch(e){message(e.message||String(e),true)}
  finally{busy=false;for(const b of document.querySelectorAll('button'))b.disabled=false;
-  if(selected?.replacement?.status==='completed')$('prepare').disabled=true}
+  if(selected?.replacement)$('prepare').disabled=true}
 }
 const td=(tr,v)=>{const c=document.createElement('td');c.textContent=String(v);tr.append(c);return c};
 async function scan(){

@@ -332,6 +332,23 @@ export async function finalizeReplacement(session,sourceId,confirmation) {
       throw new Error('Original listing is no longer active. Review manually.');
     if(await listingSalesCount(session,id)!==0)throw new Error('Original listing has sales since preparation. Stop and review.');
     const newListing=await getListing(session,record.draftId);
+    const [originalInventory,draftInventory,draftImages,sourceImages,draftVideos,sourceVideos]=await Promise.all([
+      getListingInventory({listingId:id,...args(session)}),
+      getListingInventory({listingId:record.draftId,...args(session)}),
+      getEtsyListingImages({listingId:record.draftId,...args(session)}),
+      getEtsyListingImages({listingId:id,...args(session)}),
+      getListingVideos(session,record.draftId),getListingVideos(session,id)
+    ]);
+    assertSameInventory(originalInventory,draftInventory);
+    const imageCount=record.completedImages?.length||0;
+    if(!imageCount||draftImages.length!==imageCount)
+      throw new Error('Replacement draft mockups changed since preparation. Original kept active.');
+    if(draftVideos.length!==sourceVideos.length)
+      throw new Error('Replacement videos changed since preparation. Original kept active.');
+    const expectedSourceCount=record.seo?.mockupMode==='keep' ? sourceImages.length : imageCount;
+    if(record.seo?.mockupMode==='keep' && expectedSourceCount!==imageCount)
+      throw new Error('Original mockups changed since preparation. Prepare a fresh replacement manually.');
+
     if(!['draft','active'].includes(newListing.state))throw new Error('Replacement draft is not ready to publish.');
     if(record.status==='prepared'){
       if(newListing.state==='draft')await updateListing({
