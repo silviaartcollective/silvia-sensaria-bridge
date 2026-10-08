@@ -6,7 +6,7 @@ import { renderDashboard } from './dashboard.mjs';
 import { renderReadinessPage } from './readiness-page.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
-import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment } from './order-tracking.mjs';
+import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy } from './order-tracking.mjs';
 
 const TRACKING_SHOP_NAME="Silvia Art Collective";
 import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
@@ -2031,7 +2031,7 @@ const server = http.createServer(async (req, res) => {
   }
 
 
-  // Tracking is review-only. These endpoints NEVER call Etsy's shipment creation API.
+  // CSV import is review-only. Etsy shipment updates have a separate guarded approval action.
   if (req.method === 'GET' && url.pathname === '/tracking') {
     if (!requireAdminPage(req, res, '/tracking')) return;
     return sendHtml(res, 200, renderTrackingPage(TRACKING_SHOP_NAME));
@@ -2050,7 +2050,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res,200,{ok:true,...(await listTrackingRecords(session))});
     }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
   }
-  if (req.method === 'POST' && /^\/api\/tracking\/(link|check-supplier|check-etsy|csv-preview|csv-import)$/.test(url.pathname)) {
+  if (req.method === 'POST' && /^\/api\/tracking\/(link|check-supplier|check-etsy|csv-preview|csv-import|send-etsy)$/.test(url.pathname)) {
     if (!requireAdminApi(req,res)) return;
     const origin=String(req.headers.origin||'');
     const host=String(req.headers.host||'');
@@ -2066,6 +2066,11 @@ const server = http.createServer(async (req, res) => {
       const session=await getEtsySession({forceRefresh:true});
       const scopes=new Set(String(session.scope||'').split(/\s+/).filter(Boolean));
       if(!scopes.has('transactions_r')) return sendJson(res,403,{ok:false,error:'Etsy transactions_r access required.'});
+      if(url.pathname==='/api/tracking/send-etsy'){
+        if(!scopes.has('transactions_w'))
+          return sendJson(res,403,{ok:false,error:'Etsy transactions_w scope required.'});
+        return sendJson(res,200,{ok:true,...await sendStagedShipmentToEtsy(session,body)});
+      }
       if(url.pathname==='/api/tracking/link'){
         const record=await linkTrackingOrder(session,body);
         return sendJson(res,200,{ok:true,record});

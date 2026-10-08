@@ -56,7 +56,23 @@ async function refresh() {
       $('supplier').value=entry.supplier;$('supplier-id').value=entry.supplierOrderId;
       message('Selected Etsy #'+entry.receiptId+'. Use Check API tracking or Refresh Etsy shipment status.');
     });
-    actions.append(check);tr.append(actions);table.append(tr);
+    actions.append(check);
+    for(const shipment of entry.shipments||[]){
+      if(shipment.etsySentAt||!shipment.trackingNumber)continue;
+      const button=textNode('button','Mark shipped on Etsy');button.type='button';
+      button.addEventListener('click',()=>run(async()=>{
+        if(!window.confirm('Submit tracking '+shipment.trackingNumber+' to Etsy for #'+entry.receiptId+
+          '? This marks the purchase shipped and notifies the buyer. Confirm it has physically shipped.'))return;
+        const result=await api('/api/tracking/send-etsy',{
+          receiptId:entry.receiptId,trackingNumber:shipment.trackingNumber,
+          confirm:'MARK SHIPPED ON ETSY'});
+        await refresh();
+        message(result.etsySubmitted?'Shipment confirmed in Etsy; customer notified.':
+          'Shipment was already recorded in Etsy; local status synchronized.');
+      }));
+      actions.append(button);
+    }
+    tr.append(actions);table.append(tr);
   }root.append(table);
 }
 $('refresh').addEventListener('click',()=>run(async()=>{await refresh();message('Linked orders refreshed.');}));

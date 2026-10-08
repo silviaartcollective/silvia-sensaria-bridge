@@ -1,6 +1,6 @@
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { r2Client, r2Config, getJsonObject, putJsonObject } from './r2.mjs';
-import { getShopReceipt } from './etsy.mjs';
+import { getShopReceipt, createReceiptShipment } from './etsy.mjs';
 import { getGelatoOrderTracking } from './gelato.mjs';
 import { getPrintifyOrderTracking } from './printify.mjs';
 
@@ -273,4 +273,73 @@ export async function checkEtsyShipmentStatus(session,id) {
   doc.etsyStatus={isShipped:!!receipt.is_shipped,shipments:receiptShipments(receipt)};
   doc.updatedAt=new Date().toISOString();await putJsonObject(key(id),doc);
   return doc;
+}
+
+const pendingEtsyShipments = new Set();
+export function etsyCarrierCode(carrier) {
+  const values = {
+    'USPS':'usps','UPS':'ups','FEDEX':'fedex','DHL':'dhl',
+    'CANADA POST':'canada-post','PUROLATOR':'purolator',
+    'DPD':'dpd','ONTRAC':'ontrac','OTHER':'other'
+  };
+  const code=values[text(carrier).toUpperCase()];
+  if(!code)throw new Error('Unknown Etsy carrier. Confirm tracking manually in Etsy.');
+  return code;
+}
+export function prepareStagedEtsyShipment(record, receipt, input, shopId) {
+  const id=receiptId(input?.receiptId);
+  if(!record||record.receiptId!==id||String(record.shopId)!==String(shopId))
+    throw new Error('Etsy receipt must be linked to the supplier order first.');
+  const shipment=(record.shipments||[]).find(s=>text(s.trackingNumber).toUpperCase()===text(input.trackingNumber).toUpperCase());
+  if(!shipment)throw new Error('Tracking number is not staged for this Etsy receipt.');
+  if(!['shipped','fulfilled','delivered'].includes(text(shipment.status).toLowerCase()))
+    throw new Error('Tracking must be confirmed shipped before completion.');
+  if(receipt.is_canceled===true||receipt.was_canceled===true)
+    throw new Error('Canceled Etsy receipts cannot be completed.');
+  if(receipt.was_paid!==true && receipt.is_paid!==true)
+    throw new Error('Etsy receipt must be verified paid.');
+  if(receipt.shop_id && String(receipt.shop_id)!==String(shopId))
+    throw new Error('Wrong Etsy shop.');
+  const found=receiptShipments(receipt).some(s=>s.trackingNumber.toUpperCase()===shipment.trackingNumber.toUpperCase());
+  if(!found && (receipt.is_shipped===true||receipt.was_shipped===true))
+    throw new Error('Etsy already marks this receipt shipped with other tracking. Review manually in Etsy.');
+  return {receiptId:id,trackingNumber:shipment.trackingNumber,carrier:etsyCarrierCode(shipment.carrier),alreadyOnEtsy:found};
+}
+export async function sendStagedShipmentToEtsy(session,input) {
+  if(String(process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED||'').toLowerCase()!=='true')
+    throw new Error('Etsy shipment submission is disabled. Etsy must approve this endpoint, then enable ETSY_SHIPMENT_SUBMISSION_ENABLED.');
+  if(input?.confirm!=='MARK SHIPPED ON ETSY')
+    throw new Error('Explicit MARK SHIPPED ON ETSY confirmation required. Etsy emails the buyer.');
+  const id=receiptId(input.receiptId);
+  if(pendingEtsyShipments.has(id))throw new Error('Shipment submission is already processing for this receipt.');
+  pendingEtsyShipments.add(id);
+  try {
+    const record=await readTrackingRecord(id);
+    const receipt=await verifyEtsyReceipt(session,id);
+    const plan=prepareStagedEtsyShipment(record,receipt,input,session.shop.shop_id);
+    if(!plan.alreadyOnEtsy){
+      try {
+        await createReceiptShipment({
+          ...shopSession(session),receiptId:id,trackingCode:plan.trackingNumber,
+          carrierName:plan.carrier
+        });
+      }catch(error){
+        if(/\b403\b|Unauthorized/i.test(String(error.message||error)))
+          throw new Error('Etsy API access denied (403): shipping updates require separate createReceiptShipment approval. Complete manually in Etsy until access is granted.');
+        throw error;
+      }
+    }
+    // Etsy is always checked first on retries, to avoid a second customer notification.
+    const now=new Date().toISOString();
+    const updated={...record,
+      shipments:record.shipments.map(s=>text(s.trackingNumber).toUpperCase()===plan.trackingNumber.toUpperCase()
+        ? {...s,etsySentAt:s.etsySentAt||now}:s),
+      etsyStatus:{isShipped:true,shipments:[
+        ...receiptShipments(receipt).filter(s=>s.trackingNumber.toUpperCase()!==plan.trackingNumber.toUpperCase()),
+        {trackingNumber:plan.trackingNumber,carrier:plan.carrier,shippedAt:now}
+      ]},
+      updatedAt:now};
+    await putJsonObject(key(id),updated);
+    return {record:updated,alreadyOnEtsy:plan.alreadyOnEtsy,etsySubmitted:!plan.alreadyOnEtsy};
+  }finally{pendingEtsyShipments.delete(id);}
 }

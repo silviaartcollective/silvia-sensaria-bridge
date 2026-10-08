@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   receiptId, parseCsv, sensariaCandidates, suggestCarrier, supplierShipments, normalizedShipment,
-  receiptShipments
+  receiptShipments, etsyCarrierCode, prepareStagedEtsyShipment, sendStagedShipmentToEtsy
 } from '../src/order-tracking.mjs';
 
 test('validates Etsy numeric receipt IDs safely',()=>{
@@ -67,4 +67,25 @@ test('does not treat Not Shipped as a shipped Sensaria order',()=>{
  const result=sensariaCandidates(csv,[{receiptId:'123456789',supplier:'sensaria',supplierOrderId:'GO-123'}]);
  assert.equal(result.rows.length,0);
  assert.equal(result.skipped.length,1);
+});
+
+test('Etsy shipping has verified carrier codes and needs a paid matching shipment',()=>{
+ const record={receiptId:'123456789',shopId:'42',supplier:'sensaria',
+   shipments:[{trackingNumber:'ABC12345',carrier:'Canada Post',status:'shipped'}]};
+ const receipt={shop_id:42,was_paid:true,is_shipped:false,shipments:[]};
+ assert.equal(etsyCarrierCode('FedEx'),'fedex');
+ const plan=prepareStagedEtsyShipment(record,receipt,{receiptId:'123456789',trackingNumber:'ABC12345'},42);
+ assert.equal(plan.carrier,'canada-post');
+ assert.equal(plan.alreadyOnEtsy,false);
+ assert.equal(prepareStagedEtsyShipment(record,{...receipt,is_shipped:true,shipments:[{
+   tracking_code:'ABC12345',carrier_name:'canada-post'
+ }]},{receiptId:'123456789',trackingNumber:'ABC12345'},42).alreadyOnEtsy,true);
+ assert.throws(()=>prepareStagedEtsyShipment(record,{...receipt,was_paid:false},{receiptId:'123456789',trackingNumber:'ABC12345'},42),/paid/);
+ assert.throws(()=>prepareStagedEtsyShipment(record,{...receipt,is_shipped:true},{receiptId:'123456789',trackingNumber:'ABC12345'},42),/already marks/);
+ assert.throws(()=>prepareStagedEtsyShipment(record,receipt,{receiptId:'123456789',trackingNumber:'BAD'},42),/not staged/);
+});
+test('shipment submission is disabled unless explicitly configured',async()=>{
+ const current=process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;delete process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;
+ try{await assert.rejects(()=>sendStagedShipmentToEtsy({},{}),/disabled/);}
+ finally{if(current===undefined)delete process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;else process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED=current;}
 });
