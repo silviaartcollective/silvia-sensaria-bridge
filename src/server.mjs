@@ -2459,8 +2459,21 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res,200,{ok:true,uploads:await reserveMockups(session,id,body.files)});
       if(action==='prepare')
         return sendJson(res,200,{ok:true,...await prepareReplacement(session,id,body)});
-      if(action==='finalize')
-        return sendJson(res,200,{ok:true,...await finalizeReplacement(session,id,body.confirm)});
+      if(action==='finalize'){
+        const result=await finalizeReplacement(session,id,body.confirm);
+        // Preserve the converted listing's artwork ID linkage for the new Etsy listing.
+        const mapping=await loadListingConverterMap(),source=mapping.listings?.[id];
+        if(source?.status==='converted' && source.artworkId){
+          const nextId=String(result.record.draftId),other=mapping.listings[nextId];
+          if(other && other.artworkId!==source.artworkId)
+            throw new Error('Replacement is already mapped to another artwork. Review Etsy listing manually.');
+          mapping.listings[nextId]={...source,listingId:Number(nextId),status:'converted',
+            replacedFromListingId:Number(id),repostedAt:new Date().toISOString()};
+          mapping.listings[id]={...source,status:'reposted',replacedByListingId:Number(nextId)};
+          await saveListingConverterMap(mapping);
+        }
+        return sendJson(res,200,{ok:true,...result});
+      }
     }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
   }
 
