@@ -456,7 +456,7 @@ function requireAdminApi(req, res) {
   return false;
 }
 
-const CROP_WORKER_HEARTBEAT_TTL_MS = 15 * 1000;
+const CROP_WORKER_HEARTBEAT_TTL_MS = 45 * 1000;
 let cropWorkerHeartbeat = {
   workerId: '',
   version: '',

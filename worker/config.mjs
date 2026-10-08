@@ -33,10 +33,10 @@ export const POLL_INTERVAL_MS = Math.max(
   Number(process.env.SILVIA_WORKER_POLL_MS || local.pollIntervalMs || 3000)
 );
 
-export const IDLE_EXIT_MS = Math.max(
-  60_000,
-  Number(process.env.SILVIA_WORKER_IDLE_EXIT_MS || local.idleExitMs || 10 * 60_000)
-);
+// The worker stays running until the operator closes it. Set >0 explicitly for an idle exit.
+export const IDLE_EXIT_MS = Math.max(0, Number(
+  process.env.SILVIA_WORKER_IDLE_EXIT_MS ?? local.idleExitMs ?? 0
+));
 
 export function validateWorkerConfig() {
   if (!APP_URL) throw new Error('Set appUrl in worker/config.local.json or SILVIA_APP_URL.');

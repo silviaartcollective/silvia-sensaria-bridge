@@ -18,7 +18,7 @@ $config = @{
   workerToken = $token
   workerId = "silvia-main-pc"
   pollIntervalMs = 3000
-  idleExitMs = 600000
+  idleExitMs = 0
 } | ConvertTo-Json
 
 Set-Content -Path (Join-Path $PSScriptRoot "config.local.json") -Value $config -Encoding UTF8

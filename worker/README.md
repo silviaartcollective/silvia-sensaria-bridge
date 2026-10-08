@@ -20,3 +20,5 @@ The worker mirrors the Arté Antica crop architecture:
 6. Run `npm start` whenever you want the workstation to process queued crop jobs.
 
 `config.local.json` must stay private and should never be committed.
+
+The worker stays online until stopped manually. A live status indicator is visible in the dashboard and the Listing Reposter; a green connected status requires a current heartbeat. To run both shops, set up one copy of each shop's worker using its own Render URL and CROP_WORKER_TOKEN.

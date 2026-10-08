@@ -6,15 +6,16 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { IDLE_EXIT_MS, POLL_INTERVAL_MS, WORKER_ID, validateWorkerConfig } from './config.mjs';
+import { APP_URL, IDLE_EXIT_MS, POLL_INTERVAL_MS, WORKER_ID, validateWorkerConfig } from './config.mjs';
 import { claimJob, completeJob, failJob, heartbeat, updateProgress } from './api.mjs';
 import { generateProductionCrop, inspectMaster, validateRatioSource } from './crop.mjs';
 
-const LOCK_PATH = path.join(os.tmpdir(), 'silvia-crop-worker.lock');
+const LOCK_PATH = path.join(os.tmpdir(), 'silvia-crop-worker-'+crypto.createHash('sha256').update(APP_URL).digest('hex').slice(0,12)+'.lock');
 const tempPaths = new Set();
 let lastWorkAt = Date.now();
 let busy = false;
 let stopping = false;
+let activeJobId = '';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -169,12 +170,14 @@ async function pollOnce() {
     await heartbeat({ busy: false });
     const result = await claimJob();
     if (result.job) {
+      activeJobId = result.job.id;
       await heartbeat({ busy: true, jobId: result.job.id });
       await processJob(result.job);
     }
   } catch (error) {
     console.error('Worker poll failed:', error.message);
   } finally {
+    activeJobId = '';
     busy = false;
   }
 }
@@ -189,16 +192,22 @@ async function main() {
 
   console.log(`Silvia Crop Worker online as ${WORKER_ID}.`);
   await heartbeat({ busy: false });
+  // Keep the service heartbeat accurate even during long high-resolution crops.
+  const heartbeatTicker = setInterval(() => {
+    if(!stopping) heartbeat({busy,jobId:activeJobId}).catch(e => console.error('Heartbeat retry:', e.message));
+  }, 10000);
+  heartbeatTicker.unref();
 
   while (!stopping) {
     await pollOnce();
-    if (!busy && Date.now() - lastWorkAt >= IDLE_EXIT_MS) {
+    if (IDLE_EXIT_MS > 0 && !busy && Date.now() - lastWorkAt >= IDLE_EXIT_MS) {
       console.log('No crop jobs pending; worker exiting after idle timeout.');
       break;
     }
     await sleep(POLL_INTERVAL_MS);
   }
 
+  clearInterval(heartbeatTicker);
   await cleanup();
 }
 
