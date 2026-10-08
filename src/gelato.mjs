@@ -157,6 +157,12 @@ export async function getGelatoShipmentPrices({
   });
 }
 
+export async function getGelatoOrderTracking(orderId) {
+  const id = String(orderId || '').trim();
+  if (!/^[a-zA-Z0-9_-]{5,100}$/.test(id)) throw new Error('Valid Gelato order ID required');
+  return gelatoRequest('https://order.gelatoapis.com/v4/orders/' + encodeURIComponent(id));
+}
+
 export async function testGelatoConnection() {
   const catalogs = await listGelatoCatalogs();
   return {
