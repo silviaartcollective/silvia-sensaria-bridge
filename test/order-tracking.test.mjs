@@ -60,3 +60,11 @@ test('normalizes existing Etsy receipt shipments to avoid duplicates',()=>{
  const items=receiptShipments({shipments:[{tracking_code:'ABC12345',carrier_name:'USPS'}]});
  assert.deepEqual(items[0].trackingNumber,'ABC12345');
 });
+
+test('does not treat Not Shipped as a shipped Sensaria order',()=>{
+ const csv='PartnerOrderReferenceNumber,OrderNumber,OrderStatus,ShipmentTrackingNumber,ShipmentTrackingURL,Shipping Date\n'+
+ '123456789,GO-123,Not Shipped,ABC12345,https://www.ups.com/track,\n';
+ const result=sensariaCandidates(csv,[{receiptId:'123456789',supplier:'sensaria',supplierOrderId:'GO-123'}]);
+ assert.equal(result.rows.length,0);
+ assert.equal(result.skipped.length,1);
+});
