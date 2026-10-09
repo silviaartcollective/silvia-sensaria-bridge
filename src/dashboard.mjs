@@ -81,7 +81,9 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
 
   <div class="card" style="margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap">
     <div><strong>PC Crop Worker</strong><div id="crop-worker-dashboard" class="section-sub">Checking worker connection…</div></div>
-    <a class="btn" href="/listing-reposter">Open Listing Reposter</a>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+<a class="btn" href="pod-crop-worker://start">Launch Shared Worker</a>
+<a class="btn" href="/listing-reposter">Open Listing Reposter</a></div>
   </div>
   <section class="cards">
     <div class="card">

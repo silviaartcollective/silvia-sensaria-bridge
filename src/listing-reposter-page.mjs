@@ -25,7 +25,9 @@ th,td{padding:11px 9px;border-bottom:1px solid var(--line);text-align:left;verti
 <main><div class="flex"><div><h1>Listing Reposter</h1><p class="sub">__SHOP__ · Safely refresh zero-sale listings while retaining their product details.</p></div><a class="button" href="/">Dashboard</a></div>
 <div class="card flex" style="gap:14px"><div><strong>PC Crop Worker</strong>
 <p id="crop-worker-status" class="muted">Checking connection…</p></div>
-<button id="refresh-worker">Check worker</button></div>
+<div class="actions" style="margin:0">
+<a class="button" href="pod-crop-worker://start">Launch Shared Worker</a>
+<button id="refresh-worker">Check worker</button></div></div>
 <div class="alert"><strong>Renewals are estimates.</strong> Etsy verifies sales, but does not expose an exact renewal counter. Candidates are listings approximately 240–479 days old. Confirm 2–3 actual renewals in Etsy Shop Manager. Etsy listing fees may apply. The original stays active until a new listing has been published and verified.</div>
 <div class="card"><div class="flex"><h2>Repost candidates</h2><div class="actions"><button id="scan" class="primary">Scan listings</button>
 <input id="lookup" placeholder="Etsy listing ID" style="width:160px"><button id="by-id">Open listing</button></div></div>
@@ -105,7 +107,7 @@ async function workerStatus(){
   $('crop-worker-status').textContent=w.online?
    (w.busy?'Connected · processing '+(w.jobId||'crop job'):'Connected · idle')+
    ' · '+(w.workerId||'PC worker'):
-   (w.configured?'Offline · Start worker/start-worker.cmd on your PC.':'Not configured · Set CROP_WORKER_TOKEN in Render first.');
+   (w.configured?'Offline · Start the shared crop worker using any shop.':'Not configured · Set CROP_WORKER_TOKEN in Render first.');
   $('crop-worker-status').style.color=w.online?'#3e7652':'#aa6938';
  }catch(e){$('crop-worker-status').textContent='Worker status unavailable: '+e.message;}
 }
