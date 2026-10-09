@@ -10,5 +10,5 @@ test('reposting a converted listing migrates its artwork mapping to the new Etsy
 });
 test('PC crop worker no longer stops after old default 10 minute idle timeout',()=>{
  const config=readFileSync(new URL('../worker/config.mjs',import.meta.url),'utf8');
- assert.match(config,/localIdle===600000 \? 0 : localIdle/);
+ assert.match(config,/oldIdle===600000\?0:oldIdle/);
 });

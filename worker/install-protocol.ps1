@@ -1,16 +1,36 @@
-param(
-  [string]$WorkerDir = $PSScriptRoot
-)
-
 $ErrorActionPreference = "Stop"
-$protocol = "silvia-worker"
-$command = 'cmd.exe /c start "" "' + (Join-Path $WorkerDir 'start-worker.cmd') + '"'
-$base = "HKCU:\Software\Classes\$protocol"
+$WorkerDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$StartScript = Join-Path $WorkerDir "start-worker.cmd"
 
-New-Item -Path $base -Force | Out-Null
-Set-ItemProperty -Path $base -Name "(Default)" -Value "URL:Silvia Crop Worker"
-Set-ItemProperty -Path $base -Name "URL Protocol" -Value ""
-New-Item -Path "$base\shell\open\command" -Force | Out-Null
-Set-ItemProperty -Path "$base\shell\open\command" -Name "(Default)" -Value $command
+if (-not (Test-Path $StartScript)) {
+  throw "start-worker.cmd was not found in $WorkerDir"
+}
 
-Write-Host "Registered $protocol://start"
+function Register-WorkerProtocol([string]$Protocol, [string]$Description) {
+  $ProtocolRoot = "HKCU:\Software\Classes\$Protocol"
+  New-Item -Path $ProtocolRoot -Force | Out-Null
+
+  # Set the actual unnamed/default registry value. Using a property literally
+  # named "(Default)" can leave Windows with no protocol description/handler.
+  Set-Item -Path $ProtocolRoot -Value $Description
+  New-ItemProperty -Path $ProtocolRoot -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
+
+  $CommandKey = Join-Path $ProtocolRoot "shell\open\command"
+  New-Item -Path $CommandKey -Force | Out-Null
+  $Command = 'cmd.exe /c ""' + $StartScript + '" "%1""'
+  Set-Item -Path $CommandKey -Value $Command
+
+  $registered = (Get-Item -Path $CommandKey).GetValue("")
+  if ([string]::IsNullOrWhiteSpace($registered) -or $registered -notlike "*start-worker.cmd*") {
+    throw "Failed to register $Protocol protocol command."
+  }
+}
+
+Register-WorkerProtocol "pod-crop-worker" "URL:Shared POD Crop Worker"
+Register-WorkerProtocol "arteantica-worker" "URL:Shared POD Crop Worker"
+Register-WorkerProtocol "silvia-worker" "URL:Shared POD Crop Worker"
+Register-WorkerProtocol "japandi-worker" "URL:Shared POD Crop Worker"
+
+Write-Host "Installed pod-crop-worker:// protocol."
+Write-Host "Kept arteantica-worker:// as a compatibility alias."
+Write-Host "Windows protocol command verified."

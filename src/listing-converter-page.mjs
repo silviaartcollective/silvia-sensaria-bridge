@@ -59,7 +59,7 @@ export function renderListingConverterPage() {
 
   <div class="statusbar">
     <div><strong>Silvia PC crop worker</strong><div class="status" id="worker-status">Checking worker…</div></div>
-    <a class="btn primary" id="launch-worker" href="silvia-worker://start">Launch Silvia PC Crop Worker</a>
+    <a class="btn primary" id="launch-worker" href="pod-crop-worker://start">Launch Shared PC Crop Worker</a>
   </div>
 
   <div class="statusbar">
@@ -142,7 +142,7 @@ launchWorker.addEventListener('click',()=>{
     await refreshWorker();
     if(workerStatus.textContent.includes('Offline')){
       workerStatus.className='status warn';
-      workerStatus.textContent='Still offline. Run worker/setup-worker.cmd from the Silvia repository to install silvia-worker:// on this PC, then launch worker/start-worker.cmd.';
+      workerStatus.textContent='Still offline. Run the updated shared worker/setup-worker.cmd once, supply all 3 Render tokens, then launch the shared PC worker.';
     }
   },3000);
 });
@@ -200,8 +200,8 @@ async function convertListing(item,card){
     'The listing stays live/draft as it is. Its existing photos, video, title, description and tags stay in place. Its variants, SKUs, pricing and Silvia structural settings will be replaced after the artwork crop finishes.'
   );
   if(!confirmed)return;
-  // Start the PC worker for this shop, not the unrelated Arté Antica worker.
-  try{window.location.href='silvia-worker://start';}catch{}
+  // The universal protocol starts one shared worker for all 3 shops.
+  try{window.location.href='pod-crop-worker://start';}catch{}
 
   button.disabled=true;
   input.disabled=true;

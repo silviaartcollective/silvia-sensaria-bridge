@@ -22,11 +22,15 @@ export async function inspectMaster(masterPath, orientation) {
     throw new Error('Could not determine master artwork dimensions.');
   }
 
-  const requested = String(orientation || '').trim().toLowerCase();
   return {
     ...dimensions,
     exifOrientation: Number(metadata.orientation || 1),
-    orientation: requested === 'landscape' || requested === 'horizontal' ? 'landscape' : 'portrait'
+    orientation: (() => {
+      const requested = String(orientation || '').trim().toLowerCase();
+      if (requested === 'square') return 'square';
+      if (requested === 'landscape' || requested === 'horizontal') return 'landscape';
+      return 'portrait';
+    })()
   };
 }
 
@@ -55,11 +59,22 @@ export function calculateCenterCrop(width, height, targetWidth, targetHeight) {
 export function validateRatioSource(master, ratio, target) {
   const requiredWidth = Number(target?.width || 0);
   const requiredHeight = Number(target?.height || 0);
-  if (!requiredWidth || !requiredHeight) throw new Error(`Missing production target for ${ratio}.`);
+  if (!requiredWidth || !requiredHeight) {
+    throw new Error(`Missing production target for ${ratio}.`);
+  }
 
-  const crop = calculateCenterCrop(master.width, master.height, requiredWidth, requiredHeight);
+  const crop = calculateCenterCrop(
+    master.width,
+    master.height,
+    requiredWidth,
+    requiredHeight
+  );
+
   return {
-    required: { width: requiredWidth, height: requiredHeight },
+    required: {
+      width: requiredWidth,
+      height: requiredHeight
+    },
     crop,
     upscaled: crop.width < requiredWidth || crop.height < requiredHeight
   };
@@ -103,7 +118,8 @@ export async function generateProductionCrop({
   const output = await sharp(outputPath).metadata();
   if (output.width !== required.width || output.height !== required.height) {
     throw new Error(
-      `Generated ${ratio} crop is ${output.width}×${output.height}; expected ${required.width}×${required.height}.`
+      `Generated ${ratio} crop is ${output.width}×${output.height}; expected ` +
+      `${required.width}×${required.height}.`
     );
   }
 

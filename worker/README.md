@@ -1,24 +1,26 @@
-# Silvia Crop Worker
+# Shared PC Crop Worker — Arté Antica, Silvia and Japandi
 
-This folder contains the local Windows worker used by Silvia Art Collective to generate full-resolution POD aspect-ratio crops.
+**Only run one worker process on the PC.** This same program handles all three Render apps. You may install it from any one app's repository; do not install or launch three separate workers.
 
-The worker mirrors the Arté Antica crop architecture:
+## Installation (Windows)
 
-- downloads the private R2 master through a temporary signed URL
-- generates 2x3, 3x4, 4x5 and 11x14 production JPEGs at 300 DPI
-- uploads each crop directly to private R2 with temporary signed PUT URLs
-- reports progress back to the Silvia Render app
-- never stores R2 access keys on the PC
+1. In each Render app, check **Environment → CROP_WORKER_TOKEN**. Use a unique secret (24+ characters) for each app, or retain each app's existing secret. Never copy a token into chat or GitHub.
+2. Stop any currently running individual shop cropper windows/processes before switching.
+3. Download or update **one** repository (Arté Antica, Silvia or Japandi). Open its \`worker\` folder.
+4. Run \`setup-worker.cmd\` once. Supply **all three** tokens when asked; press Enter only if it offers to reuse a saved token. Each shop's URL is prefilled.
+5. Run \`start-worker.cmd\` once. This starts the background worker; check \`worker.log\` for its current status.
+6. Check the PC Crop Worker indicator in each Render dashboard. Within approximately 10–30 seconds all three should display **Connected**.
+7. Test one non-production crop job and verify output ratios and tracking from the initiating shop.
 
-## Setup
+The installer registers \`pod-crop-worker://start\` and compatibility aliases \`arteantica-worker://\`, \`silvia-worker://\`, and \`japandi-worker://\`. All four launch the same program. A global lock prevents a second process even if several dashboards request launch.
 
-1. Add a long random `CROP_WORKER_TOKEN` environment variable to the Silvia Render service.
-2. In this folder run `npm install`.
-3. Copy `config.example.json` to `config.local.json`.
-4. Set `appUrl` to `https://silvia-sensaria-bridge.onrender.com`.
-5. Set `workerToken` to the same value as Render's `CROP_WORKER_TOKEN`.
-6. Run `npm start` whenever you want the workstation to process queued crop jobs.
+The shared worker continuously polls the three queues in round-robin order and handles **one job at a time** to protect PC memory. While Arté is cropping, Silvia and Japandi also receive regular worker heartbeats so their indicators stay connected. Results and R2 signed URLs are returned only to the shop which queued that job, using that shop's bearer token.
 
-`config.local.json` must stay private and should never be committed.
+The default idle timeout is **disabled**: the worker stays running until stopped. Existing historical 600000ms (10-minute) configurations are treated as disabled; setting \`POD_CROP_WORKER_IDLE_EXIT_MS\` to a positive number explicitly enables idle shutdown.
 
-The worker stays online until stopped manually. A live status indicator is visible in the dashboard and the Listing Reposter; a green connected status requires a current heartbeat. To run both shops, set up one copy of each shop's worker using its own Render URL and CROP_WORKER_TOKEN.
+## Troubleshooting
+
+- **Offline on one shop:** Verify its URL and token in \`worker/config.local.json\` match that Render service's \`CROP_WORKER_TOKEN\`; inspect \`worker.log\`.
+- **Worker not starting:** Check Node.js 20+, that \`npm install\` succeeded, and Sharp can load. Retry setup if needed.
+- **Legacy separate workers:** Close them and rerun the shared installer. Do not leave old individual workers running in parallel.
+- **Never post \`config.local.json\`:** It contains confidential tokens and is covered by \`.gitignore\`.

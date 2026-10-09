@@ -1,7 +1,22 @@
 {
-  "appUrl": "https://silvia-sensaria-bridge.onrender.com",
-  "workerToken": "REPLACE_WITH_THE_SAME_LONG_RANDOM_TOKEN_SET_AS_CROP_WORKER_TOKEN_ON_RENDER",
-  "workerId": "silvia-main-pc",
+  "apps": [
+    {
+      "name": "Arte Antica",
+      "appUrl": "https://arte-antica-product-creator.onrender.com",
+      "workerToken": "REPLACE_WITH_ARTE_RENDER_CROP_WORKER_TOKEN"
+    },
+    {
+      "name": "Silvia Art Collective",
+      "appUrl": "https://silvia-sensaria-bridge.onrender.com",
+      "workerToken": "REPLACE_WITH_SILVIA_RENDER_CROP_WORKER_TOKEN"
+    },
+    {
+      "name": "Japandi Art Collective",
+      "appUrl": "https://japandi-sensaria-bridge.onrender.com",
+      "workerToken": "REPLACE_WITH_JAPANDI_RENDER_CROP_WORKER_TOKEN"
+    }
+  ],
+  "workerId": "pod-crop-main-pc",
   "pollIntervalMs": 3000,
   "idleExitMs": 0
 }

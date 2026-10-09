@@ -6,19 +6,38 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { APP_URL, IDLE_EXIT_MS, POLL_INTERVAL_MS, WORKER_ID, validateWorkerConfig } from './config.mjs';
-import { claimJob, completeJob, failJob, heartbeat, updateProgress } from './api.mjs';
-import { generateProductionCrop, inspectMaster, validateRatioSource } from './crop.mjs';
+import {
+  APP_CONNECTIONS,
+  IDLE_EXIT_MS,
+  POLL_INTERVAL_MS,
+  WORKER_ID,
+  validateWorkerConfig
+} from './config.mjs';
+import { apiFor } from './api.mjs';
+import {rotatingApps,heartbeatFor} from './worker-scheduling.mjs';
+import {
+  generateProductionCrop,
+  inspectMaster,
+  validateRatioSource
+} from './crop.mjs';
 
-const LOCK_PATH = path.join(os.tmpdir(), 'silvia-crop-worker-'+crypto.createHash('sha256').update(APP_URL).digest('hex').slice(0,12)+'.lock');
+const LOCK_PATH = path.join(os.tmpdir(), 'pod-crop-worker.lock');
 const tempPaths = new Set();
+const clients = new Map();
 let lastWorkAt = Date.now();
 let busy = false;
 let stopping = false;
-let activeJobId = '';
+let nextAppIndex = 0;
+let activeJob = null;
+let heartbeatInFlight = false;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function clientFor(app) {
+  if (!clients.has(app.appUrl)) clients.set(app.appUrl, apiFor(app));
+  return clients.get(app.appUrl);
 }
 
 async function processExists(pid) {
@@ -45,7 +64,7 @@ async function acquireSingleInstance() {
   let oldPid = '';
   try { oldPid = (await readFile(LOCK_PATH, 'utf8')).trim(); } catch {}
   if (await processExists(oldPid)) {
-    console.log('Silvia Crop Worker is already running.');
+    console.log('Shared POD Crop Worker is already running.');
     process.exit(0);
   }
 
@@ -56,18 +75,28 @@ async function acquireSingleInstance() {
 }
 
 async function cleanup() {
-  for (const tempPath of tempPaths) await rm(tempPath, { force: true }).catch(() => {});
+  for (const tempPath of tempPaths) {
+    await rm(tempPath, { force: true }).catch(() => {});
+  }
   tempPaths.clear();
   await rm(LOCK_PATH, { force: true }).catch(() => {});
 }
 
 async function downloadToFile(url, extension = '.jpg') {
-  const outputPath = path.join(os.tmpdir(), `silvia-master-${crypto.randomUUID()}${extension}`);
+  const outputPath = path.join(
+    os.tmpdir(),
+    `pod-crop-master-${crypto.randomUUID()}${extension}`
+  );
   tempPaths.add(outputPath);
 
   const response = await fetch(url);
-  if (!response.ok || !response.body) throw new Error(`Master download failed (HTTP ${response.status}).`);
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(outputPath));
+  if (!response.ok || !response.body) {
+    throw new Error(`Master download failed (HTTP ${response.status}).`);
+  }
+  await pipeline(
+    Readable.fromWeb(response.body),
+    createWriteStream(outputPath)
+  );
   return outputPath;
 }
 
@@ -84,33 +113,46 @@ async function uploadFile(url, filePath) {
   });
   if (!response.ok) {
     const detail = (await response.text().catch(() => '')).slice(0, 300);
-    throw new Error(`R2 upload failed (HTTP ${response.status})${detail ? ': ' + detail : ''}`);
+    throw new Error(
+      `R2 upload failed (HTTP ${response.status})${detail ? ': ' + detail : ''}`
+    );
   }
   return info.size;
 }
 
-async function processJob(job) {
+async function processJob(app, job) {
+  const api = clientFor(app);
   lastWorkAt = Date.now();
   let masterPath = '';
 
   try {
-    await updateProgress(job.id, { status: 'processing', progress: 2, message: 'Downloading master artwork' });
+    await api.updateProgress(job.id, {
+      status: 'processing',
+      progress: 2,
+      message: 'Downloading master artwork'
+    });
+
     const extension = path.extname(new URL(job.masterDownloadUrl).pathname) || '.jpg';
     masterPath = await downloadToFile(job.masterDownloadUrl, extension);
     const master = await inspectMaster(masterPath, job.orientation);
 
-    for (const ratio of job.ratios) validateRatioSource(master, ratio, job.targets?.[ratio]);
+    for (const ratio of job.ratios) {
+      validateRatioSource(master, ratio, job.targets?.[ratio]);
+    }
 
     const completedRatios = [];
     const assets = {};
 
     for (let index = 0; index < job.ratios.length; index += 1) {
       const ratio = job.ratios[index];
-      const outputPath = path.join(os.tmpdir(), `silvia-${job.artworkId}-${ratio}-${crypto.randomUUID()}.jpg`);
+      const outputPath = path.join(
+        os.tmpdir(),
+        `pod-crop-${job.artworkId}-${ratio}-${crypto.randomUUID()}.jpg`
+      );
       tempPaths.add(outputPath);
-      const baseProgress = 5 + Math.round((index / job.ratios.length) * 85);
 
-      await updateProgress(job.id, {
+      const baseProgress = 5 + Math.round((index / job.ratios.length) * 85);
+      await api.updateProgress(job.id, {
         status: 'processing',
         currentRatio: ratio,
         completedRatios,
@@ -126,7 +168,7 @@ async function processJob(job) {
         target: job.targets?.[ratio]
       });
 
-      await updateProgress(job.id, {
+      await api.updateProgress(job.id, {
         status: 'uploading',
         currentRatio: ratio,
         completedRatios,
@@ -141,7 +183,7 @@ async function processJob(job) {
         height: crop.height,
         sizeBytes,
         density: crop.density,
-        upscaled: crop.upscaled
+        upscaled: crop.upscaled === true
       };
 
       await rm(outputPath, { force: true }).catch(() => {});
@@ -149,11 +191,11 @@ async function processJob(job) {
       lastWorkAt = Date.now();
     }
 
-    await completeJob(job.id, assets);
-    console.log(`Completed ${job.artworkId}: ${job.id}`);
+    await api.completeJob(job.id, assets);
+    console.log(`[${app.name}] Completed ${job.artworkId}: ${job.id}`);
   } catch (error) {
-    console.error(`Crop job ${job.id} failed:`, error.message);
-    await failJob(job.id, error).catch(() => {});
+    console.error(`[${app.name}] Crop job ${job.id} failed:`, error.message);
+    await api.failJob(job.id, error).catch(() => {});
   } finally {
     if (masterPath) {
       await rm(masterPath, { force: true }).catch(() => {});
@@ -163,52 +205,66 @@ async function processJob(job) {
   }
 }
 
-async function pollOnce() {
-  if (busy || stopping) return;
-  busy = true;
-  try {
-    await heartbeat({ busy: false });
-    const result = await claimJob();
-    if (result.job) {
-      activeJobId = result.job.id;
-      await heartbeat({ busy: true, jobId: result.job.id });
-      await processJob(result.job);
-    }
-  } catch (error) {
-    console.error('Worker poll failed:', error.message);
-  } finally {
-    activeJobId = '';
-    busy = false;
-  }
+async function heartbeatAll(){
+  if(heartbeatInFlight)return;
+  heartbeatInFlight=true;
+  try{
+    await Promise.allSettled(APP_CONNECTIONS.map(async app=>{
+      try{await clientFor(app).heartbeat(heartbeatFor(app,activeJob));}
+      catch(error){console.error('['+app.name+'] heartbeat failed:',error.message);}
+    }));
+  }finally{heartbeatInFlight=false;}
 }
-
-async function main() {
+async function pollOnce(){
+  if(busy||stopping)return;
+  busy=true;
+  try{
+    const cycle=rotatingApps(APP_CONNECTIONS,nextAppIndex);
+    if(APP_CONNECTIONS.length)nextAppIndex=(nextAppIndex+1)%APP_CONNECTIONS.length;
+    for(const app of cycle){
+      if(stopping)break;
+      try{
+        const api=clientFor(app);
+        const result=await api.claimJob();
+        if(!result.job)continue;
+        activeJob={app,job:result.job};
+        await heartbeatAll();
+        try{await processJob(app,result.job);}
+        finally{
+          activeJob=null;
+          // All three dashboards remain online, including when another shop finishes.
+          await heartbeatAll();
+        }
+        break;
+      }catch(error){console.error('['+app.name+'] Poll failed:',error.message);}
+    }
+  }finally{busy=false;}
+}
+async function main(){
   validateWorkerConfig();
   await acquireSingleInstance();
-
-  process.on('SIGINT', async () => { stopping = true; await cleanup(); process.exit(0); });
-  process.on('SIGTERM', async () => { stopping = true; await cleanup(); process.exit(0); });
-  process.on('exit', () => { try { fs.rmSync(LOCK_PATH, { force: true }); } catch {} });
-
-  console.log(`Silvia Crop Worker online as ${WORKER_ID}.`);
-  await heartbeat({ busy: false });
-  // Keep the service heartbeat accurate even during long high-resolution crops.
-  const heartbeatTicker = setInterval(() => {
-    if(!stopping) heartbeat({busy,jobId:activeJobId}).catch(e => console.error('Heartbeat retry:', e.message));
-  }, 10000);
-  heartbeatTicker.unref();
-
-  while (!stopping) {
-    await pollOnce();
-    if (IDLE_EXIT_MS > 0 && !busy && Date.now() - lastWorkAt >= IDLE_EXIT_MS) {
-      console.log('No crop jobs pending; worker exiting after idle timeout.');
-      break;
+  process.on('SIGINT',()=>{stopping=true;});
+  process.on('SIGTERM',()=>{stopping=true;});
+  process.on('exit',()=>{try{fs.rmSync(LOCK_PATH,{force:true});}catch{}});
+  console.log('Shared POD Crop Worker online as '+WORKER_ID+' for: '+
+    APP_CONNECTIONS.map(app=>app.name).join(', '));
+  await heartbeatAll();
+  // A crop can take many minutes; keep every Render dashboard connected during it.
+  const ticker=setInterval(()=>{if(!stopping)void heartbeatAll();},8000);
+  ticker.unref();
+  try{
+    while(!stopping){
+      await pollOnce();
+      if(IDLE_EXIT_MS>0&&!busy&&Date.now()-lastWorkAt>=IDLE_EXIT_MS){
+        console.log('Shared crop worker exiting after explicitly configured idle limit.');
+        break;
+      }
+      await sleep(POLL_INTERVAL_MS);
     }
-    await sleep(POLL_INTERVAL_MS);
+  }finally{
+    clearInterval(ticker);
+    await cleanup();
   }
-
-  clearInterval(heartbeatTicker);
-  await cleanup();
 }
 
 main().catch(async error => {
