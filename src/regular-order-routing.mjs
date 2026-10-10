@@ -101,7 +101,8 @@ export async function prepareRegularRoute(receiptId,shopId){
  };
  plan.signature=quoteSignature(plan);
  const review={...order.review,classification:'regular',status:'awaiting_supplier_approval',
-  regularPlan:plan,approval:null,updatedAt:generatedAt};
+  regularPlan:plan,approval:null,
+  automaticRouting:{status:'ready',preparedAt:generatedAt,supplier:plan.supplier},updatedAt:generatedAt};
  await saveReview(receiptId,review);
  return {plan,review};
 }
