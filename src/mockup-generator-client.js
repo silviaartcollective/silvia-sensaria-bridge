@@ -75,7 +75,7 @@ function inspect(){
   function walk(layers,stem,visibleParent){
    for(var i=0;i<layers.length;i++){
     var l=layers[i],path=stem?stem+'.'+i:String(i),group=!!(l.layers&&l.layers.length!==undefined);
-    var smart=false;try{smart=l.kind===LayerKind.SMARTOBJECT}catch(_){}
+    var smart=false;try{smart=l.kind===LayerKind.SMARTOBJECT||String(l.kind).toLowerCase().includes('smart')}catch(_){}
     var visibilityState=!!l.visible&&visibleParent;
     var info={path:path,name:String(l.name||''),kind:smart?'smart':(group?'group':'other'),visible:visibilityState};
     visibility.push(info);if(smart)objects.push(info);
@@ -92,7 +92,7 @@ function openArtworkSlot(path){
   var parent=app.activeDocument,parts=path.split('.').map(Number);
   var l=parent.layers[parts[0]];
   for(var i=1;i<parts.length;i++)l=l.layers[parts[i]];
-  if(!l||l.kind!==LayerKind.SMARTOBJECT||!l.visible)
+  if(!l||!(l.kind===LayerKind.SMARTOBJECT||String(l.kind).toLowerCase().includes('smart'))||!l.visible)
    throw Error('Mapped artwork layer is hidden or not a Smart Object.');
   parent.source='MG_PARENT_DOC';parent.activeLayer=l;
   executeAction(stringIDToTypeID('placedLayerEditContents'));
@@ -135,7 +135,7 @@ function visibilityCheck(){
   function walk(layers,stem,visibleParent){
    for(var i=0;i<layers.length;i++){
     var l=layers[i],path=stem?stem+'.'+i:String(i),group=!!(l.layers&&l.layers.length!==undefined);
-    var smart=false;try{smart=l.kind===LayerKind.SMARTOBJECT}catch(_){}
+    var smart=false;try{smart=l.kind===LayerKind.SMARTOBJECT||String(l.kind).toLowerCase().includes('smart')}catch(_){}
     var v=!!l.visible&&visibleParent;
     visibility.push({path:path,name:String(l.name||''),kind:smart?'smart':(group?'group':'other'),visible:v});
     if(group)walk(l.layers,path,v);
@@ -157,6 +157,40 @@ function exportComposite(){
   app.echoToOE('MG_EXPORT:'+JSON.stringify({width:Math.round(doc.width.as('px')),height:Math.round(doc.height.as('px'))}));
   doc.saveToOE('jpg:0.9');
  }catch(e){app.echoToOE('MG_ERROR:'+String(e.message||e))}
+}
+
+function thumbnailPhotopea(){
+ try{
+  var doc=app.activeDocument,w=doc.width.as('px'),h=doc.height.as('px');
+  if(Math.max(w,h)>800){
+   var f=800/Math.max(w,h);
+   doc.resizeImage(UnitValue(Math.max(1,Math.floor(w*f)),'px'),
+      UnitValue(Math.max(1,Math.floor(h*f)),'px'),null,ResampleMethod.BICUBIC);
+  }
+  app.echoToOE('MG_PREVIEW:'+JSON.stringify({width:Math.round(doc.width.as('px')),height:Math.round(doc.height.as('px'))}));
+  doc.saveToOE('jpg:0.72');
+ }catch(e){app.echoToOE('MG_ERROR:'+String(e.message||e))}
+}
+async function previewTemplate(template){
+  message('Scanning '+template.name+' in Photopea…');
+  await pp.load('template',template.id);
+  const inspected=pp.parse(await pp.script(inspect),'MG_INSPECT:');
+  const scan=await api('templates/'+template.id+'/inspect','POST',{objects:inspected.objects});
+  if(scan.classification.status==='needs_mapping'){
+    needsSelection={template:template,objects:scan.classification.objects};
+    $('mg-mapping').hidden=false;
+    $('mg-map-file').textContent=template.name+' — '+scan.classification.reason;
+    $('mg-map-select').replaceChildren();
+    for(const o of scan.classification.objects)$('mg-map-select').append(create('option',o.name+' ['+o.path+']',{value:o.path}));
+  }
+  const image=await pp.script(thumbnailPhotopea);
+  pp.parse(image,'MG_PREVIEW:');
+  if(!image.binary||image.binary.byteLength>3*1024*1024)throw Error('Photopea preview unavailable or too large.');
+  const data=await api('templates/'+template.id+'/preview','POST');
+  await upload(data.uploadUrl,new Blob([image.binary],{type:'image/jpeg'}),'image/jpeg');
+  await api('templates/'+template.id+'/preview-confirm','POST',{key:data.key});
+  await loadTemplates();
+  message('Saved thumbnail and Smart Object scan for '+template.name+'.');
 }
 async function inspectAndReplace(item,template,result){
   message('Opening PSD: '+template.name);
@@ -203,6 +237,9 @@ async function loadTemplates(){
   if(t.previewKey)label.append(create('img','',{src:'/api/mockups/file/preview/'+t.id,alt:'PSD template preview'}));
   const details=create('span');details.append(create('strong',t.name),create('small',t.collection+' · '+t.status+
      (t.mapping?' · target '+t.mapping.path:'')));label.append(details);row.append(label);
+  const preview=create('button','Preview / Inspect',{type:'button'});
+  preview.addEventListener('click',()=>act(()=>previewTemplate(t)));
+  row.append(preview);
   const del=create('button','Delete',{type:'button'});
   del.addEventListener('click',()=>act(async()=>{
    if(!confirm('Permanently delete '+t.name+' from saved templates?'))return;
@@ -294,6 +331,12 @@ async function retry(){
  job=(await api('jobs/'+job.id+'/control','POST',{owner,action:'retry'})).job;
  await process();
 }
+async function regenerate(){
+  if(!job)throw Error('Select a batch first.');
+  if(!confirm('Regenerate every mockup? Existing verified JPGs remain until replacements pass checks.'))return;
+  job=(await api('jobs/'+job.id+'/control','POST',{owner,action:'regenerate'})).job;
+  await process();
+}
 async function saveMapping(){
  if(!needsSelection)throw Error('No template is awaiting a mapping.');
  const path=$('mg-map-select').value;
@@ -320,7 +363,7 @@ async function useResults(){
 function act(fn){Promise.resolve().then(fn).catch(failure)}
 for(const [id,fn]of [['mg-upload-templates',uploadTemplates],['mg-refresh-templates',loadTemplates],
  ['mg-new-job',createJob],['mg-refresh-jobs',loadJobs],['mg-start',resume],
- ['mg-pause',pause],['mg-retry',retry],['mg-save-map',saveMapping],
+ ['mg-pause',pause],['mg-retry',retry],['mg-regenerate',regenerate],['mg-save-map',saveMapping],
  ['mg-use-results',useResults]])$(id).addEventListener('click',()=>act(fn));
 const tabListing=$('creator-listing-tab'),tabMockup=$('creator-mockup-tab');
 function chooseTab(isMockup){
