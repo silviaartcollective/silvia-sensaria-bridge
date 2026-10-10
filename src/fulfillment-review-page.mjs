@@ -23,13 +23,13 @@ table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:9px;bord
 </style></head><body><div class="shell"><aside><nav><a href="/">Dashboard</a>
 <a href="/orders">All Orders</a><a class="nav active" href="/fulfillment-review">Fulfillment Review</a>
 <a href="/tracking">Tracking</a></nav></aside><main>
-<h1>Supplier Fulfillment Review</h1><p class="sub">__SHOP__ · Paid Etsy orders · Prepared quotes · Human approval</p>
+<h1>Supplier Fulfillment Review</h1><p class="sub">__SHOP__ · Automatic live supplier recommendations · Human approval</p>
 <div class="note">Review mode only. No supplier orders are placed from this page. Sensaria remains a manual CSV workflow. Live comparisons may include modeled shipping or contingency costs; verify the exact shipping address, product variant and final invoice before purchasing.</div>
 <div class="card"><h2>Find an Etsy receipt</h2>
 <div class="row"><input id="receipt" type="text" inputmode="numeric" placeholder="Etsy receipt ID" aria-label="Etsy receipt ID">
-<button id="load">Load receipt</button><button id="prepare" class="primary">Prepare supplier comparison</button></div>
+<button id="load">View recommendation</button><button id="prepare" class="primary">Refresh live supplier quote</button></div>
 <p class="sub">Converted __PREFIX__ SKUs only. Legacy Gelato orders and multi-item orders stay in manual review.</p>
-</div><div id="message" role="status">Enter a receipt ID, or open this page from All Orders.</div>
+</div><div id="message" role="status">Eligible new paid orders are analyzed automatically. Open an Etsy receipt to view the recommended supplier.</div>
 <section id="details" class="card" hidden><h2>Recommended supplier</h2><div id="plan"></div>
 <div class="checks"><label><input type="checkbox" id="check-address"> I verified the full Etsy shipping address.</label>
 <label><input type="checkbox" id="check-art"> I verified the production artwork and correct crop.</label>
@@ -71,9 +71,28 @@ function show(p){
  box.append(headline,note,freshness,table);
  for(const x of document.querySelectorAll('.checks input'))x.checked=false;
 }
-$('load').addEventListener('click',()=>run(async()=>{const d=await api('/api/fulfillment-review/'+id());show(d.review?.regularPlan||null);
- report(d.review?.regularPlan?'Existing plan loaded. Check approval state and quote time.':'Receipt loaded. Select Prepare supplier comparison to check current providers.');}));
-$('prepare').addEventListener('click',()=>run(async()=>{report('Reading paid receipt, verifying R2 crop and comparing suppliers…');const d=await api('/api/fulfillment-review/'+id()+'/prepare',{});
+async function readRecommendation(){
+ const d=await api('/api/fulfillment-review/'+id());
+ const review=d.review||{},route=review.automaticRouting||{};
+ show(review.regularPlan||null);
+ if(review.status==='approved_for_manual_order'){
+   $('approve').disabled=true;
+   report('Approved for manual supplier placement. No supplier order has been submitted.');
+ }else if(review.regularPlan){
+   report(Date.now()>Date.parse(review.regularPlan.expiresAt)
+     ? 'Recommendation expired. Choose Refresh live supplier quote before approval.'
+     : 'Supplier recommendation prepared automatically. Verify the details before approving.');
+ }else if(route.status==='manual_review'){
+   report('Manual review required: '+(route.message||'Order or artwork validation failed.'),true);
+ }else if(route.status==='retry'){
+   report('Live supplier lookup pending retry: '+(route.message||'Temporary supplier error.'));
+ }else{
+   report('Paid order is awaiting automatic supplier recommendation. It will appear when the Etsy sync and live quote finish.');
+ }
+ return d;
+}
+$('load').addEventListener('click',()=>run(readRecommendation));
+$('prepare').addEventListener('click',()=>run(async()=>{report('Refreshing paid receipt, verifying R2 crop and comparing suppliers…');const d=await api('/api/fulfillment-review/'+id()+'/prepare',{});
  show(d.plan);report('Quote prepared. No supplier order submitted. Verify all details before approval.');}));
 $('approve').addEventListener('click',()=>run(async()=>{
  if(!plan)throw Error('Prepare a quote first');
@@ -84,7 +103,14 @@ $('approve').addEventListener('click',()=>run(async()=>{
  addressVerified:checks[0],artworkVerified:checks[1],variantVerified:checks[2],priceVerified:checks[3]});
  report('Approved for manual supplier placement. Nothing was purchased.');}));
 const preset=new URLSearchParams(location.search).get('receipt');
-if(preset&&/^[1-9]\d{0,19}$/.test(preset)){$('receipt').value=preset;$('load').click();}
+if(preset&&/^[1-9]\d{0,19}$/.test(preset)){
+ $('receipt').value=preset;$('load').click();
+ let attempts=0;const tick=setInterval(async()=>{
+   if(++attempts>12||plan){clearInterval(tick);return;}
+   try{const data=await readRecommendation();if(data.review?.automaticRouting?.status==='manual_review')clearInterval(tick);}
+   catch{if(attempts>5)clearInterval(tick);}
+ },10000);
+}
 })();
 </script></body></html>`.replaceAll('__SHOP__',e(shop)).replaceAll('__PREFIX__','SAC');
 }

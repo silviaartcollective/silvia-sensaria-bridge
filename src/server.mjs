@@ -1985,7 +1985,12 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/orders') {
     if (!requireAdminApi(req, res)) return;
-    try { return sendJson(res, 200, { ok: true, ...(await listOrders()) }); }
+    try {
+      if(AUTO_REVIEW_ENABLED && !autoReviewPolling &&
+         (!lastAutoReviewPoll || Date.now()-Date.parse(lastAutoReviewPoll)>120000))
+        void reconcileNewEtsyPaidOrders();
+      return sendJson(res,200,{ok:true,...(await listOrders())});
+    }
     catch (error) { return sendJson(res, 500, { ok: false, error: String(error.message || error) }); }
   }
   if (req.method === 'GET' && url.pathname === '/api/custom-orders') {

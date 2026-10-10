@@ -50,7 +50,13 @@ function renderOrders(){
     const item=document.createElement('span');item.className='small';
     item.textContent=(o.items||[]).map(i=>i.title).filter(Boolean).join('; ')||'Item details unavailable';
     const status=document.createElement('span');status.className='tag';
-    status.textContent=(o.shipped?'Shipped / completed':'Order received')+(candidate(o)?' · Custom candidate':'');
+    const progress=o.status==='awaiting_supplier_approval'
+      ? ' · Recommended: '+(o.supplier||'Available')
+      : o.status==='approved_for_manual_order'?' · Approved for manual order'
+      : o.automaticRouting?.status==='manual_review'?' · Needs manual review'
+      : o.automaticRouting?.status==='retry'?' · Supplier retry pending'
+      : candidate(o)?' · Custom candidate':' · Auto-checking supplier';
+    status.textContent=(o.shipped?'Shipped / completed':'Order received')+progress;
     btn.append(headline,item,status);
     btn.addEventListener('click',()=>{
       openOrder(o.receiptId).catch(error=>report('Could not load Etsy order #'+o.receiptId+': '+(error.message||String(error)),true));
@@ -64,7 +70,7 @@ async function loadOrders(quiet=false){
   orders=(data.orders||[]).filter(o=>!o.error);
   renderOrders();
   if(!quiet)report('Loaded '+orders.length+' paid Etsy receipts. No supplier orders or Etsy shipments were changed.'+
-    (data.truncated?' Displaying the latest 120 staged receipts.':''));
+    (data.truncated?' Displaying the latest 120 staged receipts.':'')+' Automatic supplier recommendations are enabled for eligible orders.');
 }
 async function openOrder(id){
   const current=++loadingDetail;selectedId=id;renderOrders();

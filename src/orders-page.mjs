@@ -37,8 +37,8 @@ pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 <a class="nav active" href="/orders">All Orders</a><a class="nav" href="/tracking">Order Tracking</a>
 <a class="nav" href="/description-updater">Description Updater</a><a class="nav" href="/logout">Log out</a></nav></aside>
 <main><h1>All Etsy Orders</h1>
-<p>Review all paid Etsy purchases, whether regular or custom. This page reads saved receipts and does not place supplier orders.</p>
-<div class="toolbar"><button id="refresh" class="primary">Refresh orders</button><button id="sync">Sync latest 15 paid Etsy orders</button>
+<p>Paid Etsy orders are synced and checked automatically for the best eligible supplier. Recommendations appear for review; supplier orders are never submitted without a separate approval workflow.</p>
+<div class="toolbar"><button id="refresh" class="primary">Refresh orders</button><button id="sync">Sync latest paid orders now</button>
 <input id="search" placeholder="Search buyer, order, or artwork" aria-label="Search orders">
 <select id="filter"><option value="all">All orders</option><option value="open">Not shipped</option><option value="shipped">Shipped / completed</option><option value="custom">Custom / possible custom</option></select></div>
 <div class="status" id="message">Loading staged Etsy orders…</div>
@@ -54,7 +54,7 @@ pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 <div class="detailrow"><strong>Order totals</strong><div id="totals"></div></div>
 <div class="actions"><a class="btn primary" id="review-custom" href="/custom-orders">Review as custom order</a>
 <a class="btn" id="track-order" href="/tracking">Open Order Tracking</a>
-<a class="btn" id="review-regular" href="/fulfillment-review">Prepare Supplier Recommendation</a></div>
+<a class="btn" id="review-regular" href="/fulfillment-review">View Supplier Recommendation</a></div>
 </div></section></div>
 </main></div><script src="/orders-client.js" defer></script></body></html>`;
 }
