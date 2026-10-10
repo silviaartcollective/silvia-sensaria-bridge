@@ -1271,7 +1271,7 @@ async function reconcileNewEtsyPaidOrders(){
    if(!shopId)throw new Error('Cannot reconcile orders without an authorized Etsy shop.');
    const recent=await recentPaidReceipts(session,40);
    const reviewIds=recent.map(item=>String(item.receipt_id||''))
-     .filter(id=>/^[1-9]\\d{0,19}$/.test(id));
+     .filter(id=>/^[1-9]\d{0,19}$/.test(id));
    const saved=Object.fromEntries(await Promise.all(reviewIds.map(async id=>[
      id,await optionalJson(reviewKey(id))
    ])));
