@@ -275,7 +275,9 @@ async function showJob(id){
  job=(await api('jobs/'+id)).job;
  const done=job.templates.filter(t=>t.status==='completed').length;
  message(job.filename+' — '+done+'/'+job.templates.length+' completed ('+job.status+')');
- const box=$('mg-results');box.replaceChildren();
+ const zip=$('mg-download-all');zip.href='/api/mockups/jobs/'+job.id+'/download-all';
+  zip.hidden=!done;
+  const box=$('mg-results');box.replaceChildren();
  for(const t of job.templates){
   const row=create('div','',{class:'mg-item'}),title=create('span');
   title.append(create('strong',t.outputName),create('small',t.status+(t.error?' — '+t.error:'')));

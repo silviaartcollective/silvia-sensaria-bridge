@@ -41,6 +41,7 @@ export function renderMockupGeneratorSection() {
     <button class="btn secondary" type="button" id="mg-regenerate">Regenerate all JPGs</button></div>
    <div id="mg-progress" class="status" role="status">Choose a saved batch to begin.</div>
    <div id="mg-results" class="mg-results"></div>
+   <a class="btn secondary" id="mg-download-all" href="#" download style="display:inline-block">Download all completed JPGs (ZIP)</a>
    <button class="btn secondary" id="mg-use-results" type="button">Use finished JPGs in Etsy Product Creator</button>
   </section>
  </div>

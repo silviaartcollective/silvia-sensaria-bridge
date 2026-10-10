@@ -11,6 +11,7 @@ import {
  signedArtworkUploadUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
 } from './r2.mjs';
 import {randomUUID} from 'node:crypto';
+import {streamMockupZip} from './mockup-zip.mjs';
 
 const ID='[a-f0-9-]{36}';
 const maxLength=200;
@@ -145,6 +146,9 @@ export async function handleMockupAPI(req,res,url,{authenticated,readJson,sendJs
     const body=await readJson(req);
     return send(200,{job:await failMockupItem(id,ownerCheck(body),str(body.templateId),
      str(body.error||'Photopea processing failed'),!!body.needsMapping)}),true;
+   }
+   if(req.method==='GET'&&parts[2]==='download-all'){
+    await streamMockupZip(res,id);return true;
    }
    if(req.method==='GET'&&parts[2]==='download'&&isId(parts[3])){
     const d=await getMockupItemDownload(id,parts[3]);
