@@ -3,7 +3,13 @@ const panel=document.getElementById('mockup-generator-panel');
 if(panel){
 const $=id=>document.getElementById(id);
 const create=(tag,label,attrs={})=>{const el=document.createElement(tag);el.textContent=label||'';for(const [k,v] of Object.entries(attrs))el.setAttribute(k,v);return el;};
-let templates=[],jobs=[],job=null,owner=crypto.randomUUID(),running=false,stopping=false,needsSelection=null;
+let templates=[],jobs=[],job=null,owner=crypto.randomUUID(),running=false,stopping=false,needsSelection=null,requested=false,ready=false;
+function setProgress(done,total){$('mg-progress-bar').style.width=(total?Math.round(100*done/total):0)+'%';}
+function markRequested(){requested=true;ready=false;panel.dataset.generationRequested='true';panel.dataset.generationReady='false';}
+$('creator-form').addEventListener('submit',e=>{
+ if(requested&&!ready){e.preventDefault();e.stopImmediatePropagation();
+ failure(Error('Generated mockups are not ready yet. Finish the batch or retry before creating the Etsy draft.'));}
+},true);
 const message=(text,warning=false)=>{const el=$('mg-progress');el.textContent=text;el.classList.toggle('warn',warning)};
 const failure=e=>message(e?.message||String(e),true);
 async function api(route,method='GET',body){
@@ -52,27 +58,48 @@ class Photopea{
     this.readyResolve=resolve;
     setTimeout(()=>{if(this.readyResolve){this.readyResolve=null;this.ready=null;reject(Error('Photopea connection timed out. Check content blockers.'));}},90000);
    });
-   this.frame.src='https://www.photopea.com/';
+   this.frame.src='https://www.photopea.com/#'+encodeURIComponent(JSON.stringify({environment:{intro:false,vmode:2}}));
    $('mg-engine-status').textContent='Connecting to Photopea…';
   }
   return this.ready;
  }
- async send(data,timeout=240000){
+ async send(data,timeout=180000){
   await this.init();
   if(this.pending)throw Error('Photopea is still processing a previous operation.');
   return new Promise((resolve,reject)=>{
    const p={resolve,reject,messages:[],binary:null};
-   p.timer=setTimeout(()=>{this.pending=null;reject(Error('Photopea timed out while processing this PSD.'));},timeout);
+   p.timer=setTimeout(()=>{this.pending=null;reject(Error('PSD processing timed out after '+Math.round(timeout/1000)+' seconds; the processor will try the next PSD.'));},timeout);
    this.pending=p;
    this.frame.contentWindow.postMessage(data,'https://www.photopea.com',data instanceof ArrayBuffer?[data]:[]);
   });
  }
+ async reset(){
+  if(this.pending){clearTimeout(this.pending.timer);this.pending.reject(Error('Processor reset.'));this.pending=null;}
+  this.ready=null;this.readyResolve=null;
+  this.frame.src='about:blank';
+  $('mg-engine-status').textContent='Restarting background PSD engine…';
+ }
  async load(kind,id){
-  // New PSD per batch item; never keep 75–100 layered mockups open together.
-  if(kind==='template')await this.script(releaseOldPhotopeaDocuments);
-  const r=await fetch('/api/mockups/file/'+kind+'/'+id,{cache:'no-store'});
-  if(!r.ok)throw Error('Unable to load '+kind+' from R2 (HTTP '+r.status+').');
-  return this.send(await r.arrayBuffer(),300000);
+  if(kind==='template'){
+   try{await this.send('('+releaseOldPhotopeaDocuments.toString()+')();',15000);}
+   catch(error){await this.reset();await this.init();}
+  }
+  const label=kind==='template'?'PSD template':'artwork';
+  message('Downloading '+label+' from R2…');
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),150000);
+  let content;
+  try{
+   const response=await fetch('/api/mockups/file/'+kind+'/'+id,{cache:'no-store',signal:controller.signal});
+   if(!response.ok)throw Error('R2 HTTP '+response.status);
+   const size=Number(response.headers.get('content-length')||0);
+   if(size>350*1024*1024)throw Error('PSD exceeds the 350 MB browser limit');
+   message('Receiving '+label+(size?' ('+(size/1024/1024).toFixed(1)+' MB)':'')+'…');
+   content=await response.arrayBuffer();
+  }catch(error){throw Error('Could not download '+label+': '+error.message);}
+  finally{clearTimeout(timer);}
+  message('Importing '+label+' into background processor ('+(content.byteLength/1024/1024).toFixed(1)+' MB)…');
+  await this.send(content,180000);
+  return content.byteLength;
  }
  async script(fn,...args){return this.send('('+fn.toString()+')('+args.map(x=>JSON.stringify(x)).join(',')+');');}
  parse(result,tag){
