@@ -2,7 +2,7 @@ export function renderMockupGeneratorSection(){
 return `
 <section class="uploadbox" id="mockup-generator-panel" aria-label="Generate mockups">
  <div><strong>Generate listing mockups</strong>
- <div class="uploadmeta">Use the master artwork above with your saved or newly uploaded Photoshop PSD / PSB mockups. Finished JPGs automatically replace the artwork mockups selected for this Etsy listing.</div></div>
+ <div class="uploadmeta">Use the master artwork above with PSD/PSB mockups. The JPGs generate in the background and attach automatically to the Etsy listing.</div></div>
  <div class="uploadrow">
   <label>Add PSD / PSB mockups <span class="hint">optional if templates are saved</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
@@ -18,9 +18,12 @@ return `
   <button class="btn secondary" type="button" id="mg-generate">Generate & attach mockups</button>
   <button class="btn secondary" type="button" id="mg-pause" disabled>Stop after current PSD</button>
  </div>
- <div id="mg-progress" class="status" role="status" aria-live="polite">Choose a master artwork above and PSD templates, then generate. You can also upload ready-made JPG mockups using the existing field.</div>
+ <div id="mg-progress" class="status" role="status" aria-live="polite">Choose artwork and PSD mockups, then click Generate. Existing JPG mockups can also be uploaded directly.</div>
  <div class="progress" aria-label="Mockup generation progress"><span id="mg-progress-bar"></span></div>
- <div id="mg-results" class="mg-results"></div>
+ <details class="mg-advanced">
+  <summary>View individual results and downloads</summary>
+  <div id="mg-results" class="mg-results"></div>
+ </details>
  <details class="mg-advanced">
   <summary>Saved batches & troubleshooting</summary>
   <div class="mg-actions">
