@@ -59,7 +59,8 @@ export function summarizeOrder(record, review = null) {
     merchandise: money(r.total_price), shipping: money(r.total_shipping_cost),
     classification: review?.classification || 'unclassified',
     status: review?.status || 'needs_review',
-    supplier: review?.plan?.supplier || '',
+    supplier: review?.regularPlan?.supplier || review?.plan?.supplier || '',
+    automaticRouting: review?.automaticRouting || null,
     inference: inferOrder(r), updatedAt: review?.updatedAt || record.receivedAt
   };
 }
