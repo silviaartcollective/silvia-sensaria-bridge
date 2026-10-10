@@ -4,12 +4,13 @@ import { ADMIN_LINKS, renderAdminSidebar, decorateAdminHtml, extractActiveAdminP
 import { renderTrackingPage } from '../src/tracking-page.mjs';
 import { renderOrdersPage } from '../src/orders-page.mjs';
 import { renderCustomOrdersPage } from '../src/custom-orders-page.mjs';
+import { renderFulfillmentReviewPage } from '../src/fulfillment-review-page.mjs';
 
 const expected = [
   'Dashboard','System Readiness', 'Product Creator','Listing Reposter', 'Gelato → Silvia Converter', 'Shipping Profile',
   'Pricing & Shipping', 'Supplier Comparison', 'Custom Size Lookup', 'Custom Orders',
   'Description Updater', 'Order Tracking', 'Test Order', 'All Orders',
-  'Artwork Library', 'Product SKUs', 'Etsy Status', 'R2 Status', 'Log out'
+  'Fulfillment Review', 'Artwork Library', 'Product SKUs', 'Etsy Status', 'R2 Status', 'Log out'
 ];
 
 test('canonical sidebar contains all dashboard links in one permanent order', () => {
@@ -33,7 +34,8 @@ test('correct active section on new full-page admin tools',()=>{
   for(const [html,expectedPath] of [
     [renderTrackingPage('Silvia Art Collective'),'/tracking'],
     [renderOrdersPage(),'/orders'],
-    [renderCustomOrdersPage(),'/custom-orders']
+    [renderCustomOrdersPage(),'/custom-orders'],
+    [renderFulfillmentReviewPage('Test Shop'),'/fulfillment-review']
   ]) {
     assert.equal(extractActiveAdminPath(html),expectedPath);
     const result=decorateAdminHtml(html);

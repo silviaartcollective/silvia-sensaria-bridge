@@ -31,6 +31,8 @@ import { renderCustomSizeLookupPage } from './custom-size-page.mjs';
 import { lookupCustomSize } from './custom-size-lookup.mjs';
 import { renderCustomOrdersPage } from './custom-orders-page.mjs';
 import { renderOrdersPage } from './orders-page.mjs';
+import { renderFulfillmentReviewPage } from './fulfillment-review-page.mjs';
+import { prepareRegularRoute, approveRegularRoute } from './regular-order-routing.mjs';
 import { listOrders, readOrder, recordImportedReceipt } from './custom-order-store.mjs';
 import { classify, quote, savePlan, approve, markOrdered } from './custom-order-workflow.mjs';
 import { recentPaidReceipts, receiptTransactions } from './etsy-orders-read.mjs';
@@ -1808,6 +1810,55 @@ const server = http.createServer(async (req, res) => {
         rollbackError
       });
     }
+  }
+
+  // Regular fulfillment phase 1: shop-scoped recommendations and approval ONLY.
+  // No endpoint below buys anything from a supplier or completes an Etsy shipment.
+  if(req.method==='GET' && url.pathname==='/fulfillment-review'){
+    if(!requireAdminPage(req,res,'/fulfillment-review'))return;
+    return sendHtml(res,200,renderFulfillmentReviewPage('Silvia Art Collective'));
+  }
+  const regularRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})(?:\/(prepare|approve))?$/);
+  if(regularRoute && req.method==='GET' && !regularRoute[2]){
+    if(!requireAdminApi(req,res))return;
+    try{
+      const data=await readOrder(regularRoute[1]);
+      return sendJson(res,200,{ok:true,review:data.review||null,summary:data.summary});
+    }catch(error){return sendJson(res,404,{ok:false,error:String(error.message||error)});}
+  }
+  if(regularRoute && req.method==='POST' && regularRoute[2]){
+    if(!requireAdminApi(req,res))return;
+    const origin=String(req.headers.origin||'');
+    const expected=(req.headers['x-forwarded-proto']||'https')+'://'+String(req.headers.host||'');
+    if((origin&&origin!==expected)||req.headers['sec-fetch-site']==='cross-site')
+      return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+      return sendJson(res,415,{ok:false,error:'JSON request required.'});
+    try{
+      const id=regularRoute[1],action=regularRoute[2],body=await readJsonBody(req);
+      const session=await getEtsySession();
+      const shopId=Number(session.shop.shop_id);
+      const scopes=new Set(String(session.scope||'').split(/\s+/));
+      if(!scopes.has('transactions_r'))
+        return sendJson(res,403,{ok:false,error:'Etsy transactions_r permission required.'});
+      // Always refresh actual Etsy payment, address, and transaction details before
+      // planning or approving a supplier. An old webhook alone is insufficient.
+      const latest=await getShopReceipt({
+        shopId,receiptId:id,keystring:session.keystring,
+        sharedSecret:session.sharedSecret,accessToken:session.accessToken
+      });
+      if(!Array.isArray(latest.transactions)||!latest.transactions.length)
+        latest.transactions=await receiptTransactions(session,id);
+      if(latest.was_paid!==true && latest.is_paid!==true)
+        throw new Error('Etsy does not explicitly show this receipt as paid.');
+      if(latest.was_shipped===true||latest.is_shipped===true)
+        throw new Error('This Etsy order has already shipped. No supplier placement is needed.');
+      await recordImportedReceipt(latest,shopId);
+      if(action==='prepare')
+        return sendJson(res,200,{ok:true,...await prepareRegularRoute(id,shopId)});
+      if(action==='approve')
+        return sendJson(res,200,{ok:true,review:await approveRegularRoute(id,shopId,body)});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
   }
 
   // Private, read-only Etsy staging plus explicit human supplier approval.

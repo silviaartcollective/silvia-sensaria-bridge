@@ -53,7 +53,8 @@ pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 <div class="detailrow"><strong>Shipping status &amp; tracking</strong><pre id="shipment"></pre></div>
 <div class="detailrow"><strong>Order totals</strong><div id="totals"></div></div>
 <div class="actions"><a class="btn primary" id="review-custom" href="/custom-orders">Review as custom order</a>
-<a class="btn" id="track-order" href="/tracking">Open Order Tracking</a></div>
+<a class="btn" id="track-order" href="/tracking">Open Order Tracking</a>
+<a class="btn" id="review-regular" href="/fulfillment-review">Prepare Supplier Recommendation</a></div>
 </div></section></div>
 </main></div><script src="/orders-client.js" defer></script></body></html>`;
 }

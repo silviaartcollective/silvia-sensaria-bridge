@@ -65,6 +65,7 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
     <a class="nav" href="/tracking">Order Tracking</a>
     <a class="nav" href="/test-order">Test Order</a>
     <a class="nav" href="/orders">All Orders</a>
+    <a class="nav" href="/fulfillment-review">Fulfillment Review</a>
     <a class="nav" href="/#artworks">Artwork Library</a>
     <a class="nav" href="/#mappings">Product SKUs</a>
     <a class="nav" href="/etsy/status" target="_blank">Etsy Status</a>
@@ -97,7 +98,7 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
     <div class="card" id="orders">
       <div class="eyebrow">Orders</div><div class="big" id="order-count">Checking…</div>
       <div class="status" id="order-status"><span class="spinner"></span><span>Loading paid receipts</span></div>
-      <div class="actions" style="margin-top:13px"><a class="btn primary" href="/orders">Open All Orders</a><a class="btn" href="/custom-orders">Custom Orders</a></div>
+      <div class="actions" style="margin-top:13px"><a class="btn primary" href="/orders">Open All Orders</a><a class="btn" href="/fulfillment-review">Fulfillment Review</a><a class="btn" href="/custom-orders">Custom Orders</a></div>
     </div>
     <div class="card" id="artworks">
       <div class="eyebrow">Artwork storage</div>

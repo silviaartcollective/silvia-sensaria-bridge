@@ -103,6 +103,7 @@ async function openOrder(id){
     currencyAmount(receipt.total_shipping_cost));
   $('review-custom').href='/custom-orders?receipt='+encodeURIComponent(id);
   $('track-order').href='/tracking';
+  $('review-regular').href='/fulfillment-review?receipt='+encodeURIComponent(id);
   if(window.innerWidth<1150)$('order-detail').scrollIntoView({behavior:'smooth',block:'start'});
 }
 $('search').addEventListener('input',renderOrders);
