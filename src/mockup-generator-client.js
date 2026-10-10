@@ -338,6 +338,7 @@ async function createJob(){
  await uploadTemplates();
  const ids=[...$('mg-templates').querySelectorAll('input:checked')].map(x=>x.value);
  if(!ids.length)throw Error('Choose saved PSD templates or upload new PSDs.');
+ markRequested();
  const previous=jobs.find(j=>j.artworkUploaded&&j.filename===art.name&&j.artworkSize===art.size&&
   j.templates.length===ids.length&&j.templates.every(t=>ids.includes(t.id))&&j.status!=='completed');
  if(previous){
@@ -386,7 +387,7 @@ async function process(){
    const incomplete=job.templates.filter(t=>t.status!=='completed').length;
    message(incomplete+' mockups need attention. Open Saved batches to retry them. Etsy draft creation is held until the batch finishes.',true);
   }
- }}
+ }
 }
 async function resume(){
  if(!job)throw Error('Select or create a batch.');
@@ -432,9 +433,13 @@ async function useResults(){
  $('upload-status').textContent=finished.length+' generated JPGs attached to Etsy draft media.'+
  (job.templates.length>7?' The first 7 of '+job.templates.length+' were selected to leave space for 3 preset listing images.':'');
 }
+$('mockup_files').addEventListener('change',()=>{
+  if($('mockup_files').files.length){requested=false;ready=false;
+   panel.dataset.generationRequested='false';message('Using manually selected JPG mockups for this Etsy listing.');}
+ });
 function act(fn){Promise.resolve().then(fn).catch(failure)}
 for(const [id,fn] of [
- ['mg-generate',async()=>{markRequested();await createJob();}],
+ ['mg-generate',createJob],
  ['mg-refresh-jobs',loadJobs],
  ['mg-pause',pause],
  ['mg-retry',retry],
