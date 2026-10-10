@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseFulfillmentSku,eligibleRegularReceipt,rankEligibleOffers,quoteSignature} from '../src/regular-order-routing.mjs';
+import {parseFulfillmentSku,eligibleRegularReceipt,rankEligibleOffers,quoteSignature,shippingAddressDigest} from '../src/regular-order-routing.mjs';
 import {renderFulfillmentReviewPage} from '../src/fulfillment-review-page.mjs';
 import vm from 'node:vm';
 const sku='SAC0012-FC-2436-BRN';
@@ -12,7 +12,7 @@ test('converted SKU is authoritative for artwork, exact size and frame',()=>{
  assert.throws(()=>parseFulfillmentSku('SAC0012-FC-2436'),/frame/i);
  assert.throws(()=>parseFulfillmentSku('SAC0012-C-2436-BLK'),/frame/i);
 });
-const receipt={receipt_id:312,shop_id:123,was_paid:true,country_iso:'CA',transactions:[{quantity:1,sku}]};
+const receipt={receipt_id:312,shop_id:123,was_paid:true,country_iso:'CA',name:'Test Buyer',first_line:'100 Test Street',city:'Test City',state:'BC',zip:'V1A 1A1',transactions:[{quantity:1,sku}]};
 test('fail-closed paid, shop, shipped and quantity checks',()=>{
  const order=r=>({staged:{receipt:r,source:'manual-etsy-import'},review:null});
  assert.equal(eligibleRegularReceipt(order(receipt),123).item.artworkId,'SAC0012');
@@ -45,4 +45,11 @@ test('review page is readable, shows checks and never submits orders',()=>{
  assert.ok(!html.includes('submit-supplier-order'));
  const m=html.match(/<script>([\s\S]*?)<\/script>/);
  assert.ok(m);assert.doesNotThrow(()=>new vm.Script(m[1]));
+});
+
+test('street and city are required and address updates invalidate the plan',()=>{
+ assert.notEqual(shippingAddressDigest(receipt),shippingAddressDigest({...receipt,zip:'V2B 9Z9'}));
+ assert.throws(()=>shippingAddressDigest({...receipt,first_line:''}),/address is incomplete/);
+ const approved={staged:{receipt,source:'manual-etsy-import'},review:{status:'approved_for_manual_order'}};
+ assert.throws(()=>eligibleRegularReceipt(approved,123),/already placed or fulfilled/);
 });
