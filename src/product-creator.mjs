@@ -66,12 +66,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
     <div class="badge" id="scope-badge">Checking Etsy permissions…</div>
   </div>
 
-<div class="creator-tabs" role="tablist" aria-label="Product Creator workflow">
-   <button type="button" id="creator-listing-tab" role="tab" aria-selected="true">Create Etsy Listing</button>
-   <button type="button" id="creator-mockup-tab" role="tab" aria-selected="false">Photopea Mockup Generator</button>
- </div>
- <section id="product-listing-panel" aria-label="Create Etsy Listing">
-  <div class="grid">
+<div class="grid">
     <section class="card">
       <h2>Listing details</h2>
       <p class="section-sub">Your structural Etsy settings are preloaded automatically. Title, SEO description and tags stay unique to each artwork.</p>
@@ -104,6 +99,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
           <div class="status" id="crop-worker-status">Production crops will be queued after the master artwork finishes uploading.</div>
         </div>
 
+        ${renderMockupGeneratorSection()}
         <div class="uploadbox" id="preset-media-box">
           <div>
             <strong>Reusable Etsy preset media</strong>
@@ -202,8 +198,6 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
       <button class="btn secondary" type="button" style="margin-top:14px;width:100%" onclick="location.href='/etsy/connect'">Reconnect Etsy</button>
     </aside-card>
   </div>
- </section>
- ${renderMockupGeneratorSection()}
 </main>
 </div>
 
