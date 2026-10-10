@@ -64,7 +64,7 @@ export function renderMockupGeneratorSection() {
 .creator-tabs{display:flex;gap:10px;margin:0 0 22px;flex-wrap:wrap}
 .creator-tabs button{padding:12px 18px;background:#fff;border:1px solid #ddd8ce;border-radius:9px;cursor:pointer;color:#293129;font-weight:600}
 .creator-tabs button[aria-selected=true]{background:#30352e;color:#fff}
-.mg-panel{display:grid;gap:18px}.mg-panel .grid{grid-template-columns:minmax(0,1fr) 360px;gap:18px}
+.mg-panel{display:grid;gap:18px}.mg-panel[hidden],#product-listing-panel[hidden]{display:none!important}.mg-panel .grid{grid-template-columns:minmax(0,1fr) 360px;gap:18px}
 .mg-panel .card{margin-bottom:18px}.mg-actions{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
 .mg-template-list,.mg-job-list,.mg-results{display:grid;gap:9px;margin-top:14px}
 .mg-item{padding:12px;border:1px solid #dedbd4;border-radius:10px;display:flex;align-items:flex-start;gap:10px;justify-content:space-between;background:#fbfaf8;overflow-wrap:anywhere}
