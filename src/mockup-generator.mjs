@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import {ListObjectsV2Command} from '@aws-sdk/client-s3';
 import {r2Client,r2Config,getJsonObject,putJsonObject,artworkObjectExists,isMissingR2Object,putArtworkFile,signedArtworkUrl,deleteArtworkObject} from './r2.mjs';
 
-const ROOT='mockup-generator/v1';
+const ROOT='mockup-generator/v1/silvia';
 const idOK=id=>/^[a-f0-9-]{36}$/.test(String(id||''));
 const iso=()=>new Date().toISOString();
 const templateKey=id=>ROOT+'/templates/'+id+'/meta.json';
@@ -151,9 +151,9 @@ export async function controlMockupJob(id,action,owner){
  if(action==='pause'){j.paused=true;j.status='paused';}
  else if(action==='resume'){
   if(!j.artworkUploaded)throw Error('Upload artwork first.');
-  j.paused=false;j.status='queued';
   if(j.lease && Date.parse(j.lease.expiresAt)>Date.now() && j.lease.owner!==owner)
    throw Error('This batch is currently running in another browser.');
+  j.paused=false;j.status='queued';
   j.lease={owner,expiresAt:new Date(Date.now()+30*60*1000).toISOString()};
  }else if(action==='retry'){
   if(j.lease&&Date.parse(j.lease.expiresAt)>Date.now()&&j.lease.owner!==owner)
@@ -171,7 +171,9 @@ export async function claimMockupWork(id,owner){
   throw Error('Another browser is running this job; retry after its lease expires.');
  j.lease={owner,expiresAt:new Date(Date.now()+30*60*1000).toISOString()};
  let item=j.templates.find(t=>t.status==='processing');
- if(item && !isLeaseOwner(j,owner)){item.status='queued';item=null}
+ if(item && (item.startedAt && Date.now()-Date.parse(item.startedAt)>30*60*1000)){
+  item.status='queued';item=null;
+ }
  if(!item)item=j.templates.find(t=>t.status==='queued');
  if(!item){
   const incomplete=j.templates.filter(t=>t.status!=='completed');
