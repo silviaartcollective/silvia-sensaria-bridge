@@ -155,10 +155,15 @@ export async function controlMockupJob(id,action,owner){
    throw Error('This batch is currently running in another browser.');
   j.paused=false;j.status='queued';
   j.lease={owner,expiresAt:new Date(Date.now()+30*60*1000).toISOString()};
- }else if(action==='retry'){
+ }else if(action==='retry'||action==='regenerate'){
   if(j.lease&&Date.parse(j.lease.expiresAt)>Date.now()&&j.lease.owner!==owner)
-   throw Error('Cannot retry while another browser owns the job.');
-  for(const t of j.templates)if(['failed','needs_mapping','processing'].includes(t.status)){t.status='queued';t.error=null;}
+   throw Error('Cannot rerun while another browser owns the job.');
+  for(const t of j.templates){
+   if(action==='regenerate'||['failed','needs_mapping','processing'].includes(t.status)){
+    t.status='queued';t.error=null;
+    // The previous verified JPG remains stored until its replacement is verified.
+   }
+  }
   j.paused=false;j.status='queued';j.lease={owner,expiresAt:new Date(Date.now()+30*60*1000).toISOString()};
  }else throw Error('Unsupported batch action.');
  j.history.push({at:iso(),event:action});return putMockupJob(j);

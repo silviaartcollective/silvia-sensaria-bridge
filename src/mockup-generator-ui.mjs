@@ -37,7 +37,8 @@ export function renderMockupGeneratorSection() {
    <p class="section-sub">Each PSD runs separately. Failed templates are retained for retry; generated results are saved after verification.</p>
    <div class="mg-actions"><button class="btn" type="button" id="mg-start">Start / Resume</button>
     <button class="btn secondary" type="button" id="mg-pause">Pause</button>
-    <button class="btn secondary" type="button" id="mg-retry">Retry failed</button></div>
+    <button class="btn secondary" type="button" id="mg-retry">Retry failed</button>
+    <button class="btn secondary" type="button" id="mg-regenerate">Regenerate all JPGs</button></div>
    <div id="mg-progress" class="status" role="status">Choose a saved batch to begin.</div>
    <div id="mg-results" class="mg-results"></div>
    <button class="btn secondary" id="mg-use-results" type="button">Use finished JPGs in Etsy Product Creator</button>
