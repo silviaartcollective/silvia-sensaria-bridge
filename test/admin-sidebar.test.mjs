@@ -7,7 +7,7 @@ import { renderCustomOrdersPage } from '../src/custom-orders-page.mjs';
 import { renderFulfillmentReviewPage } from '../src/fulfillment-review-page.mjs';
 
 const expected = [
-  'Dashboard','System Readiness', 'Product Creator','Mockup Generator','Listing Reposter', 'Gelato → Silvia Converter', 'Shipping Profile',
+  'Dashboard','System Readiness', 'Product Creator','Listing Reposter', 'Gelato → Silvia Converter', 'Shipping Profile',
   'Pricing & Shipping', 'Supplier Comparison', 'Custom Size Lookup', 'Custom Orders',
   'Description Updater', 'Order Tracking', 'Test Order', 'All Orders',
   'Fulfillment Review', 'Artwork Library', 'Product SKUs', 'Etsy Status', 'R2 Status', 'Log out'
