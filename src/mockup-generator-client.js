@@ -17,6 +17,18 @@ async function upload(url,blob,mime){
  const r=await fetch(url,{method:'PUT',headers:{'content-type':mime},body:blob});
  if(!r.ok)throw Error('R2 upload failed (HTTP '+r.status+'). Check signed URLs and bucket CORS.');
 }
+function releaseOldPhotopeaDocuments(){
+ try{
+  var count=0;
+  while(app.documents.length>0 && count++<120){
+   var doc=app.documents[0];
+   if(doc.clearHistory)doc.clearHistory();
+   doc.close();
+  }
+  if(app.documents.length>0)throw Error('Photopea could not release an earlier PSD.');
+  app.echoToOE('MG_CLEANED:'+count);
+ }catch(e){app.echoToOE('MG_ERROR:'+String(e.message||e))}
+}
 class Photopea{
  constructor(){
   this.frame=$('mg-editor');this.pending=null;this.ready=null;this.readyResolve=null;
@@ -56,6 +68,8 @@ class Photopea{
   });
  }
  async load(kind,id){
+  // New PSD per batch item; never keep 75–100 layered mockups open together.
+  if(kind==='template')await this.script(releaseOldPhotopeaDocuments);
   const r=await fetch('/api/mockups/file/'+kind+'/'+id,{cache:'no-store'});
   if(!r.ok)throw Error('Unable to load '+kind+' from R2 (HTTP '+r.status+').');
   return this.send(await r.arrayBuffer(),300000);
