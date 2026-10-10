@@ -5,7 +5,7 @@ import {
  listMockupTemplates,getMockupTemplate,reserveMockupTemplate,confirmMockupTemplateUpload,updateMockupTemplate,
  deleteMockupTemplate,listMockupJobs,getMockupJob,createMockupJob,markMockupArtworkUploaded,
  controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
- classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview
+ classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput
 } from './mockup-generator.mjs';
 import {
  signedArtworkUploadUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
@@ -146,6 +146,9 @@ export async function handleMockupAPI(req,res,url,{authenticated,readJson,sendJs
     const body=await readJson(req);
     return send(200,{job:await failMockupItem(id,ownerCheck(body),str(body.templateId),
      str(body.error||'Photopea processing failed'),!!body.needsMapping)}),true;
+   }
+   if(req.method==='DELETE'&&parts[2]==='download'&&isId(parts[3])){
+    return send(200,{job:await deleteMockupOutput(id,parts[3])}),true;
    }
    if(req.method==='GET'&&parts[2]==='download-all'){
     await streamMockupZip(res,id);return true;

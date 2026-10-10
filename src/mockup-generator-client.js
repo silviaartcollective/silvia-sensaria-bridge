@@ -273,6 +273,19 @@ async function uploadTemplates(){
  }
  $('mg-psds').value='';await loadTemplates();message(files.length+' templates saved.');
 }
+async function deleteSelectedTemplates(){
+ const selected=[...$('mg-templates').querySelectorAll('input:checked')].map(x=>x.value);
+ if(!selected.length)throw Error('Select templates to delete.');
+ if(!confirm('Delete '+selected.length+' saved PSD templates? Active and historical batches using them cannot be regenerated.'))return;
+ for(const id of selected)await api('templates/'+id,'DELETE');
+ await loadTemplates();message(selected.length+' templates deleted.');
+}
+async function deleteBatch(){
+ if(!job)throw Error('Select a batch.');
+ if(!confirm('Delete this batch, source artwork, and all completed JPGs?'))return;
+ await api('jobs/'+job.id,'DELETE');job=null;await loadJobs();
+ $('mg-results').replaceChildren();message('Batch and its outputs deleted.');
+}
 async function loadJobs(){
  jobs=(await api('jobs')).jobs;
  const box=$('mg-jobs');box.replaceChildren();
@@ -296,8 +309,14 @@ async function showJob(id){
   const row=create('div','',{class:'mg-item'}),title=create('span');
   title.append(create('strong',t.outputName),create('small',t.status+(t.error?' — '+t.error:'')));
   row.append(title);
-  if(t.status==='completed')
+  if(t.status==='completed'){
    row.append(create('a','Download JPG',{href:'/api/mockups/jobs/'+job.id+'/download/'+t.id,download:t.outputName}));
+   const remove=create('button','Delete JPG',{type:'button'});
+   remove.addEventListener('click',()=>act(async()=>{
+    if(!confirm('Delete '+t.outputName+'?'))return;
+    await api('jobs/'+job.id+'/download/'+t.id,'DELETE');await showJob(job.id);
+   }));row.append(remove);
+  }
   box.append(row);
  }
  return job;
@@ -378,7 +397,7 @@ async function useResults(){
 }
 function act(fn){Promise.resolve().then(fn).catch(failure)}
 for(const [id,fn]of [['mg-upload-templates',uploadTemplates],['mg-refresh-templates',loadTemplates],
- ['mg-new-job',createJob],['mg-refresh-jobs',loadJobs],['mg-start',resume],
+ ['mg-new-job',createJob],['mg-refresh-jobs',loadJobs],['mg-delete-templates',deleteSelectedTemplates],['mg-delete-job',deleteBatch],['mg-start',resume],
  ['mg-pause',pause],['mg-retry',retry],['mg-regenerate',regenerate],['mg-save-map',saveMapping],
  ['mg-use-results',useResults]])$(id).addEventListener('click',()=>act(fn));
 const tabListing=$('creator-listing-tab'),tabMockup=$('creator-mockup-tab');

@@ -159,7 +159,7 @@ export async function controlMockupJob(id,action,owner){
   if(j.lease&&Date.parse(j.lease.expiresAt)>Date.now()&&j.lease.owner!==owner)
    throw Error('Cannot rerun while another browser owns the job.');
   for(const t of j.templates){
-   if(action==='regenerate'||['failed','needs_mapping','processing'].includes(t.status)){
+   if(action==='regenerate'||['failed','needs_mapping','processing','deleted'].includes(t.status)){
     t.status='queued';t.error=null;
     // The previous verified JPG remains stored until its replacement is verified.
    }
@@ -226,3 +226,15 @@ export async function getMockupItemDownload(jobId,templateId){
  return {url:await signedArtworkUrl(item.outputKey,600),name:item.outputName,key:item.outputKey};
 }
 export const MOCKUP_ROOT=ROOT;
+
+export async function deleteMockupOutput(jobId,templateId){
+ const j=await getMockupJob(jobId);
+ if(j.status==='running'&&Date.parse(j.lease?.expiresAt)>Date.now())
+  throw Error('Pause the active batch before deleting an output.');
+ const t=j.templates.find(x=>x.id===templateId);
+ if(!t)throw Error('Mockup output not found in this job.');
+ if(t.outputKey)await deleteArtworkObject(t.outputKey);
+ t.outputKey=null;t.dimensions=null;t.status='deleted';t.error=null;
+ j.history.push({at:iso(),event:'output_deleted',name:t.name});
+ return putMockupJob(j);
+}

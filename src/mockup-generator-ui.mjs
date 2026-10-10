@@ -16,7 +16,8 @@ export function renderMockupGeneratorSection() {
     <label>PSD / PSB templates<input type="file" id="mg-psds" accept=".psd,.psb" multiple></label>
    </div>
    <div class="mg-actions"><button class="btn secondary" id="mg-upload-templates" type="button">Save selected PSD templates</button>
-    <button class="btn secondary" id="mg-refresh-templates" type="button">Refresh templates</button></div>
+    <button class="btn secondary" id="mg-refresh-templates" type="button">Refresh templates</button>
+    <button class="btn secondary" id="mg-delete-templates" type="button">Delete selected templates</button></div>
    <p class="uploadmeta">Uploads are saved privately; the original layered templates are never overwritten. Large PSD files can take several minutes.</p></div>
    <div id="mg-templates" class="mg-template-list"></div>
   </section>
@@ -38,7 +39,8 @@ export function renderMockupGeneratorSection() {
    <div class="mg-actions"><button class="btn" type="button" id="mg-start">Start / Resume</button>
     <button class="btn secondary" type="button" id="mg-pause">Pause</button>
     <button class="btn secondary" type="button" id="mg-retry">Retry failed</button>
-    <button class="btn secondary" type="button" id="mg-regenerate">Regenerate all JPGs</button></div>
+    <button class="btn secondary" type="button" id="mg-regenerate">Regenerate all JPGs</button>
+    <button class="btn secondary" type="button" id="mg-delete-job">Delete selected batch</button></div>
    <div id="mg-progress" class="status" role="status">Choose a saved batch to begin.</div>
    <div id="mg-results" class="mg-results"></div>
    <a class="btn secondary" id="mg-download-all" href="#" download style="display:inline-block">Download all completed JPGs (ZIP)</a>
