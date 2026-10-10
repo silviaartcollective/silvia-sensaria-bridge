@@ -15,10 +15,10 @@ test('mockup generator lives INSIDE Product Creator and existing Etsy form remai
 test('embedded photopea iframe client parses and has no hardcoded external credentials',()=>{
  const script=readFileSync(new URL('../src/mockup-generator-client.js',import.meta.url),'utf8');
  assert.doesNotThrow(()=>new vm.Script(script));
- assert.match(script,/https:\\/\\/www\\.photopea\\.com/);
- assert.match(script,/app\\.activeDocument/);
- assert.match(script,/placedLayerEditContents/);
- assert.match(script,/saveToOE/);
- assert.match(script,/24000000/);
+ assert.ok(script.includes('https://www.photopea.com'));
+ assert.ok(script.includes('app.activeDocument'));
+ assert.ok(script.includes('placedLayerEditContents'));
+ assert.ok(script.includes('saveToOE'));
+ assert.ok(script.includes('24000000'));
  assert.ok(!script.includes('R2_SECRET_ACCESS_KEY'));
 });
