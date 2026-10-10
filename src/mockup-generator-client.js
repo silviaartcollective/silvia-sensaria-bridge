@@ -270,48 +270,31 @@ async function inspectAndReplace(item,template,result){
 async function loadTemplates(){
  templates=(await api('templates')).templates;
  const box=$('mg-templates');box.replaceChildren();
+ $('mg-saved-count').textContent='('+templates.filter(t=>t.status==='ready').length+')';
  for(const t of templates){
-  const row=create('div','',{class:'mg-item'});
   const label=create('label'),cb=create('input','',{type:'checkbox',value:t.id});
   cb.checked=t.status==='ready';cb.disabled=t.status!=='ready';
-  label.append(cb);
-  if(t.previewKey)label.append(create('img','',{src:'/api/mockups/file/preview/'+t.id,alt:'PSD template preview'}));
-  const details=create('span');details.append(create('strong',t.name),create('small',t.collection+' · '+t.status+
-     (t.mapping?' · target '+t.mapping.path:'')));label.append(details);row.append(label);
-  const preview=create('button','Preview / Inspect',{type:'button'});
-  preview.addEventListener('click',()=>act(()=>previewTemplate(t)));
-  row.append(preview);
-  const del=create('button','Delete',{type:'button'});
-  del.addEventListener('click',()=>act(async()=>{
-   if(!confirm('Permanently delete '+t.name+' from saved templates?'))return;
-   await api('templates/'+t.id,'DELETE');await loadTemplates();
-  }));
-  row.append(del);box.append(row);
+  label.append(cb,create('span',t.name+(t.mapping?' · mapped':' · auto-map')));
+  box.append(label);
  }
- if(!templates.length)box.append(create('p','No saved templates yet.',{class:'uploadmeta'}));
+ if(!templates.length)box.append(create('p','No PSD templates saved yet.'));
 }
 async function uploadTemplates(){
- const files=[...$('mg-psds').files];if(!files.length)throw Error('Select PSD or PSB templates.');
+ const files=[...$('mg-psds').files],ids=[];
  for(let i=0;i<files.length;i++){
-  const file=files[i];message('Uploading '+(i+1)+'/'+files.length+': '+file.name);
+  const file=files[i];
+  message('Uploading PSD '+(i+1)+'/'+files.length+': '+file.name);
   const d=await api('templates','POST',{name:file.name,size:file.size,collection:$('mg-collection').value});
   await upload(d.uploadUrl,file,'application/octet-stream');
   await api('templates/'+d.template.id+'/confirm','POST');
+  ids.push(d.template.id);
  }
- $('mg-psds').value='';await loadTemplates();message(files.length+' templates saved.');
-}
-async function deleteSelectedTemplates(){
- const selected=[...$('mg-templates').querySelectorAll('input:checked')].map(x=>x.value);
- if(!selected.length)throw Error('Select templates to delete.');
- if(!confirm('Delete '+selected.length+' saved PSD templates? Active and historical batches using them cannot be regenerated.'))return;
- for(const id of selected)await api('templates/'+id,'DELETE');
- await loadTemplates();message(selected.length+' templates deleted.');
-}
-async function deleteBatch(){
- if(!job)throw Error('Select a batch.');
- if(!confirm('Delete this batch, source artwork, and all completed JPGs?'))return;
- await api('jobs/'+job.id,'DELETE');job=null;await loadJobs();
- $('mg-results').replaceChildren();message('Batch and its outputs deleted.');
+ $('mg-psds').value='';
+ if(ids.length){
+  await loadTemplates();
+  for(const box of $('mg-templates').querySelectorAll('input[type=checkbox]'))box.checked=ids.includes(box.value);
+ }
+ return ids;
 }
 async function loadJobs(){
  jobs=(await api('jobs')).jobs;
@@ -328,7 +311,8 @@ async function loadJobs(){
 async function showJob(id){
  job=(await api('jobs/'+id)).job;
  const done=job.templates.filter(t=>t.status==='completed').length;
- message(job.filename+' — '+done+'/'+job.templates.length+' completed ('+job.status+')');
+ message('Generating mockups: '+done+'/'+job.templates.length+' · '+job.status);
+ setProgress(done,job.templates.length);
  const zip=$('mg-download-all');zip.href='/api/mockups/jobs/'+job.id+'/download-all';
   zip.hidden=!done;
   const box=$('mg-results');box.replaceChildren();
@@ -349,19 +333,31 @@ async function showJob(id){
  return job;
 }
 async function createJob(){
- const art=$('mg-artwork').files[0];if(!art)throw Error('Choose artwork first.');
+ const art=$('master_file').files[0];
+ if(!art)throw Error('Choose the master artwork in Product Creator first.');
+ await uploadTemplates();
  const ids=[...$('mg-templates').querySelectorAll('input:checked')].map(x=>x.value);
- if(!ids.length)throw Error('Select saved PSD templates.');
- const result=await api('jobs','POST',{filename:art.name,size:art.size,templateIds:ids,fitMode:$('mg-fit').value});
- message('Uploading source artwork…');await upload(result.uploadUrl,art,'application/octet-stream');
- await api('jobs/'+result.job.id+'/artwork-confirm','POST');
- await loadJobs();await showJob(result.job.id);
- message('Batch saved. Press Start / Resume to render '+ids.length+' mockups.');
+ if(!ids.length)throw Error('Choose saved PSD templates or upload new PSDs.');
+ const previous=jobs.find(j=>j.artworkUploaded&&j.filename===art.name&&j.artworkSize===art.size&&
+  j.templates.length===ids.length&&j.templates.every(t=>ids.includes(t.id))&&j.status!=='completed');
+ if(previous){
+  job=(await api('jobs/'+previous.id)).job;
+  message('Resuming existing batch; artwork does not need reuploading.');
+ }else{
+  const result=await api('jobs','POST',{filename:art.name,size:art.size,templateIds:ids,fitMode:'contain'});
+  message('Saving the master artwork for mockup generation…');
+  await upload(result.uploadUrl,art,'application/octet-stream');
+  await api('jobs/'+result.job.id+'/artwork-confirm','POST');
+  job=(await api('jobs/'+result.job.id)).job;
+ }
+ setProgress(job.templates.filter(t=>t.status==='completed').length,job.templates.length);
+ await loadJobs();
+ await resume();
 }
 async function process(){
  if(!job)throw Error('Select a batch.');
  if(running)return;
- running=true;stopping=false;
+ running=true;stopping=false;$('mg-generate').disabled=true;$('mg-pause').disabled=false;
  const timer=setInterval(()=>{void api('jobs/'+job.id+'/heartbeat','POST',{owner}).catch(()=>{})},40000);
  try{
   await pp.init();
@@ -373,11 +369,24 @@ async function process(){
    catch(e){
     await api('jobs/'+job.id+'/fail','POST',{owner,templateId:claimed.item.id,
        error:e.message||String(e),needsMapping:!!e.needsMapping});
-    failure(e);
+    failure(Error(claimed.item.name+': '+e.message));
+    if(/timed out|stopped responding|Processor reset|processing exceeded/i.test(e.message||''))await pp.reset();
    }
    await showJob(job.id);
   }
- }finally{clearInterval(timer);running=false;await loadJobs();}
+ }finally{
+  clearInterval(timer);running=false;
+  $('mg-generate').disabled=false;$('mg-pause').disabled=true;
+  await showJob(job.id);await loadJobs();
+  if(job.templates.length&&job.templates.every(t=>t.status==='completed')){
+   try{await useResults();
+    message('All '+job.templates.length+' mockups generated. Finished JPGs attached to the Etsy listing.');}
+   catch(error){failure(Error('JPG files generated, but automatic attachment failed: '+error.message));}
+  }else if(!stopping){
+   const incomplete=job.templates.filter(t=>t.status!=='completed').length;
+   message(incomplete+' mockups need attention. Open Saved batches to retry them. Etsy draft creation is held until the batch finishes.',true);
+  }
+ }}
 }
 async function resume(){
  if(!job)throw Error('Select or create a batch.');
@@ -410,7 +419,7 @@ async function saveMapping(){
 }
 async function useResults(){
  if(!job)throw Error('Select a completed batch.');
- const finished=job.templates.filter(t=>t.status==='completed').slice(0,10);
+ const finished=job.templates.filter(t=>t.status==='completed').slice(0,7);
  if(!finished.length)throw Error('No completed JPGs yet.');
  const dt=new DataTransfer();
  for(const t of finished){
@@ -419,24 +428,18 @@ async function useResults(){
   dt.items.add(new File([await r.blob()],t.outputName,{type:'image/jpeg'}));
  }
  $('mockup_files').files=dt.files;
- $('creator-listing-tab').click();
- $('upload-status').textContent=finished.length+' generated JPG mockups are selected for this Etsy listing.';
+ ready=true;panel.dataset.generationReady='true';
+ $('upload-status').textContent=finished.length+' generated JPGs attached to Etsy draft media.'+
+ (job.templates.length>7?' The first 7 of '+job.templates.length+' were selected to leave space for 3 preset listing images.':'');
 }
 function act(fn){Promise.resolve().then(fn).catch(failure)}
-for(const [id,fn]of [['mg-upload-templates',uploadTemplates],['mg-refresh-templates',loadTemplates],
- ['mg-new-job',createJob],['mg-refresh-jobs',loadJobs],['mg-delete-templates',deleteSelectedTemplates],['mg-delete-job',deleteBatch],['mg-start',resume],
- ['mg-pause',pause],['mg-retry',retry],['mg-regenerate',regenerate],['mg-save-map',saveMapping],
- ['mg-use-results',useResults]])$(id).addEventListener('click',()=>act(fn));
-const tabListing=$('creator-listing-tab'),tabMockup=$('creator-mockup-tab');
-function chooseTab(isMockup){
- $('product-listing-panel').hidden=isMockup;panel.hidden=!isMockup;
- tabListing.setAttribute('aria-selected',String(!isMockup));
- tabMockup.setAttribute('aria-selected',String(isMockup));
- if(isMockup)history.replaceState(null,'',location.pathname+'#mockup-generator');
- else if(location.hash==='#mockup-generator')history.replaceState(null,'',location.pathname);
-}
-tabListing.addEventListener('click',()=>chooseTab(false));
-tabMockup.addEventListener('click',()=>chooseTab(true));
-if(location.hash==='#mockup-generator')chooseTab(true);
+for(const [id,fn] of [
+ ['mg-generate',async()=>{markRequested();await createJob();}],
+ ['mg-refresh-jobs',loadJobs],
+ ['mg-pause',pause],
+ ['mg-retry',retry],
+ ['mg-regenerate',regenerate],
+ ['mg-save-map',async()=>{await saveMapping();await retry();}]
+])$(id).addEventListener('click',()=>act(fn));
 act(async()=>{await loadTemplates();await loadJobs();});
 }
