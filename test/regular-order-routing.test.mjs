@@ -51,5 +51,5 @@ test('street and city are required and address updates invalidate the plan',()=>
  assert.notEqual(shippingAddressDigest(receipt),shippingAddressDigest({...receipt,zip:'V2B 9Z9'}));
  assert.throws(()=>shippingAddressDigest({...receipt,first_line:''}),/address is incomplete/);
  const approved={staged:{receipt,source:'manual-etsy-import'},review:{status:'approved_for_manual_order'}};
- assert.throws(()=>eligibleRegularReceipt(approved,123),/already placed or fulfilled/);
+ assert.throws(()=>eligibleRegularReceipt(approved,123),/already been placed or fulfilled/);
 });
