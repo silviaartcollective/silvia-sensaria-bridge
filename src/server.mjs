@@ -20,6 +20,7 @@ import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
+import { handleMockupAPI } from './mockup-api.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
@@ -1303,6 +1304,20 @@ async function reconcileNewEtsyPaidOrders(){
 }
 
 const server = http.createServer(async (req, res) => {
+  // Photopea mockup batch endpoints are private and separate from Etsy fulfillment.
+  const mockupUrl=new URL(req.url||'/', 'https://'+String(req.headers.host||'localhost'));
+  if(mockupUrl.pathname==='/assets/mockup-generator-client.js'){
+    if(!requireAdminApi(req,res))return;
+    const js=readFileSync(new URL('./mockup-generator-client.js',import.meta.url));
+    res.writeHead(200,{'content-type':'text/javascript; charset=utf-8',
+      'content-length':js.length,'cache-control':'private, no-store',
+      'x-content-type-options':'nosniff'});
+    res.end(js);return;
+  }
+  if(await handleMockupAPI(req,res,mockupUrl,{
+    authenticated:requireAdminApi,readJson:readJsonBody,sendJson
+  }))return;
+
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
   if (req.method === 'GET' && url.pathname === '/health') {

@@ -1,3 +1,4 @@
+import {renderMockupGeneratorSection} from './mockup-generator-ui.mjs';
 function esc(value) {
   return String(value ?? '')
     .replaceAll('&','&amp;')
@@ -65,6 +66,11 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
     <div class="badge" id="scope-badge">Checking Etsy permissions…</div>
   </div>
 
+<div class="creator-tabs" role="tablist" aria-label="Product Creator workflow">
+   <button type="button" id="creator-listing-tab" role="tab" aria-selected="true">Create Etsy Listing</button>
+   <button type="button" id="creator-mockup-tab" role="tab" aria-selected="false">Photopea Mockup Generator</button>
+ </div>
+ <section id="product-listing-panel" aria-label="Create Etsy Listing">
   <div class="grid">
     <section class="card">
       <h2>Listing details</h2>
@@ -196,6 +202,8 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
       <button class="btn secondary" type="button" style="margin-top:14px;width:100%" onclick="location.href='/etsy/connect'">Reconnect Etsy</button>
     </aside-card>
   </div>
+ </section>
+ ${renderMockupGeneratorSection()}
 </main>
 </div>
 
@@ -801,5 +809,6 @@ form.addEventListener('submit',async(e)=>{
   }
 });
 </script>
+<script type="module" src="/assets/mockup-generator-client.js"></script>
 </body></html>`;
 }
