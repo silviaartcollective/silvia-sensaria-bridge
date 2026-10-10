@@ -1,5 +1,5 @@
 export function renderMockupGeneratorSection() {
- return \`
+ return `
 <section id="mockup-generator-panel" class="mg-panel" hidden aria-label="Photopea Mockup Generator">
  <div class="card mg-intro">
   <h2>Photopea Mockup Generator</h2>
@@ -77,5 +77,5 @@ export function renderMockupGeneratorSection() {
 .mg-map{padding:13px;margin-top:12px;background:#faf1e5;border-radius:10px}
 .mg-results a{color:#334d35;text-decoration:underline}
 @media(max-width:1100px){.mg-panel .grid{grid-template-columns:1fr}}
-</style>\`;
+</style>`;
 }
