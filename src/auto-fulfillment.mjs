@@ -5,7 +5,14 @@ const locked = new Set();
 const LIMIT=50;
 export function automaticPreparationDecision(order,{force=false,now=Date.now()}={}){
  const review=order?.review||{};
+ const receipt=order?.staged?.receipt||{};
  const status=String(review.status||'');
+ if(receipt.is_shipped===true||receipt.was_shipped===true||
+    receipt.is_cancelled||receipt.is_canceled||receipt.was_canceled||
+    Array.isArray(receipt.shipments)&&receipt.shipments.length>0)
+   return {action:'skip',reason:'Already shipped or canceled Etsy receipt.'};
+ if(receipt.was_paid===false||receipt.is_paid===false)
+   return {action:'skip',reason:'Receipt is not paid.'};
  if(['custom','possible_custom'].includes(review.classification) ||
     (review.classification!=='regular' && inferOrder(order?.staged?.receipt).categoryHint==='possible_custom'))
    return {action:'skip',reason:'Custom or possible-custom purchases require separate review.'};
