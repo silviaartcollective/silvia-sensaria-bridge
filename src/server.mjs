@@ -33,7 +33,8 @@ import { renderCustomOrdersPage } from './custom-orders-page.mjs';
 import { renderOrdersPage } from './orders-page.mjs';
 import { renderFulfillmentReviewPage } from './fulfillment-review-page.mjs';
 import { prepareRegularRoute, approveRegularRoute } from './regular-order-routing.mjs';
-import { listOrders, readOrder, recordImportedReceipt } from './custom-order-store.mjs';
+import { listOrders, readOrder, recordImportedReceipt, optionalJson, reviewKey } from './custom-order-store.mjs';
+import { automaticallyPrepareReceipt, selectAutomaticCandidates } from './auto-fulfillment.mjs';
 import { classify, quote, savePlan, approve, markOrdered } from './custom-order-workflow.mjs';
 import { recentPaidReceipts, receiptTransactions } from './etsy-orders-read.mjs';
 import { buildPrintifyCostsForRequest } from './printify-cost-builder.mjs';
@@ -1240,6 +1241,67 @@ async function getAuthorizedShop() {
   return { userId, shop, scope };
 }
 
+// Read-only Etsy polling and recommendation preparation. Supplier purchasing is never invoked.
+const AUTO_REVIEW_INTERVAL_MS=5*60*1000;
+const AUTO_REVIEW_MAX_PER_CYCLE=5;
+const AUTO_REVIEW_ENABLED=String(process.env.AUTO_FULFILLMENT_REVIEW_ENABLED||'true').toLowerCase()!=='false';
+const pendingAutoReview=new Map();
+let autoReviewTail=Promise.resolve(), autoReviewPolling=false;
+let lastAutoReviewPoll=null, lastAutoReviewError='';
+function scheduleAutomaticReview(receiptId,shopId){
+  if(!AUTO_REVIEW_ENABLED)return Promise.resolve({status:'disabled'});
+  const id=String(receiptId);
+  if(pendingAutoReview.has(id))return pendingAutoReview.get(id);
+  if(pendingAutoReview.size>=50)return Promise.resolve({status:'queue_full'});
+  const task=autoReviewTail.then(()=>automaticallyPrepareReceipt(id,shopId))
+    .catch(error=>{
+      console.error('[automatic supplier review] '+id+': '+String(error.message||error));
+      return {status:'error',receiptId:id};
+    });
+  pendingAutoReview.set(id,task);
+  autoReviewTail=task.then(()=>{pendingAutoReview.delete(id);});
+  return task;
+}
+async function reconcileNewEtsyPaidOrders(){
+ if(!AUTO_REVIEW_ENABLED||autoReviewPolling)return;
+ autoReviewPolling=true;
+ try{
+   const session=await getEtsySession();
+   const shopId=Number(session.shop?.shop_id||0);
+   if(!shopId)throw new Error('Cannot reconcile orders without an authorized Etsy shop.');
+   const recent=await recentPaidReceipts(session,40);
+   const reviewIds=recent.map(item=>String(item.receipt_id||''))
+     .filter(id=>/^[1-9]\\d{0,19}$/.test(id));
+   const saved=Object.fromEntries(await Promise.all(reviewIds.map(async id=>[
+     id,await optionalJson(reviewKey(id))
+   ])));
+   const toPrepare=selectAutomaticCandidates(recent,saved,AUTO_REVIEW_MAX_PER_CYCLE);
+   for(const id of toPrepare){
+     if(pendingAutoReview.has(id))continue;
+     try{
+       const receipt=await getShopReceipt({
+         shopId,receiptId:id,keystring:session.keystring,
+         sharedSecret:session.sharedSecret,accessToken:session.accessToken
+       });
+       if(!Array.isArray(receipt.transactions)||!receipt.transactions.length)
+         receipt.transactions=await receiptTransactions(session,id);
+       if(!receipt.transactions?.length)throw new Error('Etsy receipt has no readable transactions');
+       if(receipt.was_paid!==true&&receipt.is_paid!==true)continue;
+       if(receipt.is_shipped===true||receipt.was_shipped===true||receipt.was_canceled===true||receipt.is_canceled===true)continue;
+       await recordImportedReceipt(receipt,shopId);
+       void scheduleAutomaticReview(id,shopId);
+     }catch(error){
+       console.warn('[automatic Etsy sync] '+id+': '+String(error.message||error));
+     }
+   }
+   lastAutoReviewPoll=new Date().toISOString();
+   lastAutoReviewError='';
+ }catch(error){
+   lastAutoReviewError=String(error.message||error);
+   console.warn('[automatic Etsy sync] '+lastAutoReviewError);
+ }finally{autoReviewPolling=false;}
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
@@ -1812,6 +1874,13 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if(req.method==='GET'&&url.pathname==='/api/fulfillment-auto/status'){
+    if(!requireAdminApi(req,res))return;
+    return sendJson(res,200,{ok:true,enabled:AUTO_REVIEW_ENABLED,
+      pending:pendingAutoReview.size,lastPolledAt:lastAutoReviewPoll,
+      lastError:lastAutoReviewError,pollIntervalMinutes:AUTO_REVIEW_INTERVAL_MS/60000,
+      orderPurchasingEnabled:false});
+  }
   // Regular fulfillment phase 1: shop-scoped recommendations and approval ONLY.
   // No endpoint below buys anything from a supplier or completes an Etsy shipment.
   if(req.method==='GET' && url.pathname==='/fulfillment-review'){
@@ -1959,7 +2028,9 @@ const server = http.createServer(async (req, res) => {
             if (!Array.isArray(receipt.transactions) || !receipt.transactions.length) {
               receipt.transactions = await receiptTransactions(session, item.receipt_id);
             }
-            imported.push((await recordImportedReceipt(receipt, session.shop.shop_id)).receiptId);
+            const staged=await recordImportedReceipt(receipt,session.shop.shop_id);
+            imported.push(staged.receiptId);
+            void scheduleAutomaticReview(staged.receiptId,session.shop.shop_id);
           } catch (error) {
             failures.push({ receiptId: String(item.receipt_id || ''), error: String(error.message || error) });
           }
@@ -1979,7 +2050,9 @@ const server = http.createServer(async (req, res) => {
         if (!Array.isArray(receipt.transactions) || !receipt.transactions.length) {
           receipt.transactions = await receiptTransactions(session, receiptId);
         }
-        return sendJson(res, 200, { ok: true, summary: await recordImportedReceipt(receipt, shopId) });
+        const staged=await recordImportedReceipt(receipt,shopId);
+        void scheduleAutomaticReview(staged.receiptId,shopId);
+        return sendJson(res,200,{ok:true,summary:staged,automaticRecommendation:'queued'});
       }
       const [, id, action] = customOrderRoute;
       if (action === 'classify') return sendJson(res, 200, { ok: true, review: await classify(id, body.classification) });
@@ -3567,14 +3640,15 @@ const server = http.createServer(async (req, res) => {
             accessToken: session.accessToken
           });
 
-          await putJsonObject(`orders/etsy/${receiptRef.receiptId}/receipt.json`, {
-            receivedAt: delivery.receivedAt,
-            source: 'etsy-webhook',
-            processingStatus: 'received',
-            eventType,
-            receipt
-          });
+          if(!Array.isArray(receipt.transactions)||!receipt.transactions.length)
+            receipt.transactions=await receiptTransactions(session,receiptRef.receiptId);
+          if((receipt.was_paid!==true&&receipt.is_paid!==true)||!receipt.transactions?.length)
+            throw new Error('Etsy receipt is not confirmed paid with readable transactions.');
+          await recordImportedReceipt(receipt,shopId);
           delivery.receiptStaged = true;
+          // The webhook is acknowledged after durable R2 staging. Supplier quote
+          // discovery runs in the background and is reconciled if interrupted.
+          void scheduleAutomaticReview(receiptRef.receiptId,shopId);
         } catch (error) {
           delivery.receiptStaged = false;
           delivery.receiptFetchError = error?.message || String(error);
@@ -3616,4 +3690,8 @@ server.headersTimeout = 120_000;
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`Silvia Sensaria bridge listening on port ${port}`);
+  if(AUTO_REVIEW_ENABLED){
+    setTimeout(()=>{void reconcileNewEtsyPaidOrders();},30000).unref();
+    setInterval(()=>{void reconcileNewEtsyPaidOrders();},AUTO_REVIEW_INTERVAL_MS).unref();
+  }
 });
