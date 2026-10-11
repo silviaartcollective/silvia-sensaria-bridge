@@ -93,9 +93,9 @@ async function detectOrientation(file){
   }catch{return 'portrait'}
 }
 
-async function putFile(url,file,onProgress){
+async function putFile(url,file,onProgress,contentType){
   onProgress(20);
-  const response=await fetch(url,{method:'PUT',headers:{'content-type':file.type||'image/jpeg'},body:file});
+  const response=await fetch(url,{method:'PUT',headers:{'content-type':contentType||file.type||'image/jpeg'},body:file});
   if(!response.ok)throw new Error('Cloudflare upload failed ('+response.status+')');
   onProgress(65);
 }
@@ -169,8 +169,9 @@ function renderCards(){
         '<div class="meta">'+state+mapped+'<span class="pill">#'+esc(item.listingId)+'</span></div>'+
         '<div class="upload">'+
           (item.converted
-           ?'<div class="status reconvert-note">Reuses saved '+esc(item.artworkId)+' master artwork and completed crops. No new upload or artwork ID.</div>'
-           :'<input class="master" type="file" accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff">')+
+           ?'<div class="status reconvert-note">Upload the master artwork again (required). Fresh production crops will replace the old ones only after verification. Artwork ID '+esc(item.artworkId)+' is preserved.</div>'
+           :'<div class="status">Select the matching master artwork to convert this listing.</div>')+
+          '<input class="master" type="file" accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff" aria-label="'+(item.converted?'Upload replacement master artwork (required)':'Upload master artwork')+'">'+
           '<button class="btn '+(item.converted?'reconvert':'primary')+' convert" type="button">'+(item.converted?'Reconvert listing':'Upload artwork & convert')+'</button>'+
           '<div class="progress"><span></span></div>'+
           '<div class="cardstatus '+(item.converted?'ok':'')+'">'+(item.converted?'Linked to '+esc(item.artworkId)+' · Silvia variants active.'+(item.reconversionCount?' · Reconverted '+item.reconversionCount+' time(s).':''):'Select the master artwork that belongs to this listing.')+'</div>'+
@@ -185,48 +186,96 @@ function renderCards(){
 
 async function reconvertListing(item,card){
   const button=card.querySelector('.convert');
+  const input=card.querySelector('.master');
   const status=card.querySelector('.cardstatus');
   const bar=card.querySelector('.progress span');
   const artworkId=String(item.artworkId||'').trim();
+  const file=input?.files?.[0];
   if(!artworkId){
     status.className='cardstatus bad';
-    status.textContent='The original artwork link is missing. Refresh listings before reconverting.';
+    status.textContent='The linked artwork ID is missing. Refresh listings before reconverting.';
     return;
   }
+  if(!file){
+    status.className='cardstatus bad';
+    status.textContent='Choose the new master artwork file first. Uploading it again is required for reconversion.';
+    return;
+  }
+  const orientation=await detectOrientation(file);
   const approved=confirm(
-    'Reconvert this Silvia Etsy listing?\\n\\n'+
-    item.title+'\\nArtwork: '+artworkId+'\\n\\n'+
-    'This will reapply and verify the current Silvia variants, SKUs, prices, shipping and listing settings. '+
-    'It uses the existing artwork and finished crops (no new artwork ID). '+
-    'Photos, video, title, description and tags will remain unchanged.'
+    'Reconvert this Silvia Etsy listing with new artwork?\\n\\n'+
+    item.title+'\\nArtwork ID: '+artworkId+'\\nNew file: '+file.name+'\\n\\n'+
+    'Your new master artwork will be uploaded to R2 and newly cropped on the shared PC worker. '+
+    'After the crops are verified, the current Silvia variants, SKUs, prices and listing settings will be reapplied. '+
+    'The original master remains available until Etsy verification succeeds. '+
+    'Existing photos, video, title, description and tags are kept.'
   );
   if(!approved)return;
-  button.disabled=true;
-  bar.style.width='25%';
+  button.disabled=true;input.disabled=true;
+  bar.style.width='5%';
   status.className='cardstatus';
-  status.textContent='Rechecking '+artworkId+' and reapplying current Silvia settings…';
+  let revision=null;
   try{
-    const response=await fetch('/api/listing-converter/convert',{
-      method:'POST',
-      headers:{'content-type':'application/json'},
-      body:JSON.stringify({listingId:item.listingId,artworkId,reconvert:true})
+    status.textContent='Reserving a fresh upload for '+artworkId+' (no new artwork ID)…';
+    let response=await fetch('/api/listing-converter/reconvert/reserve',{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({listingId:item.listingId,artworkId,orientation,
+        master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size}})
     });
-    const result=await response.json();
-    if(!response.ok||!result.ok)throw new Error(result.error||'Reconversion failed');
-    if(result.reconverted!==true||result.verified!==true)
-      throw new Error('Etsy did not confirm a verified reconversion.');
+    let result=await response.json();
+    if(!response.ok||!result.ok)throw Error(result.error||'Could not reserve replacement artwork');
+    revision=result.revision;
+    if(!result.uploadAlreadyPresent){
+      status.textContent='Uploading fresh master artwork '+file.name+' for '+artworkId+'…';
+      await putFile(result.upload.uploadUrl,file,p=>{bar.style.width=p+'%'},
+        result.upload.contentType);
+    }else{
+      status.textContent='Resuming the previously uploaded replacement '+file.name+'…';
+      bar.style.width='65%';
+    }
+    bar.style.width='68%';
+    status.textContent='Queueing new production crops for '+artworkId+'…';
+    response=await fetch('/api/listing-converter/reconvert/crop',{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({listingId:item.listingId,artworkId,revision})
+    });
+    result=await response.json();
+    if(!response.ok||!result.ok)throw Error(result.error||'Could not queue replacement artwork crops');
+    if(!result.worker?.online){
+      status.className='cardstatus warn';
+      status.textContent='New master uploaded and crops queued. Start the shared PC worker, then choose this same file and click Reconvert listing to resume. Existing artwork and Etsy listing are unchanged.';
+      return;
+    }
+    await waitForCrop(result.job.id,
+      message=>{status.textContent='New artwork · '+message},
+      percentage=>{bar.style.width=percentage+'%'});
+    bar.style.width='95%';
+    status.className='cardstatus';
+    status.textContent='New crops completed. Verifying and reapplying Etsy settings…';
+    response=await fetch('/api/listing-converter/convert',{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({listingId:item.listingId,artworkId,reconvert:true,revision})
+    });
+    result=await response.json();
+    if(!response.ok||!result.ok)throw Error(result.error||'Could not reconvert Etsy listing');
+    if(result.reconverted!==true||result.verified!==true||
+       result.replacementMasterActivated!==true||result.artworkRevision!==revision)
+      throw Error('The new artwork has not been fully verified and activated.');
     item.reconversionCount=Number(result.reconversionCount||0);
     bar.style.width='100%';
     status.className='cardstatus ok';
-    status.textContent='Reconversion verified · '+artworkId+' · '+String(result.enabledVariants||0)+
-      ' Silvia variants checked. Original artwork and listing media preserved.';
-    setTimeout(loadListings,1400);
+    status.textContent='Reconverted and verified · '+artworkId+' · new master and crops activated · '+
+      String(result.enabledVariants||0)+' Silvia variants checked. Existing listing media and SEO preserved.';
+    setTimeout(loadListings,1800);
   }catch(error){
     status.className='cardstatus bad';
-    status.textContent='Reconversion could not be verified: '+String(error.message||error)+
-      ' · Existing artwork ID remains '+artworkId+'. You can retry safely.';
+    status.textContent='Reconversion incomplete: '+String(error.message||error)+
+      '. Existing artwork ID remains '+artworkId+'. Keep this file selected and retry if needed.';
     bar.style.width='0%';
-  }finally{button.disabled=false;}
+  }finally{
+    button.disabled=false;
+    input.disabled=false;
+  }
 }
 
 async function convertListing(item,card){
