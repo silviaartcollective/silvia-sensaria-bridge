@@ -1,8 +1,8 @@
 export function renderMockupGeneratorSection(){
 return `
 <section class="uploadbox" id="mockup-generator-panel" aria-label="Generate mockups">
- <div><strong>Generate listing mockups</strong>
- <div class="uploadmeta">Use the master artwork above with PSD/PSB mockups. The JPGs generate in the background and attach automatically to the Etsy listing.</div></div>
+ <div class="mg-workspace"><div class="mg-main"><div><strong>Generate listing mockups</strong>
+ <div class="uploadmeta">Choose your master artwork above to start generating with saved PSD templates. Review and select the finished JPGs on the right.</div></div>
  <div class="uploadrow">
   <label>Add PSD / PSB mockups <span class="hint">optional if templates are saved</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
@@ -40,11 +40,40 @@ return `
   <div class="mg-actions"><select id="mg-map-select" aria-label="Artwork Smart Object"></select>
    <button id="mg-save-map" class="btn secondary" type="button">Save mapping & retry</button></div>
  </div>
+ </div>
+ <aside class="mg-preview" aria-label="Generated mockup previews">
+  <div class="mg-preview-head"><strong>Generated mockups</strong><span id="mg-preview-count" class="hint">0 ready</span></div>
+  <div class="mg-preview-actions">
+   <button class="btn secondary" type="button" id="mg-select-all">Select all</button>
+   <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
+  </div>
+  <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
+   <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
+  </div>
+  <div id="mg-selection-status" class="uploadmeta">All finished mockups are selected by default. Etsy can use up to 7 alongside your 3 preset images.</div>
+  <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
+ </aside></div>
  <div id="mg-engine-status" class="uploadmeta" hidden>Photopea automation engine not started.</div>
  <iframe id="mg-editor" title="Background Photoshop mockup processing" tabindex="-1" aria-hidden="true" referrerpolicy="no-referrer" class="mg-engine"></iframe>
 </section>
 <style>
 #mockup-generator-panel{position:relative;overflow:visible}
+#mockup-generator-panel .mg-workspace{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:16px;align-items:start}
+#mockup-generator-panel .mg-main{display:grid;gap:12px;min-width:0}
+#mockup-generator-panel .mg-preview{background:#fffdfa;border:1px solid #e2ded6;border-radius:11px;padding:12px;display:grid;gap:10px;min-width:0}
+#mockup-generator-panel .mg-preview-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
+#mockup-generator-panel .mg-preview-actions{display:flex;gap:6px;flex-wrap:wrap}
+#mockup-generator-panel .mg-preview-actions button{font-size:11px;padding:7px 9px}
+#mockup-generator-panel .mg-preview-list{max-height:370px;min-height:145px;overflow-y:auto;overscroll-behavior:contain;display:grid;align-content:start;gap:8px;padding-right:4px}
+#mockup-generator-panel .mg-preview-empty{font-size:12px;color:#74776f;line-height:1.5}
+#mockup-generator-panel .mg-preview-item{display:grid;grid-template-columns:20px 76px minmax(0,1fr);gap:7px;align-items:center;border:1px solid #ebe7df;border-radius:9px;padding:6px;background:white;cursor:pointer}
+#mockup-generator-panel .mg-preview-item input{width:17px;height:17px;margin:0}
+#mockup-generator-panel .mg-preview-item img{display:block;width:76px;height:76px;object-fit:contain;background:#f3f0ec;border-radius:5px}
+#mockup-generator-panel .mg-preview-item span{font-size:11px;line-height:1.35;overflow-wrap:anywhere}
+#mockup-generator-panel .mg-preview-item small{display:block;color:#74776f;margin-top:3px}
+#mockup-generator-panel .mg-preview #mg-apply-selected{font-size:12px;padding:10px}
+@media(max-width:1000px){#mockup-generator-panel .mg-workspace{grid-template-columns:1fr}#mockup-generator-panel .mg-preview-list{max-height:300px}}
+
 #mockup-generator-panel .mg-actions{display:flex;flex-wrap:wrap;gap:10px}
 #mockup-generator-panel details{padding:10px;border:1px solid #e2ded6;border-radius:9px;background:#fffdfa}
 #mockup-generator-panel summary{cursor:pointer;font-size:13px;font-weight:600}
