@@ -20,6 +20,7 @@ import {
   inspectMaster,
   validateRatioSource
 } from './crop.mjs';
+import {renderMockupOnPC} from './mockup-processor.mjs';
 
 const LOCK_PATH = path.join(os.tmpdir(), 'pod-crop-worker.lock');
 const tempPaths = new Set();
@@ -30,6 +31,8 @@ let stopping = false;
 let nextAppIndex = 0;
 let activeJob = null;
 let heartbeatInFlight = false;
+const mockupOwner = crypto.randomUUID();
+const mockupPollAt = new Map(),mockupUnsupported=new Set();
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -205,6 +208,73 @@ async function processJob(app, job) {
   }
 }
 
+// R2 progress, lease heartbeats and completion must never overwrite one another.
+function serialWrites(){
+ let tail=Promise.resolve();
+ return task=>{
+  const result=tail.then(task);
+  tail=result.catch(()=>{});
+  return result;
+ };
+}
+async function processPSDJob(app,claim){
+ const api=clientFor(app),id=claim.job.id,itemId=claim.item.id;
+ let psdPath='',artworkPath='',outputPath='';
+ const queue=serialWrites();
+ let alive=true;
+ const keepAlive=setInterval(()=>{
+  if(alive)void queue(()=>api.mockupHeartbeat(id,mockupOwner)).catch(error=>
+    console.error('['+app.name+'] PSD lease renewal failed:',error.message));
+ },20000);
+ const stage=value=>{
+  console.log('['+app.name+'] '+claim.item.name+': '+value);
+  return queue(()=>api.mockupProgress(id,itemId,mockupOwner,value));
+ };
+ try{
+  await stage('Downloading PSD template to PC');
+  const extension=path.extname(claim.template.name).toLowerCase()==='.psb'?'.psb':'.psd';
+  psdPath=await downloadToFile(claim.templateUrl,extension);
+  await stage('Downloading master artwork to PC');
+  artworkPath=await downloadToFile(claim.artworkUrl,path.extname(claim.job.filename)||'.jpg');
+  outputPath=path.join(os.tmpdir(),'pod-mockup-'+id+'-'+crypto.randomUUID()+'.jpg');
+  tempPaths.add(outputPath);
+  const render=await renderMockupOnPC({
+   psdPath,artworkPath,outputPath,mapping:claim.template.mapping||null,
+   fitMode:claim.job.fitMode||'contain',
+   onStage:stage
+  });
+  const inspected=await queue(()=>api.inspectMockupTemplate(itemId,render.objects));
+  const classification=inspected.classification||{};
+  if(render.needsMapping||classification.status!=='mapped'||
+      classification.path!==render.usedMapping){
+   const why=String(render.reason||classification.reason||'Select the visible artwork Smart Object.');
+   await queue(()=>api.mockupFail(id,mockupOwner,itemId,why,true));
+   console.log('['+app.name+'] PSD needs artwork-layer mapping: '+claim.item.name);
+   return;
+  }
+  await stage('Uploading and verifying '+claim.item.outputName);
+  await uploadFile(claim.output.uploadUrl,outputPath);
+  await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping));
+  console.log('['+app.name+'] PSD completed '+claim.item.outputName+
+   ' ('+render.dimensions.width+'x'+render.dimensions.height+')');
+ }catch(error){
+  console.error('['+app.name+'] PSD mockup failed '+claim.item.name+': '+error.message);
+  try{await queue(()=>api.mockupFail(id,mockupOwner,itemId,error,false))}
+  catch(reportError){console.error('['+app.name+'] Could not mark PSD failed:',reportError.message)}
+ }finally{
+  alive=false;clearInterval(keepAlive);
+  try{await queue(()=>api.mockupRelease(id,mockupOwner))}
+  catch(error){console.error('['+app.name+'] Could not release PSD batch:',error.message)}
+  for(const file of [psdPath,artworkPath,outputPath]){
+   if(file){
+    await rm(file,{force:true}).catch(()=>{});
+    tempPaths.delete(file);
+   }
+  }
+  lastWorkAt=Date.now();
+ }
+}
+
 async function heartbeatAll(){
   if(heartbeatInFlight)return;
   heartbeatInFlight=true;
@@ -221,22 +291,40 @@ async function pollOnce(){
   try{
     const cycle=rotatingApps(APP_CONNECTIONS,nextAppIndex);
     if(APP_CONNECTIONS.length)nextAppIndex=(nextAppIndex+1)%APP_CONNECTIONS.length;
+    // Production crop jobs retain priority, and the same worker then accepts PSD jobs.
     for(const app of cycle){
       if(stopping)break;
       try{
         const api=clientFor(app);
         const result=await api.claimJob();
         if(!result.job)continue;
-        activeJob={app,job:result.job};
+        activeJob={app,job:result.job,type:'crop'};
         await heartbeatAll();
         try{await processJob(app,result.job);}
-        finally{
-          activeJob=null;
-          // All three dashboards remain online, including when another shop finishes.
-          await heartbeatAll();
-        }
-        break;
-      }catch(error){console.error('['+app.name+'] Poll failed:',error.message);}
+        finally{activeJob=null;await heartbeatAll()}
+        return;
+      }catch(error){console.error('['+app.name+'] Crop polling failed:',error.message)}
+    }
+    for(const app of cycle){
+      if(stopping||mockupUnsupported.has(app.appUrl))continue;
+      if(Date.now()-(mockupPollAt.get(app.appUrl)||0)<12000)continue;
+      mockupPollAt.set(app.appUrl,Date.now());
+      try{
+        const api=clientFor(app);
+        const claimed=await api.claimMockup(mockupOwner);
+        if(!claimed.item)continue;
+        activeJob={app,job:{id:claimed.job.id},type:'mockup'};
+        await heartbeatAll();
+        try{await processPSDJob(app,claimed)}
+        finally{activeJob=null;await heartbeatAll()}
+        return;
+      }catch(error){
+        // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
+        if(/404|not found|non-json/i.test(error.message)){
+          mockupUnsupported.add(app.appUrl);
+          console.log('['+app.name+'] PSD API unavailable; crop service remains enabled.');
+        }else console.error('['+app.name+'] PSD polling failed:',error.message);
+      }
     }
   }finally{busy=false;}
 }
