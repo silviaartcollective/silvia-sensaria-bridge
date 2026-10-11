@@ -109,6 +109,12 @@ class Photopea{
  }
 }
 const pp=new Photopea();
+window.addEventListener('pagehide',()=>{
+ if(!running||!job)return;
+ // A closing or navigating browser must not retain the batch's ownership.
+ const payload=new Blob([JSON.stringify({owner,action:'release'})],{type:'application/json'});
+ navigator.sendBeacon('/api/mockups/jobs/'+job.id+'/control',payload);
+});
 function inspect(){
  try{
   var doc=app.activeDocument,objects=[],visibility=[];
@@ -359,7 +365,11 @@ async function process(){
  if(!job)throw Error('Select a batch.');
  if(running)return;
  running=true;stopping=false;$('mg-generate').disabled=true;$('mg-pause').disabled=false;
- const timer=setInterval(()=>{void api('jobs/'+job.id+'/heartbeat','POST',{owner}).catch(()=>{})},40000);
+ // Serialize heartbeats so a delayed R2 update cannot overwrite the final release.
+ let heartbeatInFlight=Promise.resolve();
+ const timer=setInterval(()=>{
+  heartbeatInFlight=heartbeatInFlight.then(()=>api('jobs/'+job.id+'/heartbeat','POST',{owner})).catch(()=>{});
+ },20000);
  try{
   await pp.init();
   while(!stopping){
@@ -376,7 +386,12 @@ async function process(){
    await showJob(job.id);
   }
  }finally{
-  clearInterval(timer);running=false;
+  clearInterval(timer);
+  await heartbeatInFlight;
+  // Releasing even after PSD errors prevents a stopped browser blocking the next attempt.
+  try{await api('jobs/'+job.id+'/control','POST',{owner,action:'release'});}
+  catch(error){failure(Error('Could not release batch: '+error.message));}
+  running=false;
   $('mg-generate').disabled=false;$('mg-pause').disabled=true;
   await showJob(job.id);await loadJobs();
   if(job.templates.length&&job.templates.every(t=>t.status==='completed')){
