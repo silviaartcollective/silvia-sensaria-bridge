@@ -75,7 +75,7 @@ const message=(text,warning=false)=>{
  const el=$('mg-progress');el.textContent=currentStage;el.classList.toggle('warn',warning);
 };
 const statusClock=setInterval(()=>{
- if(!running||!currentStage||stageWarn)return;
+ if((!running&&!preparing)||!currentStage||stageWarn)return;
  const elapsed=Math.floor((Date.now()-stageSince)/1000);
  if(elapsed<12)return;
  const secs=elapsed%60,mins=Math.floor(elapsed/60);
@@ -97,8 +97,14 @@ async function api(route,method='GET',body){
  }finally{clearTimeout(timeout)}
 }
 async function upload(url,blob,mime){
- const r=await fetch(url,{method:'PUT',headers:{'content-type':mime},body:blob});
- if(!r.ok)throw Error('R2 upload failed (HTTP '+r.status+'). Check signed URLs and bucket CORS.');
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),300000);
+ try{
+  const r=await fetch(url,{method:'PUT',headers:{'content-type':mime},body:blob,signal:controller.signal});
+  if(!r.ok)throw Error('R2 upload failed (HTTP '+r.status+'). Check signed URLs and bucket CORS.');
+ }catch(error){
+  if(error?.name==='AbortError')throw Error('R2 upload exceeded 5 minutes and was stopped. Check the connection, then retry without uploading all PSDs again.');
+  throw error;
+ }finally{clearTimeout(timer)}
 }
 function releaseOldPhotopeaDocuments(){
  try{
