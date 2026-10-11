@@ -26,6 +26,10 @@ import { renderPricingPage } from './pricing-page.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
 import { hasAuthorizedConverterLink } from './listing-converter-link.mjs';
 import {
+ enqueueConversion,getConversionJob,getConversionQueueSummary,claimNextConversion,
+ updateConversionJob,cancelConversion
+} from './listing-conversion-queue.mjs';
+import {
  reserveConverterArtworkRevision,startConverterArtworkCrop,getConverterArtworkRevisionStatus,
  assertConverterArtworkReady,activateConverterArtworkRevision
 } from './converter-artwork-revision.mjs';
@@ -965,8 +969,11 @@ async function withEtsyListingRetry(task, { attempts = 6, baseDelayMs = 300 } = 
       return await task();
     } catch (error) {
       lastError = error;
-      if (!isEtsyListingConflict(error) || attempt === attempts) throw error;
-      const delay = Math.min(2500, baseDelayMs * attempt + Math.floor(Math.random() * 180));
+      const rateLimited=/\(429\)|rate.?limit|exceeded per second/i.test(String(error?.message||error));
+      if ((!isEtsyListingConflict(error)&&!rateLimited) || attempt === attempts) throw error;
+      const delay = rateLimited
+        ?Math.min(30000,1200*Math.pow(2,attempt-1))+Math.floor(Math.random()*500)
+        :Math.min(2500,baseDelayMs*attempt+Math.floor(Math.random()*180));
       await sleepMs(delay);
     }
   }
@@ -1315,6 +1322,279 @@ async function reconcileNewEtsyPaidOrders(){
    console.warn('[automatic Etsy sync] '+lastAutoReviewError);
  }finally{autoReviewPolling=false;}
 }
+
+
+class ConversionHttpError extends Error{
+ constructor(status,details){
+  super(String(details?.error||'Etsy conversion failed.'));
+  this.status=status;this.details=details;
+ }
+}
+function conversionReply(status,payload){
+ if(status>=400)throw new ConversionHttpError(status,payload);
+ return payload;
+}
+const SHIPPING_CACHE_TTL=10*60*1000;
+const converterShippingCache=new Map();
+async function cachedConverterShippingProfiles(session){
+ const key=String(session.shop.shop_id),existing=converterShippingCache.get(key);
+ if(existing&&existing.expires>Date.now())return existing.data||existing.pending;
+ const pending=getShopShippingProfiles({
+  shopId:session.shop.shop_id,keystring:session.keystring,
+  sharedSecret:session.sharedSecret,accessToken:session.accessToken
+ });
+ converterShippingCache.set(key,{expires:Date.now()+SHIPPING_CACHE_TTL,pending});
+ try{
+  const data=await pending;
+  converterShippingCache.set(key,{expires:Date.now()+SHIPPING_CACHE_TTL,data});
+  return data;
+ }catch(error){converterShippingCache.delete(key);throw error}
+}
+async function performListingConversion(body){
+      const listingId = Number(body.listingId);
+      const artworkId = String(body.artworkId || '').trim().toUpperCase();
+      if (!Number.isInteger(listingId) || listingId <= 0 || !/^SAC\d+$/.test(artworkId)) {
+        return conversionReply(400, { ok: false, error: 'A valid listing ID and SAC artwork ID are required.' });
+      }
+
+      const manifest = await loadArtworkManifest(artworkId);
+      if (!manifest?.master?.key || manifest.status !== 'ready') {
+        return conversionReply(400, { ok: false, error: `${artworkId} has not finished uploading to Cloudflare R2.` });
+      }
+      // Explicit reconversion reuses the exact artwork ID already linked to this listing.
+      // A second conversion must never reserve another ID or cross-link different artwork.
+      const reconvert = body.reconvert === true;
+      const mapBefore = await loadListingConverterMap();
+      const prior = mapBefore.listings?.[String(listingId)] || null;
+      if (!prior || prior.artworkId !== artworkId ||
+          (reconvert ? prior.status !== 'converted' :
+           !['reserved','converted'].includes(prior.status))) {
+        return conversionReply(409, { ok: false,
+          error: 'The listing-to-artwork link changed. Refresh listings before converting; no Etsy changes were made.' });
+      }
+      if (prior.status === 'converted' && !reconvert) {
+        return conversionReply(409, { ok: false,
+          error: 'This listing was already converted. Use the Reconvert listing button to reapply settings safely.' });
+      }
+      if (!hasAuthorizedConverterLink({
+        listingId, sourceListingId: manifest.sourceEtsyListingId,
+        artworkId, reconvert, mappings: mapBefore.listings
+      })) {
+        return conversionReply(409, { ok:false,
+          error: 'Artwork ownership could not be verified for this Etsy listing or its reposting history. No Etsy changes were made.' });
+      }
+
+      let replacement=null;
+      if(reconvert){
+        const revision=String(body.revision||'').trim();
+        if(!/^[0-9a-f-]{36}$/i.test(revision))
+          return conversionReply(400,{ok:false,
+           error:'Upload a new master artwork and complete the new crop job before reconverting.'});
+        try{
+          const session=await getEtsySession({forceRefresh:true});
+          replacement=await assertConverterArtworkReady({
+           shopId:session.shop.shop_id,listingId,artworkId,revision
+          });
+        }catch(error){
+          return conversionReply(409,{ok:false,
+           error:'New artwork crops are not verified: '+String(error?.message||error)});
+        }
+      }
+      const cropJobId = String(reconvert?replacement.record.jobId:(manifest.cropWorkerJobId||''));
+      const cropJob = cropJobId ? await getCropJob(cropJobId) : null;
+      if (!cropJob || cropJob.status !== 'completed') {
+        return conversionReply(409, {
+          ok: false,
+          error: 'The production crop job must finish before the Etsy listing can be converted.'
+        });
+      }
+
+      const session = await getEtsySession({ forceRefresh: true });
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_r') || !scopes.has('listings_w')) {
+        return conversionReply(403, {
+          ok: false,
+          needsReauthorization: true,
+          error: 'Reconnect Etsy with listings_r and listings_w before converting listings.'
+        });
+      }
+
+      const listings = await allShopListingsForPriceSync(session);
+      const listing = listings.find(item => Number(item.listing_id) === listingId);
+      if (!listing) {
+        return conversionReply(404, { ok: false, error: 'The Etsy listing is no longer active or draft.' });
+      }
+
+      const currentInventory = await getListingInventory({
+        listingId,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      });
+
+      const readinessStateId = Number(listing.readiness_state_id)
+        || readinessStateFromInventory(currentInventory)
+        || Number(mostCommonValue(listings, item => item.readiness_state_id));
+
+      if (!Number.isInteger(readinessStateId) || readinessStateId <= 0) {
+        throw new Error('Could not determine the Etsy readiness state for this listing.');
+      }
+
+      const shipping = await cachedConverterShippingProfiles(session);
+      const managedShippingProfile = (shipping.results || shipping || []).find(profile =>
+        String(profile?.title || '').trim() === String(shippingProfileDefaults.title || '').trim()
+      ) || null;
+
+      // Apply Silvia's structural listing settings first, then replace the full
+      // variation inventory. Existing SEO copy and existing listing media are preserved.
+      await withEtsyListingRetry(() => updateListing({
+        shopId: session.shop.shop_id,
+        listingId,
+        listing: {
+          taxonomy_id: listingDefaults.taxonomyId,
+          shipping_profile_id: managedShippingProfile?.shipping_profile_id || undefined,
+          readiness_state_id: readinessStateId,
+          should_auto_renew: listingDefaults.autoRenew,
+          type: 'physical'
+        },
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      }));
+
+      const variantInventory = buildOwnSilviaInventory({
+        artworkId,
+        catalog: products,
+        readinessStateId,
+        defaultQuantity: 999
+      });
+
+      await withEtsyListingRetry(() => updateListingInventory({
+        listingId,
+        inventory: variantInventory,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      }));
+
+      const verifiedInventory = await getListingInventory({
+        listingId,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      });
+      const priceVerification = priceSyncPlanForInventory(verifiedInventory);
+      if (priceVerification.changed) {
+        throw new Error(
+          `Etsy still reports ${priceVerification.changes.length} Silvia variant price mismatch(es) after conversion.`
+        );
+      }
+
+      const enabledProducts = enabledInventoryProducts(verifiedInventory);
+      const badSkus = enabledProducts
+        .map(product => String(product?.sku || ''))
+        .filter(sku => !sku.startsWith(`${artworkId}-`));
+      if (badSkus.length) {
+        throw new Error(`Etsy conversion verification found ${badSkus.length} enabled variant(s) without ${artworkId} SKUs.`);
+      }
+
+      const properties = await getCachedTaxonomyProperties(session, listingDefaults.taxonomyId);
+      const attributes = await applyAllListingAttributes({
+        session,
+        listingId,
+        body: {},
+        properties
+      });
+
+      manifest.etsyConfiguredAt = new Date().toISOString();
+      manifest.etsyConfiguration = {
+        listingId,
+        sourceSystem: 'gelato-listing-converter',
+        variants: variantInventory.products.length,
+        enabledVariants: variantInventory.enabledCount,
+        materials: listingDefaults.fixedAttributes?.Materials || [],
+        attributes: attributes.results,
+        existingMediaPreserved: true,
+        existingSeoPreserved: true
+      };
+      await saveArtworkManifest(manifest);
+      // Switch master only after Etsy variant, price and attribute verification.
+      let replacementActivated=null;
+      if(reconvert){
+        replacementActivated=await activateConverterArtworkRevision({
+         shopId:session.shop.shop_id,listingId,artworkId,
+         revision:replacement.record.revision
+        });
+      }
+
+      const converterMap = await loadListingConverterMap();
+      converterMap.listings ||= {};
+      const saved = converterMap.listings[String(listingId)] || prior;
+      const finishedAt = new Date().toISOString();
+      converterMap.listings[String(listingId)] = {
+        ...saved,
+        listingId,
+        title: String(listing.title || manifest.sourceEtsyListingTitle || ''),
+        artworkId,
+        status: 'converted',
+        orientation: manifest.orientation,
+        convertedAt: saved?.convertedAt || finishedAt,
+        ...(reconvert ? {
+          lastReconvertedAt: finishedAt,
+          reconversionCount: Math.max(0, Number(saved?.reconversionCount) || 0) + 1,
+          reconversionHistory: [
+            ...(Array.isArray(saved?.reconversionHistory) ? saved.reconversionHistory : []),
+            {at:finishedAt,artworkId,enabledVariants:variantInventory.enabledCount,
+             revision:replacement?.record.revision||null,masterKey:replacement?.record.masterKey||null}
+          ].slice(-10)
+        } : {}),
+        cropJobId,
+        enabledVariants: variantInventory.enabledCount
+      };
+      await saveListingConverterMap(converterMap);
+
+      return conversionReply(200, {
+        ok: true,
+        listingId,
+        artworkId,
+        enabledVariants: variantInventory.enabledCount,
+        totalVariants: variantInventory.products.length,
+        pricing: variantInventory.pricing,
+        shippingProfileId: managedShippingProfile?.shipping_profile_id || null,
+        attributeWarnings: attributes.warnings,
+        verified: true,
+        reconverted: reconvert,
+        replacementMasterActivated:reconvert?Boolean(replacementActivated):false,
+        artworkRevision:replacementActivated?.revision||null,
+        reconversionCount: converterMap.listings[String(listingId)].reconversionCount || 0
+      });
+
+}
+let converterRunning=false;
+async function runPendingListingConversions(){
+ if(converterRunning)return;
+ converterRunning=true;
+ try{
+  for(let cycle=0;cycle<30;cycle++){
+   const job=await claimNextConversion();
+   if(!job)break;
+   try{
+    const result=await performListingConversion(job.request);
+    await updateConversionJob(job.id,{status:'completed',progress:'Etsy conversion verified',result});
+   }catch(error){
+    console.error('[Etsy converter queue] listing '+job.request.listingId+': '+error.message);
+    await updateConversionJob(job.id,{status:'failed',progress:'Conversion requires attention',error:error.message});
+   }
+   // Give Etsy at least a second between separate listings.
+   await sleepMs(1300);
+  }
+ }catch(error){console.error('[Etsy converter queue]',error.message)}
+ finally{converterRunning=false}
+}
+const conversionQueueTimer=setInterval(()=>{
+ void runPendingListingConversions();
+},9000);
+conversionQueueTimer.unref?.();
 
 const server = http.createServer(async (req, res) => {
   // Photopea mockup batch endpoints are private and separate from Etsy fulfillment.
@@ -2837,234 +3117,43 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method==='GET'&&url.pathname==='/api/listing-converter/queue'){
+    if(!requireAdminApi(req,res))return;
+    try{return sendJson(res,200,{ok:true,jobs:await getConversionQueueSummary()})}
+    catch(error){return sendJson(res,500,{ok:false,error:error.message})}
+  }
+  const converterQueueRoute=url.pathname.match(/^\/api\/listing-converter\/queue\/(listing_[a-f0-9-]+)(?:\/(cancel))?$/);
+  if(converterQueueRoute){
+    if(!requireAdminApi(req,res))return;
+    const [,id,action]=converterQueueRoute;
+    try{
+     if(req.method==='GET'&&!action){
+      const job=await getConversionJob(id);
+      return sendJson(res,job?200:404,{ok:Boolean(job),job,error:job?undefined:'Conversion job not found'});
+     }
+     if(req.method==='POST'&&action==='cancel')
+      return sendJson(res,200,{ok:true,job:await cancelConversion(id)});
+    }catch(error){return sendJson(res,409,{ok:false,error:error.message})}
+    return sendJson(res,405,{ok:false,error:'Method not supported'});
+  }
   if (req.method === 'POST' && url.pathname === '/api/listing-converter/convert') {
     if (!requireAdminApi(req, res)) return;
     try {
-      const body = await readJsonBody(req);
-      const listingId = Number(body.listingId);
-      const artworkId = String(body.artworkId || '').trim().toUpperCase();
-      if (!Number.isInteger(listingId) || listingId <= 0 || !/^SAC\d+$/.test(artworkId)) {
-        return sendJson(res, 400, { ok: false, error: 'A valid listing ID and SAC artwork ID are required.' });
+      const body=await readJsonBody(req);
+      const listingId=Number(body.listingId),artworkId=String(body.artworkId||'').trim().toUpperCase();
+      if(!Number.isSafeInteger(listingId)||listingId<=0||!/^(SAC)\d+$/.test(artworkId))
+       throw Error('Valid listing and existing artwork ID are required.');
+      if(body.reconvert===true){
+       const session=await getEtsySession({forceRefresh:true});
+       await assertConverterArtworkReady({shopId:session.shop.shop_id,listingId,
+        artworkId,revision:body.revision});
       }
-
-      const manifest = await loadArtworkManifest(artworkId);
-      if (!manifest?.master?.key || manifest.status !== 'ready') {
-        return sendJson(res, 400, { ok: false, error: `${artworkId} has not finished uploading to Cloudflare R2.` });
-      }
-      // Explicit reconversion reuses the exact artwork ID already linked to this listing.
-      // A second conversion must never reserve another ID or cross-link different artwork.
-      const reconvert = body.reconvert === true;
-      const mapBefore = await loadListingConverterMap();
-      const prior = mapBefore.listings?.[String(listingId)] || null;
-      if (!prior || prior.artworkId !== artworkId ||
-          (reconvert ? prior.status !== 'converted' :
-           !['reserved','converted'].includes(prior.status))) {
-        return sendJson(res, 409, { ok: false,
-          error: 'The listing-to-artwork link changed. Refresh listings before converting; no Etsy changes were made.' });
-      }
-      if (prior.status === 'converted' && !reconvert) {
-        return sendJson(res, 409, { ok: false,
-          error: 'This listing was already converted. Use the Reconvert listing button to reapply settings safely.' });
-      }
-      if (!hasAuthorizedConverterLink({
-        listingId, sourceListingId: manifest.sourceEtsyListingId,
-        artworkId, reconvert, mappings: mapBefore.listings
-      })) {
-        return sendJson(res, 409, { ok:false,
-          error: 'Artwork ownership could not be verified for this Etsy listing or its reposting history. No Etsy changes were made.' });
-      }
-
-      let replacement=null;
-      if(reconvert){
-        const revision=String(body.revision||'').trim();
-        if(!/^[0-9a-f-]{36}$/i.test(revision))
-          return sendJson(res,400,{ok:false,
-           error:'Upload a new master artwork and complete the new crop job before reconverting.'});
-        try{
-          const session=await getEtsySession({forceRefresh:true});
-          replacement=await assertConverterArtworkReady({
-           shopId:session.shop.shop_id,listingId,artworkId,revision
-          });
-        }catch(error){
-          return sendJson(res,409,{ok:false,
-           error:'New artwork crops are not verified: '+String(error?.message||error)});
-        }
-      }
-      const cropJobId = String(reconvert?replacement.record.jobId:(manifest.cropWorkerJobId||''));
-      const cropJob = cropJobId ? await getCropJob(cropJobId) : null;
-      if (!cropJob || cropJob.status !== 'completed') {
-        return sendJson(res, 409, {
-          ok: false,
-          error: 'The production crop job must finish before the Etsy listing can be converted.'
-        });
-      }
-
-      const session = await getEtsySession({ forceRefresh: true });
-      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
-      if (!scopes.has('listings_r') || !scopes.has('listings_w')) {
-        return sendJson(res, 403, {
-          ok: false,
-          needsReauthorization: true,
-          error: 'Reconnect Etsy with listings_r and listings_w before converting listings.'
-        });
-      }
-
-      const listings = await allShopListingsForPriceSync(session);
-      const listing = listings.find(item => Number(item.listing_id) === listingId);
-      if (!listing) {
-        return sendJson(res, 404, { ok: false, error: 'The Etsy listing is no longer active or draft.' });
-      }
-
-      const currentInventory = await getListingInventory({
-        listingId,
-        keystring: session.keystring,
-        sharedSecret: session.sharedSecret,
-        accessToken: session.accessToken
-      });
-
-      const readinessStateId = Number(listing.readiness_state_id)
-        || readinessStateFromInventory(currentInventory)
-        || Number(mostCommonValue(listings, item => item.readiness_state_id));
-
-      if (!Number.isInteger(readinessStateId) || readinessStateId <= 0) {
-        throw new Error('Could not determine the Etsy readiness state for this listing.');
-      }
-
-      const shipping = await getShopShippingProfiles({
-        shopId: session.shop.shop_id,
-        keystring: session.keystring,
-        sharedSecret: session.sharedSecret,
-        accessToken: session.accessToken
-      });
-      const managedShippingProfile = (shipping.results || shipping || []).find(profile =>
-        String(profile?.title || '').trim() === String(shippingProfileDefaults.title || '').trim()
-      ) || null;
-
-      // Apply Silvia's structural listing settings first, then replace the full
-      // variation inventory. Existing SEO copy and existing listing media are preserved.
-      await withEtsyListingRetry(() => updateListing({
-        shopId: session.shop.shop_id,
-        listingId,
-        listing: {
-          taxonomy_id: listingDefaults.taxonomyId,
-          shipping_profile_id: managedShippingProfile?.shipping_profile_id || undefined,
-          readiness_state_id: readinessStateId,
-          should_auto_renew: listingDefaults.autoRenew,
-          type: 'physical'
-        },
-        keystring: session.keystring,
-        sharedSecret: session.sharedSecret,
-        accessToken: session.accessToken
-      }));
-
-      const variantInventory = buildOwnSilviaInventory({
-        artworkId,
-        catalog: products,
-        readinessStateId,
-        defaultQuantity: 999
-      });
-
-      await withEtsyListingRetry(() => updateListingInventory({
-        listingId,
-        inventory: variantInventory,
-        keystring: session.keystring,
-        sharedSecret: session.sharedSecret,
-        accessToken: session.accessToken
-      }));
-
-      const verifiedInventory = await getListingInventory({
-        listingId,
-        keystring: session.keystring,
-        sharedSecret: session.sharedSecret,
-        accessToken: session.accessToken
-      });
-      const priceVerification = priceSyncPlanForInventory(verifiedInventory);
-      if (priceVerification.changed) {
-        throw new Error(
-          `Etsy still reports ${priceVerification.changes.length} Silvia variant price mismatch(es) after conversion.`
-        );
-      }
-
-      const enabledProducts = enabledInventoryProducts(verifiedInventory);
-      const badSkus = enabledProducts
-        .map(product => String(product?.sku || ''))
-        .filter(sku => !sku.startsWith(`${artworkId}-`));
-      if (badSkus.length) {
-        throw new Error(`Etsy conversion verification found ${badSkus.length} enabled variant(s) without ${artworkId} SKUs.`);
-      }
-
-      const properties = await getCachedTaxonomyProperties(session, listingDefaults.taxonomyId);
-      const attributes = await applyAllListingAttributes({
-        session,
-        listingId,
-        body: {},
-        properties
-      });
-
-      manifest.etsyConfiguredAt = new Date().toISOString();
-      manifest.etsyConfiguration = {
-        listingId,
-        sourceSystem: 'gelato-listing-converter',
-        variants: variantInventory.products.length,
-        enabledVariants: variantInventory.enabledCount,
-        materials: listingDefaults.fixedAttributes?.Materials || [],
-        attributes: attributes.results,
-        existingMediaPreserved: true,
-        existingSeoPreserved: true
-      };
-      await saveArtworkManifest(manifest);
-      // Switch master only after Etsy variant, price and attribute verification.
-      let replacementActivated=null;
-      if(reconvert){
-        replacementActivated=await activateConverterArtworkRevision({
-         shopId:session.shop.shop_id,listingId,artworkId,
-         revision:replacement.record.revision
-        });
-      }
-
-      const converterMap = await loadListingConverterMap();
-      converterMap.listings ||= {};
-      const saved = converterMap.listings[String(listingId)] || prior;
-      const finishedAt = new Date().toISOString();
-      converterMap.listings[String(listingId)] = {
-        ...saved,
-        listingId,
-        title: String(listing.title || manifest.sourceEtsyListingTitle || ''),
-        artworkId,
-        status: 'converted',
-        orientation: manifest.orientation,
-        convertedAt: saved?.convertedAt || finishedAt,
-        ...(reconvert ? {
-          lastReconvertedAt: finishedAt,
-          reconversionCount: Math.max(0, Number(saved?.reconversionCount) || 0) + 1,
-          reconversionHistory: [
-            ...(Array.isArray(saved?.reconversionHistory) ? saved.reconversionHistory : []),
-            {at:finishedAt,artworkId,enabledVariants:variantInventory.enabledCount,
-             revision:replacement?.record.revision||null,masterKey:replacement?.record.masterKey||null}
-          ].slice(-10)
-        } : {}),
-        cropJobId,
-        enabledVariants: variantInventory.enabledCount
-      };
-      await saveListingConverterMap(converterMap);
-
-      return sendJson(res, 200, {
-        ok: true,
-        listingId,
-        artworkId,
-        enabledVariants: variantInventory.enabledCount,
-        totalVariants: variantInventory.products.length,
-        pricing: variantInventory.pricing,
-        shippingProfileId: managedShippingProfile?.shipping_profile_id || null,
-        attributeWarnings: attributes.warnings,
-        verified: true,
-        reconverted: reconvert,
-        replacementMasterActivated:reconvert?Boolean(replacementActivated):false,
-        artworkRevision:replacementActivated?.revision||null,
-        reconversionCount: converterMap.listings[String(listingId)].reconversionCount || 0
-      });
-    } catch (error) {
-      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
+      const queued=await enqueueConversion({listingId,artworkId,
+       reconvert:body.reconvert===true,revision:body.revision});
+      void runPendingListingConversions();
+      return sendJson(res,202,{ok:true,queued:true,...queued});
+    }catch(error){
+      return sendJson(res,400,{ok:false,error:error?.message||String(error)});
     }
   }
 
