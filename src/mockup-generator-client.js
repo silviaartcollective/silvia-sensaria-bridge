@@ -97,13 +97,18 @@ async function api(route,method='GET',body){
  }finally{clearTimeout(timeout)}
 }
 // Prevent heartbeat writes to R2 from overwriting a claimed/completed PSD.
-let heartbeatInFlight=Promise.resolve(),jobMetadataMutations=0;
-async function jobMutation(route,body){
- jobMetadataMutations++;
- try{
-  await heartbeatInFlight;
-  return await api(route,'POST',body);
- }finally{jobMetadataMutations--}
+let heartbeatInFlight=Promise.resolve(),jobMetadataMutations=0,jobWriteQueue=Promise.resolve();
+function jobMutation(route,body){
+ const current=jobWriteQueue.then(async()=>{
+  jobMetadataMutations++;
+  try{
+   await heartbeatInFlight;
+   return await api(route,'POST',body);
+  }finally{jobMetadataMutations--}
+ });
+ // A failed call must not prevent subsequent job state changes.
+ jobWriteQueue=current.catch(()=>{});
+ return current;
 }
 async function upload(url,blob,mime){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),300000);
