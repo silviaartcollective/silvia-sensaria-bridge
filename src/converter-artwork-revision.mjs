@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { loadArtworkManifest,saveArtworkManifest } from './artwork-storage.mjs';
 import { createCropJob,getCropJob } from './crop-job-store.mjs';
 import { checkedRevisionAssets } from './artwork-revision.mjs';
-import { getJsonObject,putJsonObject,artworkObjectExists,signedArtworkUploadUrl } from './r2.mjs';
+import { getJsonObject,putJsonObject,artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl } from './r2.mjs';
 
 const TYPES={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff'};
 const textId=value=>{
@@ -28,11 +28,13 @@ export async function getConverterArtworkRevision(shopId,listingId){
 function checkUploadedSource(input){
  const filename=String(input?.filename||'').trim().slice(0,180);
  const ext=filename.toLowerCase().match(/\.([a-z]+)$/)?.[1];
- const size=Number(input?.size);
+ const size=Number(input?.size),sha256=String(input?.sha256||'').toLowerCase();
  if(!TYPES[ext])throw Error('Choose a JPG, PNG, WebP or TIFF master image.');
  if(!Number.isSafeInteger(size)||size<1024||size>200*1024*1024)
   throw Error('The master artwork must be between 1 KB and 200 MB.');
- return {filename,ext,contentType:TYPES[ext],size};
+ if(!/^[a-f0-9]{64}$/.test(sha256))
+  throw Error('The new artwork file fingerprint is missing. Select the file again and retry.');
+ return {filename,ext,contentType:TYPES[ext],size,sha256};
 }
 export async function reserveConverterArtworkRevision({shopId,listingId,artworkId,master,orientation}){
  const id=textId(listingId),aid=artId(artworkId);
@@ -50,24 +52,28 @@ export async function reserveConverterArtworkRevision({shopId,listingId,artworkI
   if(previous.artworkId!==aid || previous.originalMasterKey!==manifest.master.key)
    throw Error('An earlier reconversion changed the artwork linkage. Refresh the listing before retrying.');
   const job=previous.jobId?await getCropJob(previous.jobId):null;
-  if(job?.status==='failed'){
-   // Explicit fresh upload allows a clean retry after crop failure; never overwrite
-   // the already-used staged key, which might be referenced by a worker.
-  }else if(previous.filename===file.filename&&previous.size===file.size){
+  const sameFile=previous.filename===file.filename&&previous.size===file.size&&
+   Boolean(previous.sha256)&&previous.sha256===file.sha256;
+  if(sameFile&&job?.status!=='failed'){
+   const present=await artworkObjectExists(previous.masterKey);
+   const validUpload=present&&(await artworkObjectInfo(previous.masterKey)).size===file.size;
+   if(present&&!validUpload)throw Error('The previous replacement upload is incomplete. Contact support before resuming this crop job.');
    return {resumed:true,revision:previous.revision,artworkId:aid,
-    uploadAlreadyPresent:await artworkObjectExists(previous.masterKey),
-    cropJobId:previous.jobId||null,status:previous.status,
+    uploadAlreadyPresent:validUpload,cropJobId:previous.jobId||null,
+    status:previous.status,
     upload:{key:previous.masterKey,contentType:previous.contentType,
       uploadUrl:await signedArtworkUploadUrl(previous.masterKey,previous.contentType,45*60)}};
-  }else{
-   throw Error('Another reconversion is still pending for this listing. Select the original uploaded file to continue it.');
   }
+  if(job&&['pending','claimed','processing','uploading'].includes(job.status))
+   throw Error('A different artwork file is still being cropped for this listing. Wait for the current job to finish before uploading another.');
+  // Failed/completed previous jobs are immutable. Use a new staging key for a new
+  // file (or a clean retry), never overwrite bytes a crop worker might be reading.
  }
  const revision=crypto.randomUUID();
  const masterKey='artworks/'+aid+'/revisions/'+revision+'/master.'+file.ext;
  const record={
   shopId:String(shopId),listingId:id,artworkId:aid,revision,masterKey,
-  filename:file.filename,contentType:file.contentType,size:file.size,
+  filename:file.filename,contentType:file.contentType,size:file.size,sha256:file.sha256,
   originalMasterKey:manifest.master.key,orientation:targetOrientation,
   jobId:null,status:'awaiting_upload',createdAt:new Date().toISOString()
  };
@@ -85,6 +91,9 @@ export async function startConverterArtworkCrop({shopId,listingId,revision,artwo
   throw Error('The existing master changed before the replacement crops could start.');
  if(!await artworkObjectExists(record.masterKey))
   throw Error('Finish uploading the new artwork before requesting crops.');
+ const uploaded=await artworkObjectInfo(record.masterKey);
+ if(uploaded.size!==record.size)
+  throw Error('New artwork upload size mismatch. Select and upload the master again before cropping.');
  if(record.jobId){
   const job=await getCropJob(record.jobId);
   if(!job)throw Error('Previously queued crop job could not be found. Review the listing before retrying.');
@@ -117,6 +126,9 @@ export async function assertConverterArtworkReady({shopId,listingId,revision,art
  if(record.status==='activated')throw Error('This artwork revision has already been activated. Select a new master for another reconversion.');
  const job=record.jobId?await getCropJob(record.jobId):null;
  const assets=await checkedRevisionAssets({...record,jobId:record.jobId},job);
+ const uploaded=await artworkObjectInfo(record.masterKey);
+ if(uploaded.size!==record.size)
+  throw Error('Replacement master differs from the verified upload. Production artwork was not activated.');
  const manifest=await loadArtworkManifest(record.artworkId);
  if(manifest.master?.key!==record.originalMasterKey)
   throw Error('Existing master changed while the replacement was cropping. Reconversion stopped.');
