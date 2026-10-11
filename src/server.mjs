@@ -497,6 +497,7 @@ function recordCropWorkerHeartbeat(input = {}) {
   cropWorkerHeartbeat = {
     workerId: String(input.workerId || cropWorkerHeartbeat.workerId || '').trim(),
     version: String(input.version || cropWorkerHeartbeat.version || '').trim(),
+    mockups: Number.parseInt(String(input.version || cropWorkerHeartbeat.version || '0').split('.')[0],10)>=4,
     busy: input.busy === true,
     jobId: String(input.jobId || '').trim(),
     lastSeenAt: Date.now()
@@ -514,6 +515,7 @@ function cropWorkerStatus() {
     online,
     workerId: online ? cropWorkerHeartbeat.workerId : '',
     version: online ? cropWorkerHeartbeat.version : '',
+    mockups: online ? cropWorkerHeartbeat.mockups===true : false,
     busy: online ? cropWorkerHeartbeat.busy : false,
     jobId: online ? cropWorkerHeartbeat.jobId : '',
     lastSeenAt: cropWorkerHeartbeat.lastSeenAt
