@@ -178,12 +178,14 @@ async function workerStatus(){
  try{
   const response=await fetch('/api/crop-worker/status',{cache:'no-store'});
   const data=await response.json(),worker=data.worker||{};
-  const text=worker.online?'Shared PC Crop + Mockup Worker online'+(worker.busy?' · processing':' · idle')
+  const text=worker.online&&worker.mockups===true
+   ?'Shared PC Crop + Mockup Worker online'+(worker.busy?' · processing':' · idle')
+   :worker.online?'Old crop-only worker online. Update the PC worker folder, run setup-worker.cmd and restart to enable mockups.'
    :worker.configured?'Shared PC worker offline · use Launch Shared Crop Worker above'
    :'Shared PC worker not configured in Render';
   $('mg-worker-status').textContent=text;
-  $('mg-worker-status').style.color=worker.online?'#477153':'#a46b3d';
-  return worker.online;
+  $('mg-worker-status').style.color=worker.online&&worker.mockups===true?'#477153':'#a46b3d';
+  return worker.online&&worker.mockups===true;
  }catch{
   $('mg-worker-status').textContent='Could not check PC worker connection';
   return false;
