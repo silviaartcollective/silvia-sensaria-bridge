@@ -8,6 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {pipeline} from 'node:stream/promises';
 import sharp from 'sharp';
+import {renderMockupWithPhotoshop,NativePhotoshopUnavailable} from './native-photoshop.mjs';
 
 export function chromiumCandidates(env=process.env){
  const dirs=[env.PROGRAMFILES,env['PROGRAMFILES(X86)'],env.LOCALAPPDATA].filter(Boolean);
@@ -92,7 +93,27 @@ export async function openPhotopeaPCServer({psdPath,artworkPath,outputPath,onSta
   async close(){await new Promise(resolve=>server.close(()=>resolve()))}
  };
 }
-export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateName='',mapping,fitMode='contain',onStage=()=>{}}){
+let nativeUnavailableReason='';
+export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateName='',mapping,
+ smartObjects=[],fitMode='contain',onStage=()=>{}}){
+ const engine=String(process.env.POD_PSD_RENDERER||'auto').toLowerCase();
+ const started=Date.now();
+ if(engine!=='photopea'&&(!nativeUnavailableReason||engine==='photoshop')){
+  try{
+   const result=await renderMockupWithPhotoshop({psdPath,artworkPath,outputPath,
+    templateName,mapping,smartObjects,fitMode,onStage});
+   console.log('[PC PSD renderer] '+templateName+' completed with desktop Photoshop in '+
+    ((Date.now()-started)/1000).toFixed(1)+'s.');
+   return result;
+  }catch(error){
+   if(!(error instanceof NativePhotoshopUnavailable))throw error;
+   if(engine==='photoshop')throw error;
+   nativeUnavailableReason=error.message;
+   console.log('[PC PSD renderer] Native Photoshop unavailable: '+nativeUnavailableReason+
+    '. Falling back to Photopea.');
+  }
+ }
+ await onStage('Using Photopea fallback'+(nativeUnavailableReason?' (desktop Photoshop unavailable)':''));
  const executablePath=findPCBrowser();
  if(!executablePath)throw Error('Chrome or Microsoft Edge not found on PC. Set PHOTOPEA_CHROME_PATH or install Chrome/Edge.');
  let puppeteer;
@@ -130,7 +151,9 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
    throw Error('Worker export is not a valid JPEG within 24 megapixels.');
   const size=(await stat(outputPath)).size;
   if(size<100||size>60*1024*1024)throw Error('Generated JPG file size is invalid.');
-  return {...result,dimensions:{width:metadata.width,height:metadata.height},size};
+  console.log('[PC PSD renderer] '+templateName+' completed with Photopea in '+
+   ((Date.now()-started)/1000).toFixed(1)+'s.');
+  return {...result,engine:'photopea',dimensions:{width:metadata.width,height:metadata.height},size};
  }finally{
   if(deadlineTimer)clearTimeout(deadlineTimer);
   if(browser)await browser.close().catch(()=>{});
