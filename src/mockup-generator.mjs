@@ -132,7 +132,7 @@ export async function createMockupJob({filename,size,templateIds,fitMode='contai
   artworkKey:ROOT+'/jobs/'+id+'/artwork.'+extension,artworkSize:Number(size),artworkUploaded:false,
   fitMode,status:'awaiting_artwork',paused:false,lease:null,
   templates:templates.map(t=>({id:t.id,name:t.name,outputName:outputFileName(t.name),
-    status:'queued',attempts:0,outputKey:null,error:null,dimensions:null,usedMapping:null})),
+    status:'queued',progress:'Waiting for PC worker',attempts:0,outputKey:null,error:null,dimensions:null,usedMapping:null})),
   history:[{at:created,event:'created'}]};
  await putJsonObject(jobKey(id),job);return job;
 }
@@ -162,7 +162,7 @@ export function isLeaseOwner(job,owner){
 export async function controlMockupJob(id,action,owner){
  const j=await getMockupJob(id),active=hasActiveMockupLease(j);
  if(active&&j.lease.owner!==owner)
-  throw Error('This batch is still active in another browser. Close or stop that tab first; an abandoned batch becomes resumable after about 2 minutes.');
+  throw Error('This batch is already being processed by the shared PC worker. Wait for the current PSD or stop the batch.');
  if(action==='pause'){
   j.paused=true;j.status='paused';
   if(!active)j.lease=null; // An active worker keeps its lease until it finishes the current PSD.
@@ -180,7 +180,7 @@ export async function controlMockupJob(id,action,owner){
   if(!active)for(const t of j.templates)if(t.status==='processing'){
    t.status='queued';t.error=null;t.startedAt=null;
   }
-  j.paused=false;j.status='queued';j.lease=newMockupLease(owner);
+  j.paused=false;j.status='queued';j.lease=null; // Shared PC worker claims queued items independently.
  }else if(action==='retry'||action==='regenerate'){
   if(!j.artworkUploaded)throw Error('Upload artwork first.');
   for(const t of j.templates){
@@ -189,7 +189,7 @@ export async function controlMockupJob(id,action,owner){
     // Verified JPGs stay in R2 until replacements pass validation.
    }
   }
-  j.paused=false;j.status='queued';j.lease=newMockupLease(owner);
+  j.paused=false;j.status='queued';j.lease=null; // Shared PC worker claims queued items independently.
  }else throw Error('Unsupported batch action.');
  j.history.push({at:iso(),event:action});return putMockupJob(j);
 }
@@ -199,7 +199,7 @@ export async function claimMockupWork(id,owner){
  if(j.paused)return {job:j,item:null,paused:true};
  const active=hasActiveMockupLease(j);
  if(active&&j.lease.owner!==owner)
-  throw Error('Another browser is actively processing this batch. Close or stop that tab first.');
+  throw Error('The shared PC worker or another session is still processing this batch.');
  if(!active){
   // The previous worker is gone. Requeue anything it could not finish.
   for(const t of j.templates)if(t.status==='processing'){
@@ -221,7 +221,7 @@ export async function completeMockupItem(id,owner,templateId,details){
  if(!isLeaseOwner(j,owner))throw Error('Worker lease expired or belongs to another browser.');
  const item=j.templates.find(x=>x.id===templateId);
  if(!item||item.status!=='processing')throw Error('This PSD is not claimed for processing.');
- item.status='completed';item.error=null;item.outputKey=details.outputKey;item.dimensions=details.dimensions;
+ item.status='completed';item.error=null;item.progress='Ready';item.outputKey=details.outputKey;item.dimensions=details.dimensions;
  item.usedMapping=details.mapping||null;item.finishedAt=iso();
  j.history.push({at:iso(),event:'output_verified',name:item.name});
  await putMockupJob(j);return j;
@@ -231,9 +231,18 @@ export async function failMockupItem(id,owner,templateId,message,needsMapping=fa
  if(!isLeaseOwner(j,owner))throw Error('Worker lease expired or belongs to another browser.');
  const item=j.templates.find(x=>x.id===templateId);
  if(!item)throw Error('Selected PSD is not part of this job.');
- item.status=needsMapping?'needs_mapping':'failed';item.error=limitText(message,500);
+ item.status=needsMapping?'needs_mapping':'failed';item.error=limitText(message,500);item.progress=item.error;
  j.history.push({at:iso(),event:item.status,name:item.name,reason:item.error});
  await putMockupJob(j);return j;
+}
+export async function updateMockupItemProgress(id,owner,templateId,step){
+ const j=await getMockupJob(id);
+ if(!isLeaseOwner(j,owner))throw Error('Worker lease expired or belongs to a different session.');
+ const t=j.templates.find(x=>x.id===templateId);
+ if(!t||t.status!=='processing')throw Error('PSD is not processing.');
+ t.progress=limitText(step,220);
+ j.lease=newMockupLease(owner); // Progress refreshes the renewable worker lease.
+ return putMockupJob(j);
 }
 export function mockupOutputKey(jobId,templateId){
  assertId(jobId);assertId(templateId);
