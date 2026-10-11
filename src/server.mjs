@@ -2773,6 +2773,22 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      // Explicit reconversion reuses the exact artwork ID already linked to this listing.
+      // A second conversion must never reserve another ID or cross-link different artwork.
+      const reconvert = body.reconvert === true;
+      const mapBefore = await loadListingConverterMap();
+      const prior = mapBefore.listings?.[String(listingId)] || null;
+      if (!prior || prior.artworkId !== artworkId ||
+          (reconvert ? prior.status !== 'converted' :
+           !['reserved','converted'].includes(prior.status))) {
+        return sendJson(res, 409, { ok: false,
+          error: 'The listing-to-artwork link changed. Refresh listings before converting; no Etsy changes were made.' });
+      }
+      if (prior.status === 'converted' && !reconvert) {
+        return sendJson(res, 409, { ok: false,
+          error: 'This listing was already converted. Use the Reconvert listing button to reapply settings safely.' });
+      }
+
       const cropJobId = String(manifest.cropWorkerJobId || '');
       const cropJob = cropJobId ? await getCropJob(cropJobId) : null;
       if (!cropJob || cropJob.status !== 'completed') {
@@ -2899,13 +2915,24 @@ const server = http.createServer(async (req, res) => {
 
       const converterMap = await loadListingConverterMap();
       converterMap.listings ||= {};
+      const saved = converterMap.listings[String(listingId)] || prior;
+      const finishedAt = new Date().toISOString();
       converterMap.listings[String(listingId)] = {
+        ...saved,
         listingId,
         title: String(listing.title || manifest.sourceEtsyListingTitle || ''),
         artworkId,
         status: 'converted',
         orientation: manifest.orientation,
-        convertedAt: new Date().toISOString(),
+        convertedAt: saved?.convertedAt || finishedAt,
+        ...(reconvert ? {
+          lastReconvertedAt: finishedAt,
+          reconversionCount: Math.max(0, Number(saved?.reconversionCount) || 0) + 1,
+          reconversionHistory: [
+            ...(Array.isArray(saved?.reconversionHistory) ? saved.reconversionHistory : []),
+            {at:finishedAt, artworkId, enabledVariants:variantInventory.enabledCount}
+          ].slice(-10)
+        } : {}),
         cropJobId,
         enabledVariants: variantInventory.enabledCount
       };
@@ -2920,7 +2947,9 @@ const server = http.createServer(async (req, res) => {
         pricing: variantInventory.pricing,
         shippingProfileId: managedShippingProfile?.shipping_profile_id || null,
         attributeWarnings: attributes.warnings,
-        verified: true
+        verified: true,
+        reconverted: reconvert,
+        reconversionCount: converterMap.listings[String(listingId)].reconversionCount || 0
       });
     } catch (error) {
       return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
