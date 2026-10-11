@@ -156,6 +156,21 @@ export async function handleMockupAPI(req,res,url,{authenticated,readJson,sendJs
    if(req.method==='GET'&&parts[2]==='download-all'){
     await streamMockupZip(res,id);return true;
    }
+   if(req.method==='GET'&&parts[2]==='thumbnail'&&isId(parts[3])){
+    // Small previews avoid loading full-resolution 24MP JPGs into a long scrolling list.
+    const d=await getMockupItemDownload(id,parts[3]);
+    const original=await getArtworkObject(d.key);
+    if(!original.body.length||original.body.length>60*1024*1024)
+     throw Error('Generated preview source is too large.');
+    const thumbnail=await sharp(original.body,{limitInputPixels:24_000_001})
+     .rotate().resize(280,280,{fit:'inside',withoutEnlargement:true})
+     .jpeg({quality:72}).toBuffer();
+    res.writeHead(200,{
+     'content-type':'image/jpeg','content-length':thumbnail.length,
+     'cache-control':'private, max-age=180','x-content-type-options':'nosniff'
+    });
+    res.end(thumbnail);return true;
+   }
    if(req.method==='GET'&&parts[2]==='download'&&isId(parts[3])){
     const d=await getMockupItemDownload(id,parts[3]);
     return streamObject(res,d.key,d.name).then(()=>true);
