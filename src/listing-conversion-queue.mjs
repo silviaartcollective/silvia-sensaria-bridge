@@ -3,7 +3,7 @@ import {getJsonObject,putJsonObject,isMissingR2Object} from './r2.mjs';
 
 const STORE_KEY='state/listing-conversion-queue-v1.json';
 const MAX_RECORDS=350;
-const RUNNING_EXPIRES_MS=25*60*1000;
+const RUNNING_EXPIRES_MS=3*60*1000;
 let tail=Promise.resolve();
 const clone=value=>JSON.parse(JSON.stringify(value));
 const lock=fn=>{
