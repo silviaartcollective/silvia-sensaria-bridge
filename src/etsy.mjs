@@ -230,14 +230,24 @@ export async function getShopShippingProfiles({
   sharedSecret,
   accessToken
 }) {
-  const response = await fetch(
-    `${ETSY_API_BASE}/application/shops/${encodeURIComponent(shopId)}/shipping-profiles`,
-    { headers: apiHeaders({ keystring, sharedSecret, accessToken }) }
-  );
-  if (!response.ok) {
-    throw new Error(`Etsy shipping profiles fetch failed (${response.status}): ${await response.text()}`);
+  const endpoint=`${ETSY_API_BASE}/application/shops/${encodeURIComponent(shopId)}/shipping-profiles`;
+  for(let attempt=0;attempt<6;attempt++){
+    const response=await fetch(endpoint,{headers:apiHeaders({keystring,sharedSecret,accessToken})});
+    if(response.ok)return response.json();
+    const responseText=await response.text();
+    if(response.status!==429||attempt===5)
+      throw Error('Etsy shipping profiles fetch failed ('+response.status+'): '+responseText);
+    // Respect Etsy's Retry-After header (seconds or HTTP date), otherwise
+    // use capped exponential backoff with jitter.
+    const retryAfter=response.headers.get('retry-after');
+    const seconds=Number(retryAfter);
+    const dateDelay=retryAfter?Date.parse(retryAfter)-Date.now():0;
+    const waitMs=Number.isFinite(seconds)&&seconds>=0?seconds*1000:
+      Number.isFinite(dateDelay)&&dateDelay>0?dateDelay:
+      Math.min(30000,1000*Math.pow(2,attempt))+Math.floor(Math.random()*550);
+    await new Promise(resolve=>setTimeout(resolve,Math.max(1000,Math.min(60000,waitMs))));
   }
-  return response.json();
+  throw Error('Etsy shipping profiles remain rate-limited after retries.');
 }
 
 
