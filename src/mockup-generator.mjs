@@ -214,7 +214,7 @@ export async function claimMockupWork(id,owner){
   j.status=incomplete.length?'attention':'completed';j.lease=null;
   await putMockupJob(j);return {job:j,item:null};
  }
- item.status='processing';item.attempts++;item.startedAt=iso();j.status='running';
+ item.status='processing';item.attempts++;item.startedAt=iso();item.progressAt=item.startedAt;item.progress='Preparing PSD on PC';j.status='running';
  await putMockupJob(j);return {job:j,item};
 }
 export async function completeMockupItem(id,owner,templateId,details){
@@ -241,7 +241,7 @@ export async function updateMockupItemProgress(id,owner,templateId,step){
  if(!isLeaseOwner(j,owner))throw Error('Worker lease expired or belongs to a different session.');
  const t=j.templates.find(x=>x.id===templateId);
  if(!t||t.status!=='processing')throw Error('PSD is not processing.');
- t.progress=limitText(step,220);
+ t.progress=limitText(step,220);t.progressAt=iso();
  j.lease=newMockupLease(owner); // Progress refreshes the renewable worker lease.
  return putMockupJob(j);
 }
