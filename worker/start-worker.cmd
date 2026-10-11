@@ -18,7 +18,7 @@ if not exist "%~dp0node_modules\sharp" (
   exit /b 1
 )
 
-if not exist "%~dp0node_modules\\puppeteer-core" (
+if not exist "%~dp0node_modules\puppeteer-core" (
   powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('Shared Crop + Mockup Worker has been updated. Run setup-worker.cmd once to install PSD processing.','Shared POD Worker')"
   exit /b 1
 )
