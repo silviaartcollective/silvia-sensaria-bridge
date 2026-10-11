@@ -178,14 +178,19 @@ async function workerStatus(){
  try{
   const response=await fetch('/api/crop-worker/status',{cache:'no-store'});
   const data=await response.json(),worker=data.worker||{};
-  const text=worker.online&&worker.mockups===true
-   ?'Shared PC Crop + Mockup Worker online'+(worker.busy?' · processing':' · idle')
-   :worker.online?'Old crop-only worker online. Update the PC worker folder, run setup-worker.cmd and restart to enable mockups.'
-   :worker.configured?'Shared PC worker offline · use Launch Shared Crop Worker above'
-   :'Shared PC worker not configured in Render';
+  const version=String(worker.version||'0').split('.').map(Number);
+  const fixed=worker.online&&worker.mockups===true&&
+   (version[0]>4||(version[0]===4&&(version[1]>0||(version[1]===0&&version[2]>=1))));
+  const text=fixed
+   ?'Shared PC Crop + Mockup Worker v'+worker.version+' online'+(worker.busy?' · processing':' · idle')
+   :worker.online&&worker.mockups===true
+    ?'PSD worker v'+(worker.version||'unknown')+' needs the Smart Object fix. Update the local worker and restart (version 4.0.1).'
+    :worker.online?'Old crop-only worker online. Update the PC worker folder, run setup-worker.cmd and restart.'
+    :worker.configured?'Shared PC worker offline · use Launch Shared Crop Worker above'
+    :'Shared PC worker not configured in Render';
   $('mg-worker-status').textContent=text;
-  $('mg-worker-status').style.color=worker.online&&worker.mockups===true?'#477153':'#a46b3d';
-  return worker.online&&worker.mockups===true;
+  $('mg-worker-status').style.color=fixed?'#477153':'#a46b3d';
+  return fixed;
  }catch{
   $('mg-worker-status').textContent='Could not check PC worker connection';
   return false;
