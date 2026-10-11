@@ -180,11 +180,11 @@ async function workerStatus(){
   const data=await response.json(),worker=data.worker||{};
   const version=String(worker.version||'0').split('.').map(Number);
   const fixed=worker.online&&worker.mockups===true&&
-   (version[0]>4||(version[0]===4&&(version[1]>0||(version[1]===0&&version[2]>=1))));
+   (version[0]>4||(version[0]===4&&version[1]>=1));
   const text=fixed
    ?'Shared PC Crop + Mockup Worker v'+worker.version+' online'+(worker.busy?' · processing':' · idle')
    :worker.online&&worker.mockups===true
-    ?'PSD worker v'+(worker.version||'unknown')+' needs the Smart Object fix. Update the local worker and restart (version 4.0.1).'
+    ?'PSD worker v'+(worker.version||'unknown')+' needs the Smart Object fix. Update the local worker and restart (version 4.1.0).'
     :worker.online?'Old crop-only worker online. Update the PC worker folder, run setup-worker.cmd and restart.'
     :worker.configured?'Shared PC worker offline · use Launch Shared Crop Worker above'
     :'Shared PC worker not configured in Render';
