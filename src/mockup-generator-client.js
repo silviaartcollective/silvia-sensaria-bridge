@@ -4,7 +4,7 @@ if(panel){
 const $=id=>document.getElementById(id);
 const create=(tag,label,attrs={})=>{const el=document.createElement(tag);el.textContent=label||'';for(const [k,v] of Object.entries(attrs))el.setAttribute(k,v);return el;};
 let templates=[],jobs=[],job=null,owner=crypto.randomUUID(),running=false,stopping=false,needsSelection=null,requested=false,ready=false,preparing=false;
-let initialLoad=Promise.resolve(),selectionVersion=0;
+let initialLoad=Promise.resolve(),selectionVersion=0,selectionAttachTimer=null;
 const selectionByJob=new Map();
 function selectionFor(id){
  if(!selectionByJob.has(id))selectionByJob.set(id,{defaultSelected:true,exceptions:new Set()});
@@ -53,9 +53,14 @@ function selectionChanged(){
  selectionVersion++;
  markRequested();
  renderPreviews();
- if(job&&job.templates.every(t=>t.status==='completed')&&job.templates.some(t=>t.status==='completed'&&isSelected(job.id,t.id)))
-  act(useResults);
- else $('upload-status').textContent='Review the checked mockups and apply your selection before creating the Etsy listing.';
+ if(selectionAttachTimer)clearTimeout(selectionAttachTimer);
+ if(job&&job.templates.every(t=>t.status==='completed')&&job.templates.some(t=>t.status==='completed'&&isSelected(job.id,t.id))){
+  const batchId=job.id;
+  selectionAttachTimer=setTimeout(()=>{
+   selectionAttachTimer=null;
+   if(job?.id===batchId)act(useResults);
+  },500);
+ }else $('upload-status').textContent='Review the checked mockups and apply your selection before creating the Etsy listing.';
 }
 
 function setProgress(done,total){$('mg-progress-bar').style.width=(total?Math.round(100*done/total):0)+'%';}
