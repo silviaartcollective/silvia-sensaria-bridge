@@ -271,6 +271,11 @@ async function processPSDJob(app,claim){
   console.error('['+app.name+'] PSD mockup failed '+claim.item.name+': '+error.message);
   try{await queue(()=>api.mockupFail(id,mockupOwner,itemId,error,false))}
   catch(reportError){console.error('['+app.name+'] Could not mark PSD failed:',reportError.message)}
+  if(/timed out|time.?out|exceeded|did not respond|interrupted|stalled/i.test(error.message||'')){
+   console.error('['+app.name+'] Pausing the batch after an unresponsive PSD renderer. Completed JPGs are safe.');
+   try{await queue(()=>api.mockupPause(id,mockupOwner))}
+   catch(pauseError){console.error('['+app.name+'] Could not pause stalled batch:',pauseError.message)}
+  }
  }finally{
   alive=false;clearInterval(keepAlive);
   try{await queue(()=>api.mockupRelease(id,mockupOwner))}
