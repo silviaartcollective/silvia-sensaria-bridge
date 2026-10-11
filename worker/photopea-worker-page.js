@@ -83,7 +83,9 @@
  }
  async function script(fn,...args){
   const token=crypto.randomUUID();
-  const source='('+fn.toString()+')('+args.map(x=>JSON.stringify(x)).join(',')+
+  // Photopea runs scripts in a restricted interpreter. Named declarations are
+  // better supported than immediately-invoked function expressions.
+  const source=fn.toString()+';'+fn.name+'('+args.map(x=>JSON.stringify(x)).join(',')+
    ');app.echoToOE('+JSON.stringify('MG_SENTINEL:'+token)+');';
   // Metadata scans must not monopolize the queue for five minutes after a silent interpreter crash.
   const name=fn.name||'';
@@ -238,7 +240,7 @@
    throw Error('PSD layer visibility changed. Export refused to protect hidden mockup layers.');
   await stage('Exporting a JPG (maximum 24 megapixels)');
   const token=crypto.randomUUID();
-  const source='('+exportComposite.toString()+')();app.echoToOE('+JSON.stringify('MG_SENTINEL:'+token)+');';
+  const source=exportComposite.toString()+';exportComposite();app.echoToOE('+JSON.stringify('MG_SENTINEL:'+token)+');';
   const output=await send(source,300000,token,true);
   const dims=parse(output,'MG_EXPORT:');
   if(!output.binary||output.binary.byteLength<100||dims.width*dims.height>24000000)
