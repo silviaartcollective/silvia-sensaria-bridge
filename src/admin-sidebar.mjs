@@ -79,6 +79,8 @@ const STYLE = [
 const MOBILE_CONTROLS = '<button type="button" class="shared-sidebar-mobile-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="admin-navigation">☰ Menu</button>'+
 '<button type="button" class="shared-sidebar-backdrop" aria-label="Close navigation menu" tabindex="-1"></button>';
 
+const AUTO_WORKER_SCRIPT = '<script id="shared-worker-auto-script" defer src="/assets/crop-worker-auto.js"></script>';
+
 const MOBILE_SCRIPT = '<script id="shared-sidebar-mobile-script">'+
   '(()=>{const nav=document.querySelector("aside.shared-admin-sidebar"),'+
   'toggle=document.querySelector(".shared-sidebar-mobile-toggle"),'+
@@ -105,5 +107,5 @@ export function decorateAdminHtml(html) {
     .replace(aside,renderAdminSidebar(active))
     .replace(/<\/head>/i,STYLE+'</head>')
     .replace(/<body([^>]*)>/i,(_m,attrs)=>'<body'+attrs+'>'+MOBILE_CONTROLS)
-    .replace(/<\/body>/i,MOBILE_SCRIPT+'</body>');
+    .replace(/<\/body>/i,MOBILE_SCRIPT+AUTO_WORKER_SCRIPT+'</body>');
 }
