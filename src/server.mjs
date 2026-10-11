@@ -2,6 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
+import {getFaviconAssets} from './favicon-assets.mjs';
 import { renderDashboard } from './dashboard.mjs';
 import { renderReadinessPage } from './readiness-page.mjs';
 import { renderListingReposterPage } from './listing-reposter-page.mjs';
@@ -448,12 +449,19 @@ function sendJson(res, status, value) {
   res.end(body);
 }
 
+const FAVICON_LINKS = [
+  '<link rel="shortcut icon" href="/favicon.ico?v=4" type="image/x-icon">',
+  '<link rel="icon" href="/favicon-16.png?v=4" type="image/png" sizes="16x16">',
+  '<link rel="icon" href="/favicon-32.png?v=4" type="image/png" sizes="32x32">',
+  '<link rel="apple-touch-icon" href="/favicon.png?v=4" sizes="64x64">'
+].join('');
 function sendHtml(res, status, html) {
   const source = decorateAdminHtml(html);
-  // Every HTML response, including login, gets the current shop's favicon.
-  const body = source.includes('href="/favicon.svg')
-    ? source : source.replace(/<\/head>/i,
-      '<link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg?v=1"></head>');
+  // Real PNG and ICO favicons work in Chrome tabs, mobile and bookmarks.
+  // Remove any previously embedded favicon links instead of serving duplicates.
+  const body = source
+    .replace(/<link\b[^>]*\brel\s*=\s*["'](?:shortcut\s+)?icon["'][^>]*>/gi, '')
+    .replace(/<\/head>/i, FAVICON_LINKS+'</head>');
   res.writeHead(status, {
     'content-type': 'text/html; charset=utf-8',
     'content-length': Buffer.byteLength(body),
@@ -1667,19 +1675,31 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
-  if (req.method === 'GET' && url.pathname === '/favicon.svg') {
-    const svg = readFileSync(new URL('./favicon.svg', import.meta.url));
-    res.writeHead(200, {
-      'content-type': 'image/svg+xml; charset=utf-8',
-      'content-length': svg.length,
-      'cache-control': 'public, max-age=3600',
-      'x-content-type-options': 'nosniff'
-    });
-    return res.end(svg);
-  }
-  if (req.method === 'GET' && url.pathname === '/favicon.ico') {
-    res.writeHead(302, { location:'/favicon.svg?v=1','cache-control':'public,max-age=3600' });
-    return res.end();
+  // Serve actual image bytes; browsers must not follow an ICO-to-SVG redirect.
+  if ((req.method === 'GET' || req.method === 'HEAD') &&
+      ['/favicon.ico','/favicon.png','/favicon-32.png','/favicon-16.png','/favicon.svg']
+       .includes(url.pathname)) {
+    try {
+      const assets=await getFaviconAssets();
+      const choice={
+        '/favicon.ico':[assets.ico,'image/x-icon'],
+        '/favicon.png':[assets.png,'image/png'],
+        '/favicon-32.png':[assets.png32,'image/png'],
+        '/favicon-16.png':[assets.png16,'image/png'],
+        '/favicon.svg':[assets.svg,'image/svg+xml; charset=utf-8']
+      }[url.pathname];
+      const [bytes,type]=choice;
+      res.writeHead(200,{
+        'content-type':type,
+        'content-length':bytes.length,
+        'cache-control':'public, max-age=86400',
+        'x-content-type-options':'nosniff'
+      });
+      return res.end(req.method==='HEAD'?undefined:bytes);
+    }catch(error){
+      console.error('[favicon] Failed to build brand icon:',error);
+      return sendJson(res,500,{ok:false,error:'Favicon generation failed'});
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/health') {
