@@ -92,7 +92,7 @@ export async function openPhotopeaPCServer({psdPath,artworkPath,outputPath,onSta
   async close(){await new Promise(resolve=>server.close(()=>resolve()))}
  };
 }
-export async function renderMockupOnPC({psdPath,artworkPath,outputPath,mapping,fitMode='contain',onStage=()=>{}}){
+export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateName='',mapping,fitMode='contain',onStage=()=>{}}){
  const executablePath=findPCBrowser();
  if(!executablePath)throw Error('Chrome or Microsoft Edge not found on PC. Set PHOTOPEA_CHROME_PATH or install Chrome/Edge.');
  let puppeteer;
@@ -112,7 +112,7 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,mapping,f
   page.on('error',error=>{void Promise.resolve(onStage('PC Chromium error: '+bounded(error))).catch(()=>{})});
   await page.goto(local.url,{waitUntil:'domcontentloaded',timeout:45000});
   await page.waitForFunction(()=>typeof window.renderMockupOnPC==='function',{timeout:20000});
-  const rendering=page.evaluate(({mapping,fitMode})=>window.renderMockupOnPC({mapping,fitMode}),{mapping,fitMode});
+  const rendering=page.evaluate(({templateName,mapping,fitMode})=>window.renderMockupOnPC({templateName,mapping,fitMode}),{templateName,mapping,fitMode});
   const deadline=new Promise((_,reject)=>{
    deadlineTimer=setTimeout(()=>reject(Error('PSD processing exceeded 16 minutes on PC. Check RAM and retry.')),16*60*1000);
   });
