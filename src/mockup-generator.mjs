@@ -14,6 +14,7 @@ const own=(obj,key)=>Object.prototype.hasOwnProperty.call(obj,key);
 function assertId(id){if(!idOK(id))throw Error('Invalid mockup record ID.');return id}
 async function optional(key){try{return await getJsonObject(key)}catch(e){if(isMissingR2Object(e))return null;throw e}}
 export function knownMockupArtworkTarget(name){
+ if(/^mockup[ _-]*19\.(?:psd|psb)$/i.test(String(name||'')))return '5';
  if(/^vertical[ _-]*close[ _-]*up[ _-]*framed[ _-]*(?:light[ _-]*wood|dark[ _-]*wood|black)[ _-]*mockup\.(?:psd|psb)$/i.test(String(name||'')))
    return '5';
  return null; // Never guess among multiple Smart Objects.
@@ -161,7 +162,7 @@ export function isLeaseOwner(job,owner){
 }
 export async function controlMockupJob(id,action,owner){
  const j=await getMockupJob(id),active=hasActiveMockupLease(j);
- if(active&&j.lease.owner!==owner)
+ if(active&&j.lease.owner!==owner&&action!=='pause')
   throw Error('This batch is already being processed by the shared PC worker. Wait for the current PSD or stop the batch.');
  if(action==='pause'){
   j.paused=true;j.status='paused';
