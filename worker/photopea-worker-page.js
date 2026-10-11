@@ -182,6 +182,12 @@
   await loadFile('psd',420000);
   await stage('Inspecting visible PSD Smart Objects');
   const inspected=parse(await script(inspect),'MG_INSPECT:');
+  if(/^mockup[ _-]*19\\.(?:psd|psb)$/i.test(config.templateName||'')){
+   const artworkSlot=inspected.objects.find(o=>o.name==='5'&&o.kind==='smart');
+   const hidden=inspected.objects.find(o=>o.name==='mockup 1 (1)'&&o.kind==='smart');
+   if(!artworkSlot?.visible||hidden?.visible)
+    throw Error('Mockup 19 visibility mismatch: Smart Object 5 must be visible; mockup 1 (1) must remain hidden.');
+  }
   const selected=targetFor(inspected,config.mapping||null);
   if(!selected)return {needsMapping:true,objects:inspected.objects,
    reason:config.mapping?.path?'Saved Smart Object no longer matches a visible layer.':'Select the artwork Smart Object for this template.'};
