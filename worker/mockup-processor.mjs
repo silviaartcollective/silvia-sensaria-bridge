@@ -110,6 +110,12 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
   const page=await browser.newPage();
   await page.setViewport({width:1250,height:900,deviceScaleFactor:1});
   page.on('error',error=>{void Promise.resolve(onStage('PC Chromium error: '+bounded(error))).catch(()=>{})});
+  page.on('pageerror',error=>console.error('[PC PSD renderer] Page error:',bounded(error)));
+  page.on('requestfailed',request=>{
+   if(request.url().startsWith('https://www.photopea.com'))
+    console.error('[PC PSD renderer] Photopea request failed:',request.failure()?.errorText||'unknown');
+  });
+  page.on('crash',()=>console.error('[PC PSD renderer] Chromium crashed during PSD rendering.'));
   await page.goto(local.url,{waitUntil:'domcontentloaded',timeout:45000});
   await page.waitForFunction(()=>typeof window.renderMockupOnPC==='function',{timeout:20000});
   const rendering=page.evaluate(({templateName,mapping,fitMode})=>window.renderMockupOnPC({templateName,mapping,fitMode}),{templateName,mapping,fitMode});
