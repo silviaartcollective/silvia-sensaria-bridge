@@ -93,6 +93,12 @@ async function detectOrientation(file){
   }catch{return 'portrait'}
 }
 
+async function artworkFingerprint(file){
+  if(!globalThis.crypto?.subtle)throw new Error('Secure browser file verification is unavailable. Open this app over HTTPS.');
+  const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,'0')).join('');
+}
+
 async function putFile(url,file,onProgress,contentType){
   onProgress(20);
   const response=await fetch(url,{method:'PUT',headers:{'content-type':contentType||file.type||'image/jpeg'},body:file});
@@ -216,11 +222,14 @@ async function reconvertListing(item,card){
   status.className='cardstatus';
   let revision=null;
   try{
+    status.textContent='Checking the new master artwork before upload…';
+    const sha256=await artworkFingerprint(file);
+    bar.style.width='9%';
     status.textContent='Reserving a fresh upload for '+artworkId+' (no new artwork ID)…';
     let response=await fetch('/api/listing-converter/reconvert/reserve',{
       method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({listingId:item.listingId,artworkId,orientation,
-        master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size}})
+        master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size,sha256}})
     });
     let result=await response.json();
     if(!response.ok||!result.ok)throw Error(result.error||'Could not reserve replacement artwork');
@@ -241,7 +250,7 @@ async function reconvertListing(item,card){
     });
     result=await response.json();
     if(!response.ok||!result.ok)throw Error(result.error||'Could not queue replacement artwork crops');
-    if(!result.worker?.online){
+    if(result.job?.status!=='completed'&&!result.worker?.online){
       status.className='cardstatus warn';
       status.textContent='New master uploaded and crops queued. Start the shared PC worker, then choose this same file and click Reconvert listing to resume. Existing artwork and Etsy listing are unchanged.';
       return;
