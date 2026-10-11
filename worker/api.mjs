@@ -106,6 +106,40 @@ export function apiFor(app) {
         }
       });
     },
+    // The PSD generator shares this same worker, per-shop token, and scheduler.
+    claimMockup(owner) {
+      return request(app,'/api/mockups/worker/claim',{method:'POST',body:{owner}});
+    },
+    inspectMockupTemplate(templateId,objects) {
+      return request(app,'/api/mockups/templates/'+encodeURIComponent(templateId)+'/inspect',{
+       method:'POST',body:{objects}
+      });
+    },
+    mockupHeartbeat(jobId,owner) {
+      return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/heartbeat',{
+       method:'POST',body:{owner}
+      });
+    },
+    mockupProgress(jobId,templateId,owner,stage) {
+      return request(app,'/api/mockups/worker/'+encodeURIComponent(jobId)+
+       '/templates/'+encodeURIComponent(templateId)+'/progress',{method:'POST',body:{owner,stage}});
+    },
+    mockupComplete(jobId,owner,templateId,outputKey,mapping) {
+      return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/complete',{
+       method:'POST',body:{owner,templateId,outputKey,mapping,visibilityVerified:true,
+         mappingVerified:true,artworkReplaced:true}
+      });
+    },
+    mockupFail(jobId,owner,templateId,error,needsMapping=false) {
+      return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/fail',{
+       method:'POST',body:{owner,templateId,error:String(error?.message||error).slice(0,450),needsMapping}
+      });
+    },
+    mockupRelease(jobId,owner) {
+      return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/control',{
+       method:'POST',body:{owner,action:'release'}
+      });
+    },
     failJob(jobId, error) {
       return request(app, `/api/crop-jobs/${encodeURIComponent(jobId)}/fail`, {
         method: 'POST',
