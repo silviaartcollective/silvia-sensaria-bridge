@@ -3,7 +3,61 @@ const panel=document.getElementById('mockup-generator-panel');
 if(panel){
 const $=id=>document.getElementById(id);
 const create=(tag,label,attrs={})=>{const el=document.createElement(tag);el.textContent=label||'';for(const [k,v] of Object.entries(attrs))el.setAttribute(k,v);return el;};
-let templates=[],jobs=[],job=null,owner=crypto.randomUUID(),running=false,stopping=false,needsSelection=null,requested=false,ready=false;
+let templates=[],jobs=[],job=null,owner=crypto.randomUUID(),running=false,stopping=false,needsSelection=null,requested=false,ready=false,preparing=false;
+let initialLoad=Promise.resolve(),selectionVersion=0;
+const selectionByJob=new Map();
+function selectionFor(id){
+ if(!selectionByJob.has(id))selectionByJob.set(id,{defaultSelected:true,exceptions:new Set()});
+ return selectionByJob.get(id);
+}
+function isSelected(id,itemId){
+ const selection=selectionFor(id);
+ return selection.exceptions.has(itemId)?!selection.defaultSelected:selection.defaultSelected;
+}
+function setSelected(id,itemId,checked){
+ const selection=selectionFor(id);
+ if(checked===selection.defaultSelected)selection.exceptions.delete(itemId);
+ else selection.exceptions.add(itemId);
+}
+function renderPreviews(){
+ const target=$('mg-preview-list');target.replaceChildren();
+ const completed=job?job.templates.filter(t=>t.status==='completed'):[];
+ const selected=completed.filter(t=>isSelected(job.id,t.id)).length;
+ $('mg-preview-count').textContent=completed.length+' ready';
+ $('mg-selection-status').textContent=job
+  ?selected+' of '+completed.length+' selected. '+Math.min(selected,7)+' will attach to Etsy'+
+   (selected>7?' (first 7 selected in list).':'')+'. 3 preset images use the other slots.'
+  :'All finished mockups are selected by default. Up to 7 can accompany the 3 preset images.';
+ $('mg-apply-selected').disabled=!job||!selected;
+ $('mg-select-all').disabled=!job;
+ $('mg-deselect-all').disabled=!job;
+ if(!completed.length){
+  target.append(create('p','Finished mockups will appear here while they generate.',{class:'mg-preview-empty'}));return;
+ }
+ for(const t of completed){
+  const label=create('label','',{class:'mg-preview-item'});
+  const check=create('input','',{type:'checkbox',value:t.id});
+  check.checked=isSelected(job.id,t.id);
+  check.addEventListener('change',()=>{
+   setSelected(job.id,t.id,check.checked);selectionChanged();
+  });
+  const img=create('img','',{alt:'Generated '+t.outputName,
+   src:'/api/mockups/jobs/'+job.id+'/thumbnail/'+t.id+'?v='+encodeURIComponent(t.finishedAt||'1'),
+   loading:'lazy',decoding:'async'});
+  const caption=create('span',t.outputName);
+  caption.append(create('small',t.dimensions?(t.dimensions.width+' × '+t.dimensions.height):'Ready JPG'));
+  label.append(check,img,caption);target.append(label);
+ }
+}
+function selectionChanged(){
+ selectionVersion++;
+ markRequested();
+ renderPreviews();
+ if(job&&job.templates.every(t=>t.status==='completed')&&job.templates.some(t=>t.status==='completed'&&isSelected(job.id,t.id)))
+  act(useResults);
+ else $('upload-status').textContent='Review the checked mockups and apply your selection before creating the Etsy listing.';
+}
+
 function setProgress(done,total){$('mg-progress-bar').style.width=(total?Math.round(100*done/total):0)+'%';}
 function markRequested(){requested=true;ready=false;panel.dataset.generationRequested='true';panel.dataset.generationReady='false';}
 $('creator-form').addEventListener('submit',e=>{
@@ -336,9 +390,14 @@ async function showJob(id){
   }
   box.append(row);
  }
+ renderPreviews();
  return job;
 }
 async function createJob(){
+ if(running||preparing)return;
+ preparing=true;
+ try{
+ await initialLoad;
  const art=$('master_file').files[0];
  if(!art)throw Error('Choose the master artwork in Product Creator first.');
  await uploadTemplates();
@@ -360,6 +419,7 @@ async function createJob(){
  setProgress(job.templates.filter(t=>t.status==='completed').length,job.templates.length);
  await loadJobs();
  await resume();
+ }finally{preparing=false;}
 }
 async function process(){
  if(!job)throw Error('Select a batch.');
@@ -434,25 +494,57 @@ async function saveMapping(){
  await loadTemplates();
 }
 async function useResults(){
- if(!job)throw Error('Select a completed batch.');
- const finished=job.templates.filter(t=>t.status==='completed').slice(0,7);
- if(!finished.length)throw Error('No completed JPGs yet.');
- const dt=new DataTransfer();
- for(const t of finished){
-  const r=await fetch('/api/mockups/jobs/'+job.id+'/download/'+t.id);
-  if(!r.ok)throw Error('Could not retrieve '+t.outputName);
-  dt.items.add(new File([await r.blob()],t.outputName,{type:'image/jpeg'}));
+ if(!job)throw Error('Select a batch with finished mockups.');
+ const batchId=job.id,version=selectionVersion;
+ const selected=job.templates.filter(t=>t.status==='completed'&&isSelected(batchId,t.id));
+ if(!selected.length){
+  $('mockup_files').value='';
+  markRequested();
+  throw Error('Select at least one finished mockup for the listing.');
  }
- $('mockup_files').files=dt.files;
- ready=true;panel.dataset.generationReady='true';
- $('upload-status').textContent=finished.length+' generated JPGs attached to Etsy draft media.'+
- (job.templates.length>7?' The first 7 of '+job.templates.length+' were selected to leave space for 3 preset listing images.':'');
+ const chosen=selected.slice(0,7);
+ const dt=new DataTransfer();
+ $('mg-apply-selected').disabled=true;
+ try{
+  for(const t of chosen){
+   const r=await fetch('/api/mockups/jobs/'+batchId+'/download/'+t.id,{cache:'no-store'});
+   if(!r.ok)throw Error('Could not retrieve '+t.outputName);
+   dt.items.add(new File([await r.blob()],t.outputName,{type:'image/jpeg'}));
+  }
+  if(!job||job.id!==batchId||selectionVersion!==version)return;
+  $('mockup_files').files=dt.files;
+  ready=true;requested=true;
+  panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
+  $('upload-status').textContent=chosen.length+' selected generated JPGs attached to Etsy draft media.'+
+   (selected.length>7?' Only the first 7 checked previews are attached; 3 preset images fill the remaining slots.':'');
+ }finally{
+  renderPreviews();
+ }
 }
 $('mockup_files').addEventListener('change',()=>{
   if($('mockup_files').files.length){requested=false;ready=false;
    panel.dataset.generationRequested='false';message('Using manually selected JPG mockups for this Etsy listing.');}
  });
 function act(fn){Promise.resolve().then(fn).catch(failure)}
+async function maybeAutoStart(){
+ await initialLoad;
+ if(running||preparing)return;
+ if(!$('master_file').files.length)return;
+ const chosen=$('mg-templates').querySelectorAll('input:checked').length;
+ if(!chosen&&!$('mg-psds').files.length){
+  message('Master artwork selected. Upload a PSD or select saved templates to start automatically.');return;
+ }
+ await createJob();
+}
+$('master_file').addEventListener('change',()=>act(maybeAutoStart));
+$('mg-psds').addEventListener('change',()=>act(maybeAutoStart));
+$('mg-select-all').addEventListener('click',()=>{
+ if(!job)return;selectionByJob.set(job.id,{defaultSelected:true,exceptions:new Set()});selectionChanged();
+});
+$('mg-deselect-all').addEventListener('click',()=>{
+ if(!job)return;selectionByJob.set(job.id,{defaultSelected:false,exceptions:new Set()});selectionChanged();
+});
+$('mg-apply-selected').addEventListener('click',()=>act(useResults));
 for(const [id,fn] of [
  ['mg-generate',createJob],
  ['mg-refresh-jobs',loadJobs],
@@ -461,5 +553,6 @@ for(const [id,fn] of [
  ['mg-regenerate',regenerate],
  ['mg-save-map',async()=>{await saveMapping();await retry();}]
 ])$(id).addEventListener('click',()=>act(fn));
-act(async()=>{await loadTemplates();await loadJobs();});
+initialLoad=Promise.all([loadTemplates(),loadJobs()]);
+initialLoad.then(()=>{renderPreviews();if($('master_file').files.length)void maybeAutoStart().catch(failure);}).catch(failure);
 }
