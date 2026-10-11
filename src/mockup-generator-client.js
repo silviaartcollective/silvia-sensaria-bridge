@@ -69,14 +69,32 @@ $('creator-form').addEventListener('submit',e=>{
  if(requested&&(!ready||running||preparing)){e.preventDefault();e.stopImmediatePropagation();
  failure(Error('Mockup generation is still running or the selected JPGs are not attached. Finish, stop or retry the batch and apply your selected images first.'));}
 },true);
-const message=(text,warning=false)=>{const el=$('mg-progress');el.textContent=text;el.classList.toggle('warn',warning)};
+let currentStage='',stageSince=Date.now(),stageWarn=false;
+const message=(text,warning=false)=>{
+ currentStage=String(text);stageSince=Date.now();stageWarn=warning;
+ const el=$('mg-progress');el.textContent=currentStage;el.classList.toggle('warn',warning);
+};
+const statusClock=setInterval(()=>{
+ if(!running||!currentStage||stageWarn)return;
+ const elapsed=Math.floor((Date.now()-stageSince)/1000);
+ if(elapsed<12)return;
+ const secs=elapsed%60,mins=Math.floor(elapsed/60);
+ $('mg-progress').textContent=currentStage+' · '+(mins?mins+'m ':'')+secs+'s elapsed'+
+   (elapsed>60?' — large PSDs may take longer; this step has a timeout.':'');
+},3000);
 const failure=e=>message(e?.message||String(e),true);
 async function api(route,method='GET',body){
- const r=await fetch('/api/mockups/'+route,{method,cache:'no-store',
+ const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),90000);
+ try{
+  const r=await fetch('/api/mockups/'+route,{method,cache:'no-store',signal:controller.signal,
    ...(method==='GET'?{}:{headers:{'content-type':'application/json'},body:JSON.stringify(body||{})})});
- const data=await r.json().catch(()=>({error:'Invalid server response'}));
- if(!r.ok||data.ok!==true)throw Error(data.error||'Mockup API error '+r.status);
- return data;
+  const data=await r.json().catch(()=>({error:'Invalid server response'}));
+  if(!r.ok||data.ok!==true)throw Error(data.error||'Mockup API error '+r.status);
+  return data;
+ }catch(error){
+  if(error?.name==='AbortError')throw Error('Mockup server request timed out: '+method+' '+route+'. Check the app connection and retry.');
+  throw error;
+ }finally{clearTimeout(timeout)}
 }
 async function upload(url,blob,mime){
  const r=await fetch(url,{method:'PUT',headers:{'content-type':mime},body:blob});
@@ -101,8 +119,11 @@ class Photopea{
    if(e.origin!=='https://www.photopea.com'||e.source!==this.frame.contentWindow)return;
    if(e.data==='done'){
     if(this.pending){
-     const p=this.pending;this.pending=null;clearTimeout(p.timer);
+     const p=this.pending;
+     // A delayed "done" from an earlier script must never complete the next operation.
      const bad=p.messages.find(m=>m.startsWith('MG_ERROR:'));
+     if(p.token&&!p.messages.includes('MG_SENTINEL:'+p.token)&&!bad)return;
+     this.pending=null;clearTimeout(p.timer);
      bad?p.reject(Error(bad.slice(9))):p.resolve(p);
     }else if(this.readyResolve){this.readyResolve();this.readyResolve=null;$('mg-engine-status').textContent='Photopea connected';}
    }else if(this.pending){
@@ -113,6 +134,7 @@ class Photopea{
  }
  async init(){
   if(!this.ready){
+   message('Connecting to Photopea background processor…');
    this.ready=new Promise((resolve,reject)=>{
     this.readyResolve=resolve;
     setTimeout(()=>{if(this.readyResolve){this.readyResolve=null;this.ready=null;reject(Error('Photopea connection timed out. Check content blockers.'));}},90000);
@@ -122,14 +144,19 @@ class Photopea{
   }
   return this.ready;
  }
- async send(data,timeout=180000){
+ async send(data,timeout=180000,token=null){
   await this.init();
   if(this.pending)throw Error('Photopea is still processing a previous operation.');
   return new Promise((resolve,reject)=>{
-   const p={resolve,reject,messages:[],binary:null};
-   p.timer=setTimeout(()=>{this.pending=null;reject(Error('PSD processing timed out after '+Math.round(timeout/1000)+' seconds; the processor will try the next PSD.'));},timeout);
+   const p={resolve,reject,messages:[],binary:null,token};
+   p.timer=setTimeout(()=>{
+    if(this.pending===p)this.pending=null;
+    reject(Error('Photopea did not finish this '+(data instanceof ArrayBuffer?'file import':'script')+
+      ' within '+Math.round(timeout/1000)+' seconds. The PSD will be marked failed, and the processor will restart.'));
+   },timeout);
    this.pending=p;
-   this.frame.contentWindow.postMessage(data,'https://www.photopea.com',data instanceof ArrayBuffer?[data]:[]);
+   try{this.frame.contentWindow.postMessage(data,'https://www.photopea.com',data instanceof ArrayBuffer?[data]:[]);}
+   catch(error){clearTimeout(p.timer);this.pending=null;reject(error);}
   });
  }
  async reset(){
@@ -160,7 +187,13 @@ class Photopea{
   await this.send(content,180000);
   return content.byteLength;
  }
- async script(fn,...args){return this.send('('+fn.toString()+')('+args.map(x=>JSON.stringify(x)).join(',')+');');}
+ async script(fn,...args){
+  const token=crypto.randomUUID();
+  // Explicit completion marker prevents an unrelated Photopea "done" ending this script.
+  const source='('+fn.toString()+')('+args.map(x=>JSON.stringify(x)).join(',')+
+   ');app.echoToOE('+JSON.stringify('MG_SENTINEL:'+token)+');';
+  return this.send(source,180000,token);
+ }
  parse(result,tag){
   const line=result.messages.find(x=>x.startsWith(tag));
   if(!line)throw Error('Photopea did not confirm '+tag+' operation.');
