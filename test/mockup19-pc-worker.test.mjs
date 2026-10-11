@@ -37,5 +37,5 @@ test('a running crop-only worker is not reported as PSD capable',()=>{
  const worker=readFileSync(new URL('../worker/api.mjs',import.meta.url),'utf8');
  assert.ok(server.includes('mockups: online ? cropWorkerHeartbeat.mockups===true : false'));
  assert.ok(client.includes('Old crop-only worker online'));
- assert.ok(worker.includes("const WORKER_VERSION = '4.0.1'"));
+ assert.ok(worker.includes("const WORKER_VERSION = '4.1.0'"));
 });
