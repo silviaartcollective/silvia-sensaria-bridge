@@ -136,6 +136,11 @@ export function apiFor(app) {
        method:'POST',body:{owner,templateId,error:String(error?.message||error).slice(0,450),needsMapping}
       });
     },
+    mockupPause(jobId,owner) {
+      return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/control',{
+       method:'POST',body:{owner,action:'pause'}
+      });
+    },
     mockupRelease(jobId,owner) {
       return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/control',{
        method:'POST',body:{owner,action:'release'}
