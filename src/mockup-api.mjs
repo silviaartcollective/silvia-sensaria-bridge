@@ -6,10 +6,10 @@ import {
  deleteMockupTemplate,listMockupJobs,getMockupJob,createMockupJob,markMockupArtworkUploaded,
  controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
  classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput,
- hasActiveMockupLease,MOCKUP_LEASE_MS
+ hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT
 } from './mockup-generator.mjs';
 import {
- signedArtworkUploadUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
+ signedArtworkUploadUrl,signedArtworkUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
 } from './r2.mjs';
 import {randomUUID} from 'node:crypto';
 import {streamMockupZip} from './mockup-zip.mjs';
@@ -46,7 +46,7 @@ function makeError(error){
  const msg=String(error?.message||error||'Unexpected error');
  return {ok:false,error:msg.slice(0,450)};
 }
-export async function handleMockupAPI(req,res,url,{authenticated,readJson,sendJson}){
+export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorized=()=>false,readJson,sendJson}){
  if(!url.pathname.startsWith('/api/mockups/'))return false;
  if(!authenticated(req,res))return true;
  if(req.method!=='GET'){
@@ -55,6 +55,34 @@ export async function handleMockupAPI(req,res,url,{authenticated,readJson,sendJs
  const send=(code,body)=>sendJson(res,code,{ok:true,...body});
  const parts=url.pathname.replace(/^\/api\/mockups\//,'').split('/').filter(Boolean);
  try{
+  // The local crop/PSD worker uses the same bearer token and queue as production crops.
+  if(parts[0]==='worker'){
+   if(!workerAuthorized(req))return sendJson(res,403,{ok:false,error:'PC worker token required.'}),true;
+   if(req.method==='POST'&&parts[1]==='claim'&&parts.length===2){
+    const body=await readJson(req),owner=ownerCheck(body);
+    const jobs=(await listMockupJobs()).filter(j=>j.artworkUploaded&&!j.paused&&!j.deleted&&
+      j.templates?.some(t=>t.status==='queued'||t.status==='processing')&&!hasActiveMockupLease(j))
+      .sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)));
+    for(const candidate of jobs){
+     let claimed;
+     try{claimed=await claimMockupWork(candidate.id,owner)}
+     catch(error){if(/processing|lease|paused/i.test(String(error?.message)))continue;throw error}
+     if(!claimed?.item)continue;
+     const template=await getMockupTemplate(claimed.item.id);
+     const key=mockupOutputKey(candidate.id,template.id);
+     return send(200,{job:claimed.job,item:claimed.item,template,
+       templateUrl:await signedArtworkUrl(template.key,3600),
+       artworkUrl:await signedArtworkUrl(claimed.job.artworkKey,3600),
+       output:{key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600)}}),true;
+    }
+    return send(200,{job:null,item:null}),true;
+   }
+   if(req.method==='POST'&&parts.length===5&&parts[2]==='templates'&&parts[4]==='progress'&&isId(parts[1])&&isId(parts[3])){
+    const body=await readJson(req);
+    return send(200,{job:await updateMockupItemProgress(parts[1],ownerCheck(body),parts[3],str(body.stage))}),true;
+   }
+   sendJson(res,404,{ok:false,error:'Unknown PC worker mockup operation.'});return true;
+  }
   if(parts[0]==='templates'){
    if(req.method==='GET'&&parts.length===1)return send(200,{templates:await listMockupTemplates()}),true;
    if(req.method==='POST'&&parts.length===1){
