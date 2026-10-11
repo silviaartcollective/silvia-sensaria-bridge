@@ -242,7 +242,7 @@ async function processPSDJob(app,claim){
   outputPath=path.join(os.tmpdir(),'pod-mockup-'+id+'-'+crypto.randomUUID()+'.jpg');
   tempPaths.add(outputPath);
   const render=await renderMockupOnPC({
-   psdPath,artworkPath,outputPath,mapping:claim.template.mapping||null,
+   psdPath,artworkPath,outputPath,templateName:claim.template.name,mapping:claim.template.mapping||null,
    fitMode:claim.job.fitMode||'contain',
    onStage:stage
   });
