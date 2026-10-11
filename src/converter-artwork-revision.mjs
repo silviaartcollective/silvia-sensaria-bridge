@@ -2,7 +2,7 @@
 // New master and crops are isolated until Etsy verification passes.
 import crypto from 'node:crypto';
 import { loadArtworkManifest,saveArtworkManifest } from './artwork-storage.mjs';
-import { createCropJob,getCropJob } from './crop-job-store.mjs';
+import { createCropJob,getCropJob,readCropJobStore } from './crop-job-store.mjs';
 import { checkedRevisionAssets } from './artwork-revision.mjs';
 import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey} from './artwork-ratios.mjs';
 import { getJsonObject,putJsonObject,artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl,
@@ -238,8 +238,16 @@ export async function activateConverterArtworkRevision({shopId,listingId,revisio
   await deleteArtworkObject(checked.originalMasterKey)
    .catch(error=>console.warn('Old master cleanup:',error.message));
  const legacyPrefix='artworks/'+checked.artworkId+'/revisions/';
- const legacyKeys=await listArtworkObjectKeys(legacyPrefix).catch(()=>[]);
- for(const key of legacyKeys)await deleteArtworkObject(key).catch(error=>
-  console.warn('Legacy revision cleanup:',error.message));
+ try{
+  const queue=await readCropJobStore();
+  const busy=(queue.jobs||[]).some(job=>
+   ['pending','claimed','processing','uploading'].includes(job.status)&&
+   String(job.masterKey||'').startsWith(legacyPrefix));
+  if(busy)console.warn('Legacy revision cleanup delayed: another active crop job uses the old folder.');
+  else{
+   const legacyKeys=await listArtworkObjectKeys(legacyPrefix);
+   for(const key of legacyKeys)await deleteArtworkObject(key);
+  }
+ }catch(error){console.warn('Legacy revision cleanup skipped:',error.message)}
  return {artworkId:checked.artworkId,revision:checked.revision,alreadyActive:false};
 }
