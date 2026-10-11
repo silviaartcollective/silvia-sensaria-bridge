@@ -6,7 +6,7 @@ import {renderListingConverterPage} from '../src/listing-converter-page.mjs';
 import {hasAuthorizedConverterLink} from '../src/listing-converter-link.mjs';
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 
-test('reconvert is available for linked listings without a new master upload',()=>{
+test('reconvert requires a newly uploaded master and new production crops',()=>{
  const html=renderListingConverterPage();
  const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
  assert.ok(script,'converter must contain an executable client script');
@@ -14,7 +14,14 @@ test('reconvert is available for linked listings without a new master upload',()
  assert.ok(html.includes("item.converted?'Reconvert listing':'Upload artwork & convert'"));
  assert.ok(html.includes("item.converted?reconvertListing(item,card):convertListing(item,card)"));
  assert.ok(html.includes('async function reconvertListing(item,card)'));
- assert.ok(html.includes('No new upload or artwork ID'));
+ assert.ok(html.includes('Upload the master artwork again (required)'));
+ assert.ok(html.includes('Upload replacement master artwork (required)'));
+ assert.ok(html.includes("const file=input?.files?.[0]"));
+ assert.ok(html.includes('if(!file){'));
+ assert.ok(html.includes("'/api/listing-converter/reconvert/reserve'"));
+ assert.ok(html.includes("'/api/listing-converter/reconvert/crop'"));
+ assert.ok(html.includes("await waitForCrop(result.job.id"));
+ assert.ok(html.includes("result.replacementMasterActivated!==true"));
  assert.ok(html.includes('reconvert:true'));
  assert.ok(html.includes('result.reconverted!==true||result.verified!==true'));
  assert.ok(html.includes('const file=input.files?.[0];'),'initial conversion remains available');
@@ -33,6 +40,12 @@ test('reconversion reuses mapped artwork and prevents cross-listing mutations',(
  assert.ok(server.includes('hasAuthorizedConverterLink({'));
  assert.ok(server.includes('sourceListingId: manifest.sourceEtsyListingId'));
  assert.ok(server.includes("cropJob.status !== 'completed'"));
+ assert.ok(server.includes('assertConverterArtworkReady({'));
+ assert.ok(server.includes('activateConverterArtworkRevision({'));
+ assert.ok(server.includes("const cropJobId = String(reconvert?replacement.record.jobId"));
+ assert.ok(server.includes('replacementMasterActivated:reconvert'));
+ assert.ok(server.includes("url.pathname==='/api/listing-converter/reconvert/reserve'"));
+ assert.ok(server.includes("url.pathname==='/api/listing-converter/reconvert/crop'"));
  assert.ok(server.includes("badSkus.length"),'postconversion SKUs must be verified');
  assert.ok(server.includes("priceVerification.changed"),'postconversion prices must be verified');
  assert.ok(server.includes("existingMediaPreserved: true"),'media stays intact');
