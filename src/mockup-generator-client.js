@@ -61,8 +61,8 @@ function selectionChanged(){
 function setProgress(done,total){$('mg-progress-bar').style.width=(total?Math.round(100*done/total):0)+'%';}
 function markRequested(){requested=true;ready=false;panel.dataset.generationRequested='true';panel.dataset.generationReady='false';}
 $('creator-form').addEventListener('submit',e=>{
- if(requested&&!ready){e.preventDefault();e.stopImmediatePropagation();
- failure(Error('Generated mockups are not ready yet. Finish the batch or retry before creating the Etsy draft.'));}
+ if(requested&&(!ready||running||preparing)){e.preventDefault();e.stopImmediatePropagation();
+ failure(Error('Mockup generation is still running or the selected JPGs are not attached. Finish, stop or retry the batch and apply your selected images first.'));}
 },true);
 const message=(text,warning=false)=>{const el=$('mg-progress');el.textContent=text;el.classList.toggle('warn',warning)};
 const failure=e=>message(e?.message||String(e),true);
