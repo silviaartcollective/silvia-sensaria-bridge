@@ -19,8 +19,11 @@ export async function readConversionQueue(){
  catch(error){if(isMissingR2Object(error))return {version:1,jobs:[]};throw error}
 }
 async function saveQueue(store){
- const jobs=[...store.jobs].sort((a,b)=>
-  String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,MAX_RECORDS);
+ const pending=store.jobs.filter(j=>['queued','running'].includes(j.status));
+ const history=store.jobs.filter(j=>!['queued','running'].includes(j.status))
+  .sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)))
+  .slice(0,Math.max(0,MAX_RECORDS-pending.length));
+ const jobs=[...pending,...history]; // Never trim active work, even under heavy backlog.
  await putJsonObject(STORE_KEY,{version:1,jobs});
 }
 function validate(input){
