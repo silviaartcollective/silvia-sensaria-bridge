@@ -57,7 +57,8 @@ export async function reserveConverterArtworkRevision({shopId,listingId,artworkI
   if(sameFile&&job?.status!=='failed'){
    const present=await artworkObjectExists(previous.masterKey);
    const validUpload=present&&(await artworkObjectInfo(previous.masterKey)).size===file.size;
-   if(present&&!validUpload)throw Error('The previous replacement upload is incomplete. Contact support before resuming this crop job.');
+   if(present&&!validUpload&&previous.jobId)
+    throw Error('The uploaded master is incomplete but its crop job has started. Wait for that job to fail before retrying with a new revision.');
    return {resumed:true,revision:previous.revision,artworkId:aid,
     uploadAlreadyPresent:validUpload,cropJobId:previous.jobId||null,
     status:previous.status,
