@@ -1578,13 +1578,19 @@ async function runPendingListingConversions(){
   for(let cycle=0;cycle<30;cycle++){
    const job=await claimNextConversion();
    if(!job)break;
+   const heartbeat=setInterval(()=>{
+     void updateConversionJob(job.id,{status:'running',
+       progress:'Applying Etsy settings and checking variants (rate limits retried automatically)'})
+       .catch(error=>console.warn('[Etsy converter heartbeat]',error.message));
+   },30000);
+   heartbeat.unref?.();
    try{
     const result=await performListingConversion(job.request);
     await updateConversionJob(job.id,{status:'completed',progress:'Etsy conversion verified',result});
    }catch(error){
     console.error('[Etsy converter queue] listing '+job.request.listingId+': '+error.message);
     await updateConversionJob(job.id,{status:'failed',progress:'Conversion requires attention',error:error.message});
-   }
+   }finally{clearInterval(heartbeat);}
    // Give Etsy at least a second between separate listings.
    await sleepMs(1300);
   }
