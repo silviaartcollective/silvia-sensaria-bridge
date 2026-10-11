@@ -462,6 +462,7 @@ async function createJob(){
 async function process(){
  if(!job)throw Error('Select a batch.');
  if(running)return;
+ let stalledError=null;
  running=true;stopping=false;$('mg-generate').disabled=true;$('mg-pause').disabled=false;
  // Serialize heartbeats so a delayed R2 update cannot overwrite the final release.
  let heartbeatInFlight=Promise.resolve();
@@ -476,12 +477,21 @@ async function process(){
    if(!claimed.item){message('All available jobs processed.');break;}
    try{await inspectAndReplace(claimed.item,claimed.template,claimed)}
    catch(e){
-    await api('jobs/'+job.id+'/fail','POST',{owner,templateId:claimed.item.id,
-       error:e.message||String(e),needsMapping:!!e.needsMapping});
-    failure(Error(claimed.item.name+': '+e.message));
-    if(/timed out|stopped responding|Processor reset|processing exceeded/i.test(e.message||''))await pp.reset();
+    const detail=String(e?.message||e);
+    try{
+     await api('jobs/'+job.id+'/fail','POST',{owner,templateId:claimed.item.id,
+      error:detail,needsMapping:!!e.needsMapping});
+    }catch(reportError){failure(Error('Could not record failure for '+claimed.item.name+': '+reportError.message));}
+    failure(Error(claimed.item.name+': '+detail));
+    if(/timed out|stopped responding|processor reset|processing exceeded|connection timed out|failed to fetch|aborterror/i.test(detail)){
+     stalledError='Stopped at '+claimed.item.name+': '+detail+
+      ' Open Saved batches & troubleshooting to retry this PSD. Previously completed JPGs are preserved.';
+     stopping=true;
+     await pp.reset();
+    }
    }
    await showJob(job.id);
+   if(stalledError){failure(Error(stalledError));break;}
   }
  }finally{
   clearInterval(timer);
@@ -496,6 +506,8 @@ async function process(){
    try{await useResults();
     message('All '+job.templates.length+' mockups generated. Finished JPGs attached to the Etsy listing.');}
    catch(error){failure(Error('JPG files generated, but automatic attachment failed: '+error.message));}
+  }else if(stalledError){
+   failure(Error(stalledError));
   }else if(!stopping){
    const incomplete=job.templates.filter(t=>t.status!=='completed').length;
    message(incomplete+' mockups need attention. Open Saved batches to retry them. Etsy draft creation is held until the batch finishes.',true);
