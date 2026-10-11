@@ -76,19 +76,20 @@ export async function getConversionQueueSummary(){
 export async function claimNextConversion(){
  return lock(async()=>{
   const store=await readConversionQueue(),now=Date.now();
+  let reclaimed=false;
   // After a Render restart an orphan can be retried; conversion operations
   // verify SKU/pricing before reporting success and reuse existing Artwork ID.
   for(const job of store.jobs){
    if(job.status!=='running')continue;
    const updated=Date.parse(job.updatedAt||0);
    if(Number.isFinite(updated)&&now-updated>RUNNING_EXPIRES_MS){
-    job.status='queued';job.progress='Recovering conversion after an interrupted server run';
+    job.status='queued';job.progress='Recovering conversion after an interrupted server run';reclaimed=true;
    }
   }
-  if(store.jobs.some(j=>j.status==='running')){await saveQueue(store);return null}
+  if(store.jobs.some(j=>j.status==='running')){if(reclaimed)await saveQueue(store);return null}
   const next=store.jobs.filter(j=>j.status==='queued')
     .sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)))[0];
-  if(!next){await saveQueue(store);return null}
+  if(!next){if(reclaimed)await saveQueue(store);return null}
   next.status='running';next.startedAt=new Date().toISOString();
   next.updatedAt=next.startedAt;next.attempts++;
   next.progress='Applying and verifying Etsy variants';
