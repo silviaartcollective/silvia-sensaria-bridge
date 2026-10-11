@@ -56,7 +56,13 @@ function choose(info){
   for(var k=0;k<visible.length;k++)if(visible[k].name==="5")return visible[k];
  }
  if(cfg.mappingPath){
-  for(var j=0;j<visible.length;j++)if(visible[j].path===cfg.mappingPath)return visible[j];
+  var byPath=[],byName=[];
+  for(var j=0;j<visible.length;j++){
+   if(visible[j].path===cfg.mappingPath)byPath.push(visible[j]);
+   if(visible[j].name===cfg.mappingPath)byName.push(visible[j]);
+  }
+  if(byName.length===1)return byName[0];
+  if(byPath.length===1)return byPath[0];
  }
  if(visible.length===1)return visible[0];
  return null;
