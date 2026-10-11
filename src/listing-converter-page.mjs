@@ -8,7 +8,7 @@ export function renderListingConverterPage() {
 <title>Gelato → Silvia Converter</title>
 <style>
 :root{--bg:#f4f1eb;--panel:#fffdfa;--ink:#20221e;--muted:#74776f;--line:#dfdcd4;--green:#536454;--green2:#e8eee7;--amber:#946b35;--amber2:#f5ead9;--red:#9b4439}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}.shell{max-width:1500px;margin:0 auto;padding:34px 24px 55px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:20px}.toplinks{display:flex;gap:10px;flex-wrap:wrap}.btn,a.btn{border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);padding:10px 13px;font:inherit;font-size:13px;font-weight:700;text-decoration:none;cursor:pointer}.btn.primary{background:#30352e;color:#fff;border-color:#30352e}.btn:disabled{opacity:.5;cursor:not-allowed}h1{font-family:Georgia,serif;font-weight:500;font-size:38px;margin:0 0 7px}.sub{margin:0;color:var(--muted);font-size:14px;line-height:1.55}.statusbar{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:14px 16px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px}.status{font-size:12px;color:var(--muted);line-height:1.5}.status.ok{color:var(--green)}.status.bad{color:var(--red)}.status.warn{color:var(--amber)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;overflow:hidden;box-shadow:0 10px 28px rgba(40,40,30,.05)}.preview{aspect-ratio:4/3;background:#ebe8e1;display:grid;place-items:center;overflow:hidden}.preview img{width:100%;height:100%;object-fit:cover}.preview .empty{font-size:12px;color:var(--muted)}.body{padding:15px}.title{font-weight:700;font-size:14px;line-height:1.4;margin-bottom:6px}.meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px}.pill{font-size:10px;padding:5px 7px;border-radius:999px;background:#f1eee8;color:var(--muted)}.pill.done{background:var(--green2);color:var(--green)}.pill.warn{background:var(--amber2);color:var(--amber)}.upload{display:grid;gap:9px;margin-top:11px}.upload input[type=file]{width:100%;font-size:12px}.progress{height:6px;background:#e7e3dc;border-radius:99px;overflow:hidden}.progress span{display:block;width:0;height:100%;background:#667867;transition:width .2s}.cardstatus{font-size:11px;line-height:1.45;color:var(--muted);min-height:34px}.cardstatus.ok{color:var(--green)}.cardstatus.bad{color:var(--red)}.cardstatus.warn{color:var(--amber)}.search{width:min(460px,100%);padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font:inherit}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}.shell{max-width:1500px;margin:0 auto;padding:34px 24px 55px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:20px}.toplinks{display:flex;gap:10px;flex-wrap:wrap}.btn,a.btn{border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);padding:10px 13px;font:inherit;font-size:13px;font-weight:700;text-decoration:none;cursor:pointer}.btn.primary{background:#30352e;color:#fff;border-color:#30352e}.btn.reconvert{background:#e8eee7;color:#314333;border-color:#c9d5c6}.btn.reconvert:hover{background:#dde8dc}.reconvert-note{border:1px solid #e2e7dd;background:#f3f6f1;border-radius:8px;padding:9px 10px;color:#536454;font-size:11px}.btn:disabled{opacity:.5;cursor:not-allowed}h1{font-family:Georgia,serif;font-weight:500;font-size:38px;margin:0 0 7px}.sub{margin:0;color:var(--muted);font-size:14px;line-height:1.55}.statusbar{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:14px 16px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px}.status{font-size:12px;color:var(--muted);line-height:1.5}.status.ok{color:var(--green)}.status.bad{color:var(--red)}.status.warn{color:var(--amber)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;overflow:hidden;box-shadow:0 10px 28px rgba(40,40,30,.05)}.preview{aspect-ratio:4/3;background:#ebe8e1;display:grid;place-items:center;overflow:hidden}.preview img{width:100%;height:100%;object-fit:cover}.preview .empty{font-size:12px;color:var(--muted)}.body{padding:15px}.title{font-weight:700;font-size:14px;line-height:1.4;margin-bottom:6px}.meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px}.pill{font-size:10px;padding:5px 7px;border-radius:999px;background:#f1eee8;color:var(--muted)}.pill.done{background:var(--green2);color:var(--green)}.pill.warn{background:var(--amber2);color:var(--amber)}.upload{display:grid;gap:9px;margin-top:11px}.upload input[type=file]{width:100%;font-size:12px}.progress{height:6px;background:#e7e3dc;border-radius:99px;overflow:hidden}.progress span{display:block;width:0;height:100%;background:#667867;transition:width .2s}.cardstatus{font-size:11px;line-height:1.45;color:var(--muted);min-height:34px}.cardstatus.ok{color:var(--green)}.cardstatus.bad{color:var(--red)}.cardstatus.warn{color:var(--amber)}.search{width:min(460px,100%);padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font:inherit}
 @media(max-width:1050px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.grid{grid-template-columns:1fr}.top{flex-direction:column}h1{font-size:31px}}
 
 .app-shell{min-height:100vh;display:grid;grid-template-columns:238px minmax(0,1fr)}
@@ -168,17 +168,65 @@ function renderCards(){
         '<div class="title">'+esc(item.title||'Untitled listing')+'</div>'+
         '<div class="meta">'+state+mapped+'<span class="pill">#'+esc(item.listingId)+'</span></div>'+
         '<div class="upload">'+
-          '<input class="master" type="file" accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff" '+(item.converted?'disabled':'')+'>'+
-          '<button class="btn primary convert" type="button" '+(item.converted?'disabled':'')+'>'+(item.converted?'Converted to Silvia':'Upload artwork & convert')+'</button>'+
+          (item.converted
+           ?'<div class="status reconvert-note">Reuses saved '+esc(item.artworkId)+' master artwork and completed crops. No new upload or artwork ID.</div>'
+           :'<input class="master" type="file" accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff">')+
+          '<button class="btn '+(item.converted?'reconvert':'primary')+' convert" type="button">'+(item.converted?'Reconvert listing':'Upload artwork & convert')+'</button>'+
           '<div class="progress"><span></span></div>'+
-          '<div class="cardstatus '+(item.converted?'ok':'')+'">'+(item.converted?'Linked to '+esc(item.artworkId)+' · Silvia variants active.':'Select the master artwork that belongs to this listing.')+'</div>'+
+          '<div class="cardstatus '+(item.converted?'ok':'')+'">'+(item.converted?'Linked to '+esc(item.artworkId)+' · Silvia variants active.'+(item.reconversionCount?' · Reconverted '+item.reconversionCount+' time(s).':''):'Select the master artwork that belongs to this listing.')+'</div>'+
         '</div>'+
       '</div>';
 
     const button=card.querySelector('.convert');
-    if(!item.converted)button.addEventListener('click',()=>convertListing(item,card));
+    button.addEventListener('click',()=>item.converted?reconvertListing(item,card):convertListing(item,card));
     cards.appendChild(card);
   }
+}
+
+async function reconvertListing(item,card){
+  const button=card.querySelector('.convert');
+  const status=card.querySelector('.cardstatus');
+  const bar=card.querySelector('.progress span');
+  const artworkId=String(item.artworkId||'').trim();
+  if(!artworkId){
+    status.className='cardstatus bad';
+    status.textContent='The original artwork link is missing. Refresh listings before reconverting.';
+    return;
+  }
+  const approved=confirm(
+    'Reconvert this Silvia Etsy listing?\\n\\n'+
+    item.title+'\\nArtwork: '+artworkId+'\\n\\n'+
+    'This will reapply and verify the current Silvia variants, SKUs, prices, shipping and listing settings. '+
+    'It uses the existing artwork and finished crops (no new artwork ID). '+
+    'Photos, video, title, description and tags will remain unchanged.'
+  );
+  if(!approved)return;
+  button.disabled=true;
+  bar.style.width='25%';
+  status.className='cardstatus';
+  status.textContent='Rechecking '+artworkId+' and reapplying current Silvia settings…';
+  try{
+    const response=await fetch('/api/listing-converter/convert',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({listingId:item.listingId,artworkId,reconvert:true})
+    });
+    const result=await response.json();
+    if(!response.ok||!result.ok)throw new Error(result.error||'Reconversion failed');
+    if(result.reconverted!==true||result.verified!==true)
+      throw new Error('Etsy did not confirm a verified reconversion.');
+    item.reconversionCount=Number(result.reconversionCount||0);
+    bar.style.width='100%';
+    status.className='cardstatus ok';
+    status.textContent='Reconversion verified · '+artworkId+' · '+String(result.enabledVariants||0)+
+      ' Silvia variants checked. Original artwork and listing media preserved.';
+    setTimeout(loadListings,1400);
+  }catch(error){
+    status.className='cardstatus bad';
+    status.textContent='Reconversion could not be verified: '+String(error.message||error)+
+      ' · Existing artwork ID remains '+artworkId+'. You can retry safely.';
+    bar.style.width='0%';
+  }finally{button.disabled=false;}
 }
 
 async function convertListing(item,card){
