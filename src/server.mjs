@@ -420,7 +420,9 @@ async function converterListingRows(session) {
       artworkId: mapping?.artworkId || null,
       converted: mapping?.status === 'converted',
       conversionStatus: mapping?.status || 'not-linked',
-      convertedAt: mapping?.convertedAt || null
+      convertedAt: mapping?.convertedAt || null,
+      lastReconvertedAt: mapping?.lastReconvertedAt || null,
+      reconversionCount: Math.max(0, Number(mapping?.reconversionCount) || 0)
     };
   });
 
