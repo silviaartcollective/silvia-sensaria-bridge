@@ -21,9 +21,11 @@ test('reconvert requires a newly uploaded master and new production crops',()=>{
  assert.ok(html.includes("'/api/listing-converter/reconvert/reserve'"));
  assert.ok(html.includes("'/api/listing-converter/reconvert/crop'"));
  assert.ok(html.includes("await waitForCrop(result.job.id"));
- assert.ok(html.includes("result.replacementMasterActivated!==true"));
+ assert.ok(html.includes('await queuedConversion(item,card,'));
  assert.ok(html.includes('reconvert:true'));
- assert.ok(html.includes('result.reconverted!==true||result.verified!==true'));
+ assert.ok(html.includes('async function refreshConversionQueue()'));
+ assert.ok(html.includes('Remove from queue'));
+ assert.ok(html.includes("const file=input.files?.[0];"));
  assert.ok(html.includes('const file=input.files?.[0];'),'initial conversion remains available');
  assert.ok(!html.includes("(item.converted?'disabled':'')"),'converted listing is not disabled');
 });
