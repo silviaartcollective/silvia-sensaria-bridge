@@ -24,3 +24,16 @@ The default idle timeout is **disabled**: the worker stays running until stopped
 - **Worker not starting:** Check Node.js 20+, that \`npm install\` succeeded, and Sharp can load. Retry setup if needed.
 - **Legacy separate workers:** Close them and rerun the shared installer. Do not leave old individual workers running in parallel.
 - **Never post \`config.local.json\`:** It contains confidential tokens and is covered by \`.gitignore\`.
+
+## Photoshop PSD mockup generation
+
+The **same running worker** now processes two queues: production artwork crops and PSD mockups from Silvia and Japandi Product Creator. Arté Antica remains connected for its existing crop jobs.
+
+- Product Creator uploads the master image and PSDs directly to private R2, then creates a mockup batch automatically. It **does not** open PSDs or run Photopea in your browser.
+- The PC worker downloads one PSD and master artwork to local temporary files, opens that PSD in a separate background Chromium session, replaces only its selected **visible Smart Object**, verifies all original layer visibility, exports a maximum **24-megapixel JPEG**, and uploads it to R2.
+- Jobs continue without the Product Creator tab being open. Progress and thumbnails appear when the page is reopened. Checkboxes (selected by default), Select all, Deselect all, and Apply selected determine which seven custom mockups accompany the three preset Etsy images.
+- For **mockup 19.psd**, the visible artwork Smart Object is named **5**. The other Smart Object is hidden and must stay hidden. Large files can take several minutes; errors appear against the affected PSD instead of indefinitely freezing the browser.
+- **On your Windows PC:** update this repository's worker folder, close the old shared worker when idle, run `worker/setup-worker.cmd` (press Enter to keep previously saved per-shop tokens), and launch `worker/start-worker.cmd` once. The new PSD renderer needs **Chrome or Microsoft Edge** and the Puppeteer Core package installed by setup.
+- You can examine `worker/worker.log` for PSD loading, processing and export errors. Generated JPGs and templates are only stored under the originating shop's namespace.
+- Real PSD rendering still requires validation on the user's Windows workstation: Render deployments alone do not update installed PC worker files.
+
