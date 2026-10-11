@@ -440,7 +440,11 @@ function sendJson(res, status, value) {
 }
 
 function sendHtml(res, status, html) {
-  const body = decorateAdminHtml(html);
+  const source = decorateAdminHtml(html);
+  // Every HTML response, including login, gets the current shop's favicon.
+  const body = source.includes('href="/favicon.svg')
+    ? source : source.replace(/<\/head>/i,
+      '<link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg?v=1"></head>');
   res.writeHead(status, {
     'content-type': 'text/html; charset=utf-8',
     'content-length': Buffer.byteLength(body),
@@ -1333,6 +1337,21 @@ const server = http.createServer(async (req, res) => {
   }))return;
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+  if (req.method === 'GET' && url.pathname === '/favicon.svg') {
+    const svg = readFileSync(new URL('./favicon.svg', import.meta.url));
+    res.writeHead(200, {
+      'content-type': 'image/svg+xml; charset=utf-8',
+      'content-length': svg.length,
+      'cache-control': 'public, max-age=3600',
+      'x-content-type-options': 'nosniff'
+    });
+    return res.end(svg);
+  }
+  if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+    res.writeHead(302, { location:'/favicon.svg?v=1','cache-control':'public,max-age=3600' });
+    return res.end();
+  }
 
   if (req.method === 'GET' && url.pathname === '/health') {
     return sendJson(res, 200, { ok: true, service: 'silvia-sensaria-bridge' });
