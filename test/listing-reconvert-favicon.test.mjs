@@ -35,7 +35,7 @@ test('reconversion reuses mapped artwork and prevents cross-listing mutations',(
  assert.ok(server.includes("const reconvert = body.reconvert === true;"));
  assert.ok(server.includes('prior.artworkId !== artworkId'));
  assert.ok(server.includes("prior.status !== 'converted'"));
- assert.ok(server.includes('Use the Reconvert listing button'));
+ assert.ok(server.includes('Use Reconvert listing with a fresh master artwork.'));
  assert.ok(server.includes('reconversionHistory'));
  assert.ok(server.includes('reconversionCount'));
  assert.ok(server.includes('saved?.convertedAt || finishedAt'));

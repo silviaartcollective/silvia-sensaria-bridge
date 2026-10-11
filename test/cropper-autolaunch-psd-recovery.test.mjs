@@ -22,7 +22,7 @@ test('Photopea timeouts run on PC and errors remain visible in Product Creator',
  const client=src('mockup-generator-client.js');
  assert.doesNotThrow(()=>new vm.Script(worker));
  assert.ok(worker.includes('MG_SENTINEL:'));
- assert.ok(worker.includes('timed out'));
+ assert.ok(worker.includes('did not respond within'));
  assert.ok(renderer.includes('protocolTimeout'));
  assert.ok(renderer.includes('onStage'));
  assert.ok(client.includes("t.progress"));
