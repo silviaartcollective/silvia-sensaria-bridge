@@ -242,7 +242,7 @@ export async function getShopShippingProfiles({
     const retryAfter=response.headers.get('retry-after');
     const seconds=Number(retryAfter);
     const dateDelay=retryAfter?Date.parse(retryAfter)-Date.now():0;
-    const waitMs=Number.isFinite(seconds)&&seconds>=0?seconds*1000:
+    const waitMs=retryAfter!==null&&Number.isFinite(seconds)&&seconds>=0?seconds*1000:
       Number.isFinite(dateDelay)&&dateDelay>0?dateDelay:
       Math.min(30000,1000*Math.pow(2,attempt))+Math.floor(Math.random()*550);
     await new Promise(resolve=>setTimeout(resolve,Math.max(1000,Math.min(60000,waitMs))));
