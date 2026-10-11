@@ -21,6 +21,7 @@ import {
   validateRatioSource
 } from './crop.mjs';
 import {renderMockupOnPC} from './mockup-processor.mjs';
+import {downloadCached} from './asset-cache.mjs';
 
 const LOCK_PATH = path.join(os.tmpdir(), 'pod-crop-worker.lock');
 const tempPaths = new Set();
@@ -234,15 +235,20 @@ async function processPSDJob(app,claim){
   return queue(()=>api.mockupProgress(id,itemId,mockupOwner,value));
  };
  try{
-  await stage('Downloading PSD template to PC');
+  await stage('Preparing PSD template on PC');
   const extension=path.extname(claim.template.name).toLowerCase()==='.psb'?'.psb':'.psd';
-  psdPath=await downloadToFile(claim.templateUrl,extension);
-  await stage('Downloading master artwork to PC');
-  artworkPath=await downloadToFile(claim.artworkUrl,path.extname(claim.job.filename)||'.jpg');
+  psdPath=(await downloadCached(claim.templateUrl,{
+   shop:app.appUrl,id:claim.template.id,key:claim.template.key,
+   size:claim.template.size,ext:extension},stage)).path;
+  await stage('Preparing master artwork on PC');
+  artworkPath=(await downloadCached(claim.artworkUrl,{
+   shop:app.appUrl,id:claim.job.id,key:claim.job.artworkKey,
+   size:claim.job.artworkSize,ext:path.extname(claim.job.filename)||'.jpg'},stage)).path;
   outputPath=path.join(os.tmpdir(),'pod-mockup-'+id+'-'+crypto.randomUUID()+'.jpg');
   tempPaths.add(outputPath);
   const render=await renderMockupOnPC({
    psdPath,artworkPath,outputPath,templateName:claim.template.name,mapping:claim.template.mapping||null,
+   smartObjects:claim.template.smartObjects||[],
    fitMode:claim.job.fitMode||'contain',
    onStage:stage
   });
@@ -259,7 +265,8 @@ async function processPSDJob(app,claim){
   await uploadFile(claim.output.uploadUrl,outputPath);
   await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping));
   console.log('['+app.name+'] PSD completed '+claim.item.outputName+
-   ' ('+render.dimensions.width+'x'+render.dimensions.height+')');
+   ' ('+render.dimensions.width+'x'+render.dimensions.height+', '+(render.engine||'unknown')+
+   ', '+((Date.now()-startedAt)/1000).toFixed(1)+'s total)');
  }catch(error){
   console.error('['+app.name+'] PSD mockup failed '+claim.item.name+': '+error.message);
   try{await queue(()=>api.mockupFail(id,mockupOwner,itemId,error,false))}
@@ -268,7 +275,7 @@ async function processPSDJob(app,claim){
   alive=false;clearInterval(keepAlive);
   try{await queue(()=>api.mockupRelease(id,mockupOwner))}
   catch(error){console.error('['+app.name+'] Could not release PSD batch:',error.message)}
-  for(const file of [psdPath,artworkPath,outputPath]){
+  for(const file of [outputPath]){
    if(file){
     await rm(file,{force:true}).catch(()=>{});
     tempPaths.delete(file);
