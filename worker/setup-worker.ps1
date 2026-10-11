@@ -3,7 +3,7 @@ $WorkerDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $WorkerDir
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {throw "Node.js 20+ is required."}
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {throw "npm is required."}
-Write-Host "Shared PC Crop Worker - Arté Antica, Silvia and Japandi" -ForegroundColor Cyan
+Write-Host "Shared PC Crop + Mockup Worker - Arté Antica, Silvia and Japandi" -ForegroundColor Cyan
 Write-Host "Use each shop's OWN Render CROP_WORKER_TOKEN. Tokens are never sent to the other shops."
 $target = Join-Path $WorkerDir "config.local.json"
 $previous=$null
@@ -32,13 +32,24 @@ foreach($entry in $definitions){
 }
 $config=@{apps=$apps;workerId="pod-crop-main-pc";pollIntervalMs=3000;idleExitMs=0}
 Write-Host ""
-Write-Host "Installing Sharp and verifying it works…"
+Write-Host "Installing Sharp and Puppeteer Core for production crops and Photoshop PSD mockups…"
 npm install
 if($LASTEXITCODE -ne 0){throw "npm install failed."}
 node --input-type=module -e "import('sharp').then(async ({default:sharp})=>{await sharp({create:{width:2,height:2,channels:3,background:'#ffffff'}}).jpeg().toBuffer();console.log('Sharp ready.')})"
 if($LASTEXITCODE -ne 0){throw "Sharp is not ready; please review npm install messages."}
+node --input-type=module -e "import('puppeteer-core').then(()=>console.log('Puppeteer Core ready.')).catch(e=>{console.error(e);process.exit(1);})"
+if($LASTEXITCODE -ne 0){throw "Puppeteer Core is missing. Check npm install messages."}
+$BrowserPaths=@(
+  "$env:PROGRAMFILES\\Google\\Chrome\\Application\\chrome.exe",
+  "$env:PROGRAMFILES\\Microsoft\\Edge\\Application\\msedge.exe",
+  "${env:PROGRAMFILES(X86)}\\Microsoft\\Edge\\Application\\msedge.exe",
+  "$env:LOCALAPPDATA\\Google\\Chrome\\Application\\chrome.exe"
+)
+if(-not ($BrowserPaths | Where-Object { Test-Path $_ } | Select-Object -First 1)){
+ Write-Host "Warning: Chrome/Edge not found in usual locations. Install one or set PHOTOPEA_CHROME_PATH for PSD rendering." -ForegroundColor Yellow
+}
 $config | ConvertTo-Json -Depth 6 | Set-Content -Path $target -Encoding UTF8
 & (Join-Path $WorkerDir "install-protocol.ps1")
 if($LASTEXITCODE -ne 0){throw "Windows protocol installation failed."}
 Write-Host ""
-Write-Host "Shared Crop Worker configured for all 3 shops. Start worker/start-worker.cmd ONCE." -ForegroundColor Green
+Write-Host "Shared Crop + Mockup Worker configured for all 3 shops. Start worker/start-worker.cmd ONCE." -ForegroundColor Green
