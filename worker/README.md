@@ -37,3 +37,14 @@ The **same running worker** now processes two queues: production artwork crops a
 - You can examine `worker/worker.log` for PSD loading, processing and export errors. Generated JPGs and templates are only stored under the originating shop's namespace.
 - Real PSD rendering still requires validation on the user's Windows workstation: Render deployments alone do not update installed PC worker files.
 
+
+## Faster rendering: native Photoshop (worker v4.1.0)
+
+On **Windows**, the shared worker now prefers **installed Adobe Photoshop** for PSD Smart Object replacement, using native Photoshop scripting. This avoids repeatedly launching Chromium, starting Photopea and waiting for Photopea's Smart Object editor. **Photopea is used as a fallback only if native Photoshop COM automation is unavailable.** Existing production crop processing remains unchanged.
+
+**After pulling the latest code**: wait for the current crop to finish, stop the old worker, update the single shared worker folder, run `setup-worker.cmd` (press Enter to retain your saved shop tokens), and run `start-worker.cmd`. The Product Creator status should display **Crop + Mockup Worker v4.1.0**. Do not run separate workers for Silvia and Japandi. If desktop Photoshop is installed, watch `worker.log` for `native Photoshop` and per-PSD elapsed seconds. If you see `Photopea fallback`, check Photoshop installation/COM registration and the log.
+
+Original PSDs are never overwritten. Hidden layers remain hidden. JPGs are validated at a maximum of 24 megapixels. A bounded, private on-disk cache in `%LOCALAPPDATA%\\pod-worker-cache\\v1` reuses PSD templates and master images between jobs; it defaults to 4 GB and evicts old files. You may delete this folder while the worker is stopped to reclaim disk space. Set `POD_WORKER_CACHE_GB` to adjust its limit or `POD_PSD_RENDERER=photopea` to force the original renderer.
+
+**Performance expectations:** small cached mockups can be considerably faster, but opening a complex 194 MB PSD and exporting a 24MP JPG may still take longer than a few seconds, depending on PC hardware and the document. Measure actual times from `worker.log` before claiming a performance target. A stuck Smart Object operation will time out, be logged as a failure and allow the worker to continue.
+
