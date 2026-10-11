@@ -52,7 +52,7 @@ function choose(info){
   for(var n=0;n<visible.length;n++)if(visible[n].name===cfg.mappingName)named.push(visible[n]);
   if(named.length===1)return named[0];
  }
- if(cfg.templateName&&/^mockup[ _-]*19\\.(psd|psb)$/i.test(cfg.templateName)){
+ if(cfg.templateName&&/^mockup[ _-]*19\.(psd|psb)$/i.test(cfg.templateName)){
   for(var k=0;k<visible.length;k++)if(visible[k].name==="5")return visible[k];
  }
  if(cfg.mappingPath){
@@ -73,7 +73,7 @@ try{
   report={ok:true,needsMapping:true,objects:info.objects,
    reason:"Select one visible artwork Smart Object for this PSD."};
  }else{
-  if(/^mockup[ _-]*19\\.(psd|psb)$/i.test(cfg.templateName)){
+  if(/^mockup[ _-]*19\.(psd|psb)$/i.test(cfg.templateName)){
    var hidden=null;
    for(var h=0;h<info.objects.length;h++)if(info.objects[h].name==="mockup 1 (1)")hidden=info.objects[h];
    if(hidden&&hidden.visible)throw new Error("Mockup 19 contains a Smart Object that should be hidden.");
@@ -108,7 +108,7 @@ try{
   inserted.translate(tw/2-(bounds[0].as("px")+bounds[2].as("px"))/2,
    th/2-(bounds[1].as("px")+bounds[3].as("px"))/2);
   step("Saving updated Smart Object");
-  child.save();child.close(SaveOptions.SAVECHANGES);child=null;
+  child.save();child.close(SaveOptions.DONOTSAVECHANGES);child=null;
   app.activeDocument=parent;
   var after=layerInfo(parent);
   if(JSON.stringify(info.visibility)!==JSON.stringify(after.visibility))
@@ -120,6 +120,8 @@ try{
    width=Math.max(1,Math.floor(width*ratio));height=Math.max(1,Math.floor(height*ratio));
    parent.resizeImage(UnitValue(width,"px"),UnitValue(height,"px"),null,ResampleMethod.BICUBIC);
   }
+  if(parent.mode!==DocumentMode.RGB)parent.changeMode(ChangeMode.RGB);
+  if(parent.bitsPerChannel!==BitsPerChannelType.EIGHT)parent.bitsPerChannel=BitsPerChannelType.EIGHT;
   var options=new JPEGSaveOptions();options.quality=10;options.embedColorProfile=true;
   parent.saveAs(new File(cfg.output),options,true,Extension.LOWERCASE);
   report={ok:true,needsMapping:false,objects:info.objects,usedMapping:slot.path,
