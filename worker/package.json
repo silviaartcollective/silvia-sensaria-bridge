@@ -1,11 +1,12 @@
 {
-  "name": "silvia-crop-worker",
+  "name": "shared-pod-crop-and-mockup-worker",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node index.mjs"
   },
   "dependencies": {
-    "sharp": "^0.34.3"
+    "sharp": "^0.34.3",
+    "puppeteer-core": "^24.23.0"
   }
 }
