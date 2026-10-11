@@ -2,7 +2,7 @@ export function renderMockupGeneratorSection(){
 return `
 <section class="uploadbox" id="mockup-generator-panel" aria-label="Generate mockups">
  <div class="mg-workspace"><div class="mg-main"><div><strong>Generate listing mockups</strong>
- <div class="uploadmeta">Choose your master artwork above to start generating with saved PSD templates. Review and select the finished JPGs on the right.</div></div>
+ <div class="uploadmeta">Choose master artwork to queue saved PSD templates on your shared PC worker. Close this tab if needed; rendering continues on the PC. Choose finished JPGs on the right.</div></div>
  <div class="uploadrow">
   <label>Add PSD / PSB mockups <span class="hint">optional if templates are saved</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
@@ -15,10 +15,10 @@ return `
   <div id="mg-templates" class="mg-template-list"></div>
  </details>
  <div class="mg-actions">
-  <button class="btn secondary" type="button" id="mg-generate">Generate & attach mockups</button>
-  <button class="btn secondary" type="button" id="mg-pause" disabled>Stop after current PSD</button>
+  <button class="btn secondary" type="button" id="mg-generate">Queue mockups on PC</button>
+  <button class="btn secondary" type="button" id="mg-pause" disabled>Pause after current PSD</button>
  </div>
- <div id="mg-progress" class="status" role="status" aria-live="polite">Choose artwork and PSD mockups, then click Generate. Existing JPG mockups can also be uploaded directly.</div>
+ <div id="mg-progress" class="status" role="status" aria-live="polite">Choose master artwork above. The shared PC worker will automatically process saved PSDs.</div>
  <div class="progress" aria-label="Mockup generation progress"><span id="mg-progress-bar"></span></div>
  <details class="mg-advanced">
   <summary>View individual results and downloads</summary>
@@ -53,8 +53,7 @@ return `
   <div id="mg-selection-status" class="uploadmeta">All finished mockups are selected by default. Etsy can use up to 7 alongside your 3 preset images.</div>
   <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside></div>
- <div id="mg-engine-status" class="uploadmeta" hidden>Photopea automation engine not started.</div>
- <iframe id="mg-editor" title="Background Photoshop mockup processing" tabindex="-1" aria-hidden="true" referrerpolicy="no-referrer" class="mg-engine"></iframe>
+ <div id="mg-worker-status" class="uploadmeta" role="status">Checking shared PC Crop + Mockup Worker…</div>
 </section>
 <style>
 #mockup-generator-panel{position:relative;overflow:visible;container-type:inline-size}
