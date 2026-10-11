@@ -92,15 +92,17 @@ async function downloadToFile(url, extension = '.jpg') {
   );
   tempPaths.add(outputPath);
 
-  const response = await fetch(url);
-  if (!response.ok || !response.body) {
-    throw new Error(`Master download failed (HTTP ${response.status}).`);
+  try {
+    const response = await fetch(url,{signal:AbortSignal.timeout(10*60*1000)});
+    if (!response.ok || !response.body)
+      throw new Error('Worker source download failed (HTTP '+response.status+').');
+    await pipeline(Readable.fromWeb(response.body),createWriteStream(outputPath));
+    return outputPath;
+  } catch (error) {
+    await rm(outputPath,{force:true}).catch(()=>{});
+    tempPaths.delete(outputPath);
+    throw error;
   }
-  await pipeline(
-    Readable.fromWeb(response.body),
-    createWriteStream(outputPath)
-  );
-  return outputPath;
 }
 
 async function uploadFile(url, filePath) {
@@ -112,7 +114,8 @@ async function uploadFile(url, filePath) {
       'Content-Length': String(info.size)
     },
     body: createReadStream(filePath),
-    duplex: 'half'
+    duplex: 'half',
+    signal:AbortSignal.timeout(10*60*1000)
   });
   if (!response.ok) {
     const detail = (await response.text().catch(() => '')).slice(0, 300);
