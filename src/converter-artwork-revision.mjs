@@ -4,7 +4,9 @@ import crypto from 'node:crypto';
 import { loadArtworkManifest,saveArtworkManifest } from './artwork-storage.mjs';
 import { createCropJob,getCropJob } from './crop-job-store.mjs';
 import { checkedRevisionAssets } from './artwork-revision.mjs';
-import { getJsonObject,putJsonObject,artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl } from './r2.mjs';
+import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey} from './artwork-ratios.mjs';
+import { getJsonObject,putJsonObject,artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl,
+  copyArtworkObject,deleteArtworkObject,listArtworkObjectKeys } from './r2.mjs';
 
 const TYPES={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff'};
 const textId=value=>{
@@ -54,7 +56,7 @@ export async function reserveConverterArtworkRevision({shopId,listingId,artworkI
   const job=previous.jobId?await getCropJob(previous.jobId):null;
   const sameFile=previous.filename===file.filename&&previous.size===file.size&&
    Boolean(previous.sha256)&&previous.sha256===file.sha256;
-  if(sameFile&&job?.status!=='failed'){
+  if(sameFile&&job?.status!=='failed'&&!previous.masterKey.includes('/revisions/')){
    const present=await artworkObjectExists(previous.masterKey);
    const validUpload=present&&(await artworkObjectInfo(previous.masterKey)).size===file.size;
    if(present&&!validUpload&&previous.jobId)
@@ -71,12 +73,12 @@ export async function reserveConverterArtworkRevision({shopId,listingId,artworkI
   // file (or a clean retry), never overwrite bytes a crop worker might be reading.
  }
  const revision=crypto.randomUUID();
- const masterKey='artworks/'+aid+'/revisions/'+revision+'/master.'+file.ext;
+ const masterKey='artworks/'+aid+'/.reconvert/'+revision+'/master.'+file.ext;
  const record={
   shopId:String(shopId),listingId:id,artworkId:aid,revision,masterKey,
   filename:file.filename,contentType:file.contentType,size:file.size,sha256:file.sha256,
   originalMasterKey:manifest.master.key,orientation:targetOrientation,
-  jobId:null,status:'awaiting_upload',createdAt:new Date().toISOString()
+  jobId:null,status:'awaiting_upload',temporary:true,createdAt:new Date().toISOString()
  };
  await putJsonObject(recordKey,record);
  return {resumed:false,revision,artworkId:aid,uploadAlreadyPresent:false,cropJobId:null,
@@ -135,33 +137,109 @@ export async function assertConverterArtworkReady({shopId,listingId,revision,art
   throw Error('Existing master changed while the replacement was cropping. Reconversion stopped.');
  return {record,assets};
 }
+// Staged uploads and crops are disposable; successful artwork always uses
+// artworks/ID/master.ext + artworks/ID/fulfillment/{ratio}.jpg + manifest.json.
+export function canonicalReconversionKeys(artworkId,extension){
+ const id=artId(artworkId),ext=String(extension||'').toLowerCase();
+ if(!/^(jpg|jpeg|png|webp|tif|tiff)$/.test(ext))throw Error('Invalid master extension.');
+ return {
+  master:'artworks/'+id+'/master.'+ext,
+  ratios:Object.fromEntries(FULFILLMENT_RATIOS.map(r=>[r,fulfillmentRatioObjectKey(id,r)]))
+ };
+}
+const pendingRoot=(record)=>'artworks/'+artId(record.artworkId)+'/.reconvert/'+record.revision+'/';
+async function cleanupTemporary(record){
+ const prefix=pendingRoot(record),keys=await listArtworkObjectKeys(prefix);
+ await Promise.all(keys.map(key=>deleteArtworkObject(key)));
+}
 export async function activateConverterArtworkRevision({shopId,listingId,revision,artworkId}){
  const record=await getConverterArtworkRevision(shopId,listingId);
- if(record?.status==='activated'&&record.revision===String(revision)&&record.artworkId===artId(artworkId))
+ if(!record||record.revision!==String(revision)||record.artworkId!==artId(artworkId))
+  throw Error('The replacement upload has changed. Refresh the listing.');
+ let manifest=await loadArtworkManifest(record.artworkId);
+ if(record.status==='activated'||manifest.lastArtworkReconversion?.revision===record.revision){
+  if(manifest.lastArtworkReconversion?.revision!==record.revision)
+   throw Error('Artwork status does not match the active master.');
+  if(record.status!=='activated'){
+   record.status='activated';record.activatedAt||=new Date().toISOString();
+   await putJsonObject(keyFor(shopId,listingId),record);
+  }
+  await cleanupTemporary(record).catch(error=>console.warn('Temporary reconversion cleanup:',error.message));
   return {artworkId:record.artworkId,revision:record.revision,alreadyActive:true};
- const {record:verified,assets}=await assertConverterArtworkReady({shopId,listingId,revision,artworkId});
- const manifest=await loadArtworkManifest(verified.artworkId);
- if(manifest.master?.key===verified.masterKey){
-  verified.status='activated';verified.activatedAt ||= new Date().toISOString();
-  await putJsonObject(keyFor(shopId,listingId),verified);
-  return {artworkId:verified.artworkId,revision:verified.revision,alreadyActive:true};
  }
- if(manifest.master?.key!==verified.originalMasterKey)
-  throw Error('The original master changed. Staged artwork was NOT activated.');
- const archive='artworks/'+verified.artworkId+'/revisions/'+verified.revision+'/previous-manifest.json';
- await putJsonObject(archive,manifest);
- const updatedAt=new Date().toISOString();
- await saveArtworkManifest({...manifest,master:{
-  key:verified.masterKey,originalFilename:verified.filename,
-  contentType:verified.contentType,size:verified.size
- },fulfillmentRatios:assets,fulfillmentRatiosReady:true,
-  fulfillmentRatioInsufficient:{},fulfillmentRatiosUpdatedAt:updatedAt,
-  production:{},cropWorkerJobId:verified.jobId,
-  activeArtworkRevision:verified.revision,previousManifestSnapshotKey:archive,
-  lastArtworkReconversion:{listingId:String(listingId),revision:verified.revision,
-   previousMasterKey:verified.originalMasterKey,activatedAt:updatedAt}
- });
- verified.status='activated';verified.activatedAt=updatedAt;
- await putJsonObject(keyFor(shopId,listingId),verified);
- return {artworkId:verified.artworkId,revision:verified.revision,alreadyActive:false};
+ const {record:checked,assets}=await assertConverterArtworkReady({shopId,listingId,revision,artworkId});
+ manifest=await loadArtworkManifest(checked.artworkId);
+ if(manifest.master?.key!==checked.originalMasterKey)
+  throw Error('Original master changed before replacement. Nothing was deleted.');
+ const ext=checked.filename.split('.').pop().toLowerCase(),dest=canonicalReconversionKeys(checked.artworkId,ext);
+ const sources=[
+  {from:checked.masterKey,to:dest.master},
+  ...FULFILLMENT_RATIOS.map(r=>({from:assets[r].key,to:dest.ratios[r]}))
+ ];
+ // Canonical assets are backed up only while promotion is in progress.
+ let backups=Array.isArray(checked.promotionBackups)?checked.promotionBackups:null;
+ if(!backups){
+  backups=[];
+  for(let i=0;i<sources.length;i++){
+   const target=sources[i].to,exists=await artworkObjectExists(target);
+   const backup=pendingRoot(checked)+'rollback/'+i;
+   if(exists)await copyArtworkObject(target,backup);
+   backups.push({target,backup:exists?backup:null});
+  }
+  checked.promotionBackups=backups;
+  checked.status='promoting';
+  await putJsonObject(keyFor(shopId,listingId),checked);
+ }
+ const rollback=async()=>{
+  for(const item of backups){
+   if(item.backup)await copyArtworkObject(item.backup,item.target);
+   else await deleteArtworkObject(item.target);
+  }
+ };
+ let manifestSaved=false;
+ try{
+  for(const pair of sources)await copyArtworkObject(pair.from,pair.to);
+  const updatedAt=new Date().toISOString();
+  const ratios=Object.fromEntries(FULFILLMENT_RATIOS.map(r=>[r,{
+   ...assets[r],key:dest.ratios[r],sourceMasterKey:dest.master
+  }]));
+  const next={
+   ...manifest,master:{key:dest.master,originalFilename:checked.filename,
+     contentType:checked.contentType,size:checked.size},
+   fulfillmentRatios:ratios,fulfillmentRatiosReady:true,
+   fulfillmentRatioInsufficient:{},fulfillmentRatiosUpdatedAt:updatedAt,
+   production:{},cropWorkerJobId:checked.jobId,
+   lastArtworkReconversion:{
+    listingId:String(listingId),revision:checked.revision,
+    previousMasterKey:checked.originalMasterKey,activatedAt:updatedAt
+   }
+  };
+  delete next.activeArtworkRevision;
+  delete next.previousManifestSnapshotKey;
+  await saveArtworkManifest(next);
+  manifestSaved=true;
+  checked.status='activated';checked.activatedAt=updatedAt;
+  await putJsonObject(keyFor(shopId,listingId),checked);
+ }catch(error){
+  if(!manifestSaved){
+   try{await rollback()}
+   catch(rollbackError){
+    throw Error('Artwork promotion failed and restoring original assets also failed: '+
+     rollbackError.message+'. Original manifest remains unchanged. '+error.message);
+   }
+   checked.status='cropping';
+   delete checked.promotionBackups;
+   await putJsonObject(keyFor(shopId,listingId),checked);
+  }
+  throw error;
+ }
+ await cleanupTemporary(checked).catch(error=>console.warn('Reconversion cleanup:',error.message));
+ if(checked.originalMasterKey!==dest.master)
+  await deleteArtworkObject(checked.originalMasterKey)
+   .catch(error=>console.warn('Old master cleanup:',error.message));
+ const legacyPrefix='artworks/'+checked.artworkId+'/revisions/';
+ const legacyKeys=await listArtworkObjectKeys(legacyPrefix).catch(()=>[]);
+ for(const key of legacyKeys)await deleteArtworkObject(key).catch(error=>
+  console.warn('Legacy revision cleanup:',error.message));
+ return {artworkId:checked.artworkId,revision:checked.revision,alreadyActive:false};
 }
