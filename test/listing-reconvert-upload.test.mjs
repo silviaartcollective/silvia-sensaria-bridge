@@ -38,6 +38,7 @@ function fixture(){
    jobs.set(job.id,job);return {job:clone(job),reused:false};
   },
   getCropJob:async id=>jobs.has(id)?clone(jobs.get(id)):null,
+  readCropJobStore:async()=>({jobs:[...jobs.values()].map(clone)}),
   checkedRevisionAssets:async(record,job)=>{
    if(!job||job.status!=='completed'||record.jobId!==job.id||job.masterKey!==record.masterKey)
     throw Error('New artwork crops have not completed.');
