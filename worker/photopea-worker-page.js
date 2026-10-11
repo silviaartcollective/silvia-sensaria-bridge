@@ -7,22 +7,47 @@
  let pending=null,readyResolve=null,readyReject=null,readyPromise=null;
  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
  const errorText=err=>String(err?.message||err);
+ function settle(p,error,result){
+  if(pending!==p)return;
+  pending=null;clearTimeout(p.timer);
+  if(error)p.reject(error);else p.resolve(result);
+ }
+ // Photopea's scripting engine may send "done" early or fail silently.
+ // Script replies are acknowledged by a unique sentinel, NOT by the generic "done".
  window.addEventListener('message',event=>{
   if(event.origin!==photopeaOrigin||event.source!==frame.contentWindow)return;
-  if(event.data==='done'){
-   if(pending){
-    const p=pending,err=p.messages.find(x=>x.startsWith('MG_ERROR:'));
-    if(!err&&p.token&&!p.messages.includes('MG_SENTINEL:'+p.token))return;
-    pending=null;clearTimeout(p.timer);
-    if(err)p.reject(Error(err.slice(9)));
-    else if(p.expectBinary&&!p.binary)p.reject(Error('Photopea reported export completion without JPG bytes.'));
-    else p.resolve({messages:p.messages,binary:p.binary});
-   }else if(readyResolve){
+  if(!pending){
+   if(event.data==='done'&&readyResolve){
     const yes=readyResolve;readyResolve=null;readyReject=null;yes();
    }
-  }else if(pending){
-   if(event.data instanceof ArrayBuffer)pending.binary=event.data;
-   else if(typeof event.data==='string')pending.messages.push(event.data);
+   return;
+  }
+  const p=pending;
+  if(event.data instanceof ArrayBuffer){
+   p.binary=event.data;
+   if(p.seenSentinel&&p.expectBinary)
+    settle(p,null,{messages:p.messages,binary:p.binary});
+   return;
+  }
+  if(typeof event.data!=='string')return;
+  if(event.data==='done'){
+   if(!p.token){
+    settle(p,null,{messages:p.messages,binary:p.binary});
+   }else if(p.seenSentinel){
+    if(p.expectBinary&&!p.binary)
+     settle(p,Error('Photopea completed export without sending JPG bytes.'));
+    else settle(p,null,{messages:p.messages,binary:p.binary});
+   }
+   return;
+  }
+  p.messages.push(event.data);
+  if(event.data.startsWith('MG_ERROR:')){
+   settle(p,Error(event.data.slice(9)));return;
+  }
+  if(p.token&&event.data==='MG_SENTINEL:'+p.token){
+   p.seenSentinel=true;
+   if(!p.expectBinary||p.binary)
+    settle(p,null,{messages:p.messages,binary:p.binary});
   }
  });
  async function stage(value){
@@ -43,11 +68,13 @@
   await init();
   if(pending)throw Error('Photopea still has an active command.');
   return new Promise((resolve,reject)=>{
-   const p={resolve,reject,messages:[],binary:null,token,expectBinary};
+   const p={resolve,reject,messages:[],binary:null,token,expectBinary,seenSentinel:false};
    pending=p;
    p.timer=setTimeout(()=>{
-    if(pending===p)pending=null;
-    reject(Error('Photopea '+(data instanceof ArrayBuffer?'PSD/image import':'script')+' timed out after '+Math.round(timeout/1000)+'s.'));
+    const recent=p.messages.filter(x=>x.startsWith('MG_')).slice(-3).join(' | ');
+    settle(p,Error('Photopea '+(data instanceof ArrayBuffer?'PSD/image import':'script')+
+      ' did not respond within '+Math.round(timeout/1000)+'s.'+
+      (recent?' Last response: '+recent.slice(0,180):' The scripting interpreter may have stopped; this PSD will be marked failed.')));
    },timeout);
    try{frame.contentWindow.postMessage(data,photopeaOrigin,data instanceof ArrayBuffer?[data]:[])}
    catch(err){clearTimeout(p.timer);pending=null;reject(err)}
@@ -57,7 +84,11 @@
   const token=crypto.randomUUID();
   const source='('+fn.toString()+')('+args.map(x=>JSON.stringify(x)).join(',')+
    ');app.echoToOE('+JSON.stringify('MG_SENTINEL:'+token)+');';
-  return send(source,300000,token);
+  // Metadata scans must not monopolize the queue for five minutes after a silent interpreter crash.
+  const name=fn.name||'';
+  const timeout=name==='inspect'||name==='visibilityCheck'?45000:
+    name==='openArtworkSlot'||name==='replaceArtwork'?150000:90000;
+  return send(source,timeout,token);
  }
  async function loadFile(kind,timeout){
   await stage('Opening '+(kind==='psd'?'PSD template':'master artwork')+' on PC');
@@ -68,29 +99,31 @@
   await send(buffer,timeout);
  }
  function inspect(){
-  try{
-   var doc=app.activeDocument,objects=[],visibility=[];
-   if(!doc)throw Error('PSD did not open');
-   function walk(layers,stem,visibleParent){
-    for(var i=0;i<layers.length;i++){
-     var l=layers[i],path=stem?stem+'.'+i:String(i),group=!!(l.layers&&l.layers.length!==undefined);
-     var smart=false;
-     try{smart=l.kind===LayerKind.SMARTOBJECT||String(l.kind).toLowerCase().indexOf('smart')>=0}catch(_){}
-     var visible=!!l.visible&&visibleParent;
-     var layer={path:path,name:String(l.name||''),kind:smart?'smart':(group?'group':'other'),visible:visible};
-     visibility.push(layer);if(smart)objects.push(layer);
-     if(group)walk(l.layers,path,visible);
-    }
+  // Photopea has a limited, nonstandard JS interpreter. Do not use Array.map,
+  // unguarded LayerSet.kind, modern JS helpers, or speculative property access.
+  var doc=app.activeDocument,objects=[],visibility=[];
+  function scan(layers,prefix,parentVisible){
+   for(var i=0;i<layers.length;i++){
+    var layer=layers[i];
+    var group=layer.typename==='LayerSet';
+    var kind=group?'group':(layer.kind===LayerKind.SMARTOBJECT?'smart':'other');
+    var path=prefix?prefix+'.'+i:''+i;
+    var name=''+layer.name;
+    var visible=(layer.visible!==false)&&parentVisible;
+    var data={path:path,name:name,kind:kind,visible:visible};
+    visibility[visibility.length]=data;
+    if(kind==='smart')objects[objects.length]=data;
+    if(group)scan(layer.layers,path,visible);
    }
-   walk(doc.layers,'',true);
-   app.echoToOE('MG_INSPECT:'+JSON.stringify({objects:objects,visibility:visibility,
-    width:Math.round(doc.width.as('px')),height:Math.round(doc.height.as('px'))}));
-  }catch(e){app.echoToOE('MG_ERROR:'+String(e.message||e))}
+  }
+  app.echoToOE('MG_INSPECT_BEGIN');
+  scan(doc.layers,'',true);
+  app.echoToOE('MG_INSPECT:'+JSON.stringify({objects:objects,visibility:visibility}));
  }
  function openArtworkSlot(path){
   try{
-   var parent=app.activeDocument,parts=path.split('.').map(Number),l=parent.layers[parts[0]];
-   for(var i=1;i<parts.length;i++)l=l.layers[parts[i]];
+   var parent=app.activeDocument,parts=path.split('.'),l=parent.layers[Number(parts[0])];
+   for(var i=1;i<parts.length;i++)l=l.layers[Number(parts[i])];
    if(!l||!(l.kind===LayerKind.SMARTOBJECT||String(l.kind).toLowerCase().indexOf('smart')>=0)||!l.visible)
     throw Error('Target artwork layer is hidden or is not a visible Smart Object.');
    parent.source='MG_PARENT_DOC';parent.activeLayer=l;
@@ -129,21 +162,21 @@
   }catch(e){app.echoToOE('MG_ERROR:'+String(e.message||e))}
  }
  function visibilityCheck(){
-  try{
-   var doc=app.activeDocument,visibility=[];
-   function walk(layers,stem,visibleParent){
-    for(var i=0;i<layers.length;i++){
-     var l=layers[i],path=stem?stem+'.'+i:String(i),group=!!(l.layers&&l.layers.length!==undefined);
-     var smart=false;
-     try{smart=l.kind===LayerKind.SMARTOBJECT||String(l.kind).toLowerCase().indexOf('smart')>=0}catch(_){}
-     var visible=!!l.visible&&visibleParent;
-     visibility.push({path:path,name:String(l.name||''),kind:smart?'smart':(group?'group':'other'),visible:visible});
-     if(group)walk(l.layers,path,visible);
-    }
+  var doc=app.activeDocument,visibility=[];
+  function scan(layers,prefix,parentVisible){
+   for(var i=0;i<layers.length;i++){
+    var layer=layers[i];
+    var group=layer.typename==='LayerSet';
+    var kind=group?'group':(layer.kind===LayerKind.SMARTOBJECT?'smart':'other');
+    var path=prefix?prefix+'.'+i:''+i;
+    var data={path:path,name:''+layer.name,kind:kind,
+     visible:(layer.visible!==false)&&parentVisible};
+    visibility[visibility.length]=data;
+    if(group)scan(layer.layers,path,data.visible);
    }
-   walk(doc.layers,'',true);
-   app.echoToOE('MG_VISIBILITY:'+JSON.stringify(visibility));
-  }catch(e){app.echoToOE('MG_ERROR:'+String(e.message||e))}
+  }
+  scan(doc.layers,'',true);
+  app.echoToOE('MG_VISIBILITY:'+JSON.stringify(visibility));
  }
  function exportComposite(){
   try{
@@ -182,6 +215,7 @@
   await loadFile('psd',420000);
   await stage('Inspecting visible PSD Smart Objects');
   const inspected=parse(await script(inspect),'MG_INSPECT:');
+  await stage('Found '+inspected.objects.length+' Smart Objects · choosing visible artwork layer');
   if(/^mockup[ _-]*19\\.(?:psd|psb)$/i.test(config.templateName||'')){
    const artworkSlot=inspected.objects.find(o=>o.name==='5'&&o.kind==='smart');
    const hidden=inspected.objects.find(o=>o.name==='mockup 1 (1)'&&o.kind==='smart');
