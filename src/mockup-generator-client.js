@@ -96,6 +96,15 @@ async function api(route,method='GET',body){
   throw error;
  }finally{clearTimeout(timeout)}
 }
+// Prevent heartbeat writes to R2 from overwriting a claimed/completed PSD.
+let heartbeatInFlight=Promise.resolve(),jobMetadataMutations=0;
+async function jobMutation(route,body){
+ jobMetadataMutations++;
+ try{
+  await heartbeatInFlight;
+  return await api(route,'POST',body);
+ }finally{jobMetadataMutations--}
+}
 async function upload(url,blob,mime){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),300000);
  try{
@@ -367,7 +376,7 @@ async function inspectAndReplace(item,template,result){
   if(sig[0]!==255||sig[1]!==216)throw Error('Photopea export did not return a JPG.');
   message('Uploading and verifying '+item.outputName);
   await upload(result.output.uploadUrl,new Blob([data.binary],{type:'image/jpeg'}),'image/jpeg');
-  await api('jobs/'+job.id+'/complete','POST',{owner,templateId:item.id,
+  await jobMutation('jobs/'+job.id+'/complete',{owner,templateId:item.id,
     outputKey:result.output.key,mapping:selection.path,visibilityVerified:true,
     mappingVerified:true,artworkReplaced:true});
 }
@@ -470,22 +479,25 @@ async function process(){
  if(running)return;
  let stalledError=null;
  running=true;stopping=false;$('mg-generate').disabled=true;$('mg-pause').disabled=false;
- // Serialize heartbeats so a delayed R2 update cannot overwrite the final release.
- let heartbeatInFlight=Promise.resolve();
+ // Heartbeats never write concurrently with job claim, failure or completion.
  const timer=setInterval(()=>{
-  heartbeatInFlight=heartbeatInFlight.then(()=>api('jobs/'+job.id+'/heartbeat','POST',{owner})).catch(()=>{});
+  if(jobMetadataMutations)return;
+  heartbeatInFlight=heartbeatInFlight.then(()=>{
+   if(jobMetadataMutations||!running||!job)return;
+   return api('jobs/'+job.id+'/heartbeat','POST',{owner});
+  }).catch(()=>{});
  },20000);
  try{
   await pp.init();
   while(!stopping){
-   const claimed=await api('jobs/'+job.id+'/claim','POST',{owner});
+   const claimed=await jobMutation('jobs/'+job.id+'/claim',{owner});
    job=claimed.job;
    if(!claimed.item){message('All available jobs processed.');break;}
    try{await inspectAndReplace(claimed.item,claimed.template,claimed)}
    catch(e){
     const detail=String(e?.message||e);
     try{
-     await api('jobs/'+job.id+'/fail','POST',{owner,templateId:claimed.item.id,
+     await jobMutation('jobs/'+job.id+'/fail',{owner,templateId:claimed.item.id,
       error:detail,needsMapping:!!e.needsMapping});
     }catch(reportError){failure(Error('Could not record failure for '+claimed.item.name+': '+reportError.message));}
     failure(Error(claimed.item.name+': '+detail));
@@ -503,7 +515,7 @@ async function process(){
   clearInterval(timer);
   await heartbeatInFlight;
   // Releasing even after PSD errors prevents a stopped browser blocking the next attempt.
-  try{await api('jobs/'+job.id+'/control','POST',{owner,action:'release'});}
+  try{await jobMutation('jobs/'+job.id+'/control',{owner,action:'release'});}
   catch(error){failure(Error('Could not release batch: '+error.message));}
   running=false;
   $('mg-generate').disabled=false;$('mg-pause').disabled=true;
@@ -522,22 +534,22 @@ async function process(){
 }
 async function resume(){
  if(!job)throw Error('Select or create a batch.');
- job=(await api('jobs/'+job.id+'/control','POST',{owner,action:'resume'})).job;
+ job=(await jobMutation('jobs/'+job.id+'/control',{owner,action:'resume'})).job;
  await process();
 }
 async function pause(){
  stopping=true;
- if(job){await api('jobs/'+job.id+'/control','POST',{owner,action:'pause'});message('Paused; finish in-progress PSD then stop.');}
+ if(job){await jobMutation('jobs/'+job.id+'/control',{owner,action:'pause'});message('Paused; finish in-progress PSD then stop.');}
 }
 async function retry(){
  if(!job)throw Error('Select a batch.');
- job=(await api('jobs/'+job.id+'/control','POST',{owner,action:'retry'})).job;
+ job=(await jobMutation('jobs/'+job.id+'/control',{owner,action:'retry'})).job;
  await process();
 }
 async function regenerate(){
   if(!job)throw Error('Select a batch first.');
   if(!confirm('Regenerate every mockup? Existing verified JPGs remain until replacements pass checks.'))return;
-  job=(await api('jobs/'+job.id+'/control','POST',{owner,action:'regenerate'})).job;
+  job=(await jobMutation('jobs/'+job.id+'/control',{owner,action:'regenerate'})).job;
   await process();
 }
 async function saveMapping(){
