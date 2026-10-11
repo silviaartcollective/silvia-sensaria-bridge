@@ -1372,10 +1372,6 @@ async function performListingConversion(body){
         return conversionReply(409, { ok: false,
           error: 'The listing-to-artwork link changed. Refresh listings before converting; no Etsy changes were made.' });
       }
-      if (prior.status === 'converted' && !reconvert) {
-        return conversionReply(409, { ok: false,
-          error: 'This listing was already converted. Use the Reconvert listing button to reapply settings safely.' });
-      }
       if (!hasAuthorizedConverterLink({
         listingId, sourceListingId: manifest.sourceEtsyListingId,
         artworkId, reconvert, mappings: mapBefore.listings
@@ -1383,6 +1379,48 @@ async function performListingConversion(body){
         return conversionReply(409, { ok:false,
           error: 'Artwork ownership could not be verified for this Etsy listing or its reposting history. No Etsy changes were made.' });
       }
+
+      // A Render restart can happen AFTER Etsy and R2 were verified but
+      // BEFORE the queue receipt is marked completed. Verify state instead of
+      // treating that already-finished job as a failed duplicate.
+      const alreadyApplied=prior.status==='converted'&&(
+        (reconvert&&manifest.lastArtworkReconversion?.revision===String(body.revision||''))||
+        (!reconvert&&Number(manifest.etsyConfiguration?.listingId)===listingId)
+      );
+      if(alreadyApplied){
+        const session=await getEtsySession({forceRefresh:true});
+        const inventory=await getListingInventory({
+          listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
+          accessToken:session.accessToken
+        });
+        const enabled=enabledInventoryProducts(inventory);
+        if(!enabled.length||enabled.some(p=>!String(p.sku||'').startsWith(artworkId+'-'))||
+           priceSyncPlanForInventory(inventory).changed)
+          throw Error('Previously completed conversion could not be verified against current Etsy variants and pricing.');
+        if(reconvert){
+          const historical=Array.isArray(prior.reconversionHistory)?prior.reconversionHistory:[];
+          if(!historical.some(entry=>entry.revision===body.revision)){
+            const when=manifest.lastArtworkReconversion?.activatedAt||new Date().toISOString();
+            mapBefore.listings[String(listingId)]={
+              ...prior,lastReconvertedAt:when,
+              reconversionCount:Math.max(0,Number(prior.reconversionCount)||0)+1,
+              reconversionHistory:[...historical,{at:when,artworkId,
+                enabledVariants:enabled.length,revision:body.revision,
+                masterKey:manifest.master.key}].slice(-10),
+              cropJobId:manifest.cropWorkerJobId
+            };
+            await saveListingConverterMap(mapBefore);
+          }
+        }
+        return conversionReply(200,{ok:true,verified:true,recovered:true,
+          listingId,artworkId,enabledVariants:enabled.length,
+          reconverted:reconvert,replacementMasterActivated:reconvert,
+          artworkRevision:reconvert?String(body.revision):null,
+          reconversionCount:mapBefore.listings[String(listingId)].reconversionCount||0});
+      }
+      if(prior.status==='converted'&&!reconvert)
+        return conversionReply(409,{ok:false,
+          error:'This listing is already converted. Use Reconvert listing with a fresh master artwork.'});
 
       let replacement=null;
       if(reconvert){
