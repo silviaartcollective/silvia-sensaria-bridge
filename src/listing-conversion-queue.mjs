@@ -65,7 +65,9 @@ export async function getConversionJob(id){
 }
 export async function getConversionQueueSummary(){
  const store=await readConversionQueue();
- const jobs=store.jobs.filter(j=>['queued','running','failed'].includes(j.status));
+ const cutoff=Date.now()-30*60*1000;
+ const jobs=store.jobs.filter(j=>['queued','running','failed'].includes(j.status)||
+  (['completed','canceled'].includes(j.status)&&Date.parse(j.completedAt||0)>cutoff));
  return jobs.map(j=>({...clone(j),position:j.status==='queued'?queuePosition(store,j.id):0}));
 }
 export async function claimNextConversion(){
