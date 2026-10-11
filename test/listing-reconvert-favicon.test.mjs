@@ -58,9 +58,10 @@ test('all app HTML pages include a shop-specific favicon, including login',()=>{
  const server=read('src/server.mjs');
  const favicon=read('src/favicon.svg').trim();
  assert.ok(server.includes("const source = decorateAdminHtml(html)"));
- assert.ok(server.includes('href="/favicon.svg?v=1"'));
- assert.ok(server.includes("url.pathname === '/favicon.svg'"));
- assert.ok(server.includes("'content-type': 'image/svg+xml; charset=utf-8'"));
+ assert.ok(server.includes('/favicon-32.png?v=4'));
+ assert.ok(server.includes('/favicon.ico?v=4'));
+ assert.ok(server.includes("'/favicon.ico':[assets.ico,'image/x-icon']"));
+ assert.ok(server.includes("'/favicon-32.png':[assets.png32,'image/png']"));
  assert.match(favicon,/^<svg\b/);
  assert.match(favicon,/<title>(Silvia|Japandi) Art Collective<\/title>/);
  if(favicon.includes('data:image/png;base64,')){
