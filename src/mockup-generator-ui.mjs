@@ -57,7 +57,7 @@ return `
  <iframe id="mg-editor" title="Background Photoshop mockup processing" tabindex="-1" aria-hidden="true" referrerpolicy="no-referrer" class="mg-engine"></iframe>
 </section>
 <style>
-#mockup-generator-panel{position:relative;overflow:visible}
+#mockup-generator-panel{position:relative;overflow:visible;container-type:inline-size}
 #mockup-generator-panel .mg-workspace{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:16px;align-items:start}
 #mockup-generator-panel .mg-main{display:grid;gap:12px;min-width:0}
 #mockup-generator-panel .mg-preview{background:#fffdfa;border:1px solid #e2ded6;border-radius:11px;padding:12px;display:grid;gap:10px;min-width:0}
@@ -72,7 +72,7 @@ return `
 #mockup-generator-panel .mg-preview-item span{font-size:11px;line-height:1.35;overflow-wrap:anywhere}
 #mockup-generator-panel .mg-preview-item small{display:block;color:#74776f;margin-top:3px}
 #mockup-generator-panel .mg-preview #mg-apply-selected{font-size:12px;padding:10px}
-@media(max-width:1000px){#mockup-generator-panel .mg-workspace{grid-template-columns:1fr}#mockup-generator-panel .mg-preview-list{max-height:300px}}
+@container (max-width:690px){.mg-workspace{grid-template-columns:1fr}.mg-preview-list{max-height:300px}}
 
 #mockup-generator-panel .mg-actions{display:flex;flex-wrap:wrap;gap:10px}
 #mockup-generator-panel details{padding:10px;border:1px solid #e2ded6;border-radius:9px;background:#fffdfa}
