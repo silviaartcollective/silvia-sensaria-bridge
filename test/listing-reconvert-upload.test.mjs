@@ -18,7 +18,7 @@ function fixture(){
  let next=0;
  const mock={
   crypto:{randomUUID:()=>`00000000-0000-4000-8000-${String(++next).padStart(12,'0')}`},
-  loadArtworkManifest:async()=>copy(manifest),
+  loadArtworkManifest:async artworkId=>artworkId===manifest.artworkId?copy(manifest):null,
   saveArtworkManifest:async value=>{Object.keys(manifest).forEach(key=>delete manifest[key]);Object.assign(manifest,copy(value))},
   getJsonObject:async key=>{
    if(!state.has(key))throw Object.assign(Error('Missing R2 object'),{name:'NoSuchKey'});
