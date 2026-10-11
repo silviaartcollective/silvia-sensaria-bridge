@@ -1,4 +1,5 @@
 import { WORKER_ID } from './config.mjs';
+const WORKER_VERSION = '4.0.1';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -75,7 +76,7 @@ export function apiFor(app) {
         method: 'POST',
         body: {
           workerId: WORKER_ID,
-          version: '4.0.0',
+          version: WORKER_VERSION,
           ...extra
         }
       });
@@ -83,7 +84,7 @@ export function apiFor(app) {
     claimJob() {
       return request(app, '/api/crop-jobs/claim', {
         method: 'POST',
-        body: { workerId: WORKER_ID, version: '4.0.0' }
+        body: { workerId: WORKER_ID, version: WORKER_VERSION }
       });
     },
     updateProgress(jobId, patch) {
@@ -91,7 +92,7 @@ export function apiFor(app) {
         method: 'POST',
         body: {
           workerId: WORKER_ID,
-          version: '4.0.0',
+          version: WORKER_VERSION,
           ...patch
         }
       });
@@ -101,14 +102,14 @@ export function apiFor(app) {
         method: 'POST',
         body: {
           workerId: WORKER_ID,
-          version: '4.0.0',
+          version: WORKER_VERSION,
           assets
         }
       });
     },
     // The PSD generator shares this same worker, per-shop token, and scheduler.
     claimMockup(owner) {
-      return request(app,'/api/mockups/worker/claim',{method:'POST',body:{owner}});
+      return request(app,'/api/mockups/worker/claim',{method:'POST',body:{owner,version:WORKER_VERSION}});
     },
     inspectMockupTemplate(templateId,objects) {
       return request(app,'/api/mockups/templates/'+encodeURIComponent(templateId)+'/inspect',{
@@ -145,7 +146,7 @@ export function apiFor(app) {
         method: 'POST',
         body: {
           workerId: WORKER_ID,
-          version: '4.0.0',
+          version: WORKER_VERSION,
           error: String(error?.message || error || 'Crop worker failed')
         }
       });
