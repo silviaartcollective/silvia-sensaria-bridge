@@ -1,0 +1,30 @@
+name: Shared Crop and Mockup Worker Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install app dependencies
+        run: npm install --no-audit --no-fund
+      - name: Test app and worker integration
+        run: npm test
+      - name: Install shared PC worker dependencies
+        run: npm --prefix worker install --no-audit --no-fund
+      - name: Validate worker entrypoints
+        run: |
+          node --check worker/index.mjs
+          node --check worker/api.mjs
+          node --check worker/mockup-processor.mjs
+          node --check worker/photopea-worker-page.js
+          node --check src/mockup-generator-client.js
