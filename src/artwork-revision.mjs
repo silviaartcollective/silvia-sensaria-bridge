@@ -25,126 +25,20 @@ export function isStagedRevisionJob(job){
  return /^artworks\/SAC\d+\/revisions\/[0-9a-f-]{36}\/master\.(?:jpg|jpeg|png|webp|tif|tiff)$/.test(key) &&
  key.startsWith('artworks/'+validId(job.artworkId)+'/');
 }
-// Temporary reconversion crops use an isolated workspace, not a permanent revisions folder.
+// Reconversion uses a disposable .reconvert folder, never a revisions folder.
 export function isStagedConverterCropJob(job){
- const key=String(job?.masterKey||'');
- const id=validId(job?.artworkId);
- return key.startsWith('artworks/'+id+'/.reconvert/') &&
-   new RegExp('^artworks/'+id+'/\\.reconvert/[0-9a-f-]{36}/master\\.(?:jpg|jpeg|png|webp|tif|tiff)
- const id=validId(job.artworkId);
- if(!FULFILLMENT_RATIOS.includes(ratio))throw Error('Invalid crop ratio.');
- if(isStagedConverterCropJob(job)){
-  const token=job.masterKey.split('/')[3];
-  return 'artworks/'+id+'/.reconvert/'+token+'/fulfillment/'+ratio+'.jpg';
- }
- if(isStagedRevisionJob(job)){
-  const revision=job.masterKey.split('/')[3];
-  return 'artworks/'+id+'/revisions/'+revision+'/fulfillment/'+ratio+'.jpg';
- }
- return fulfillmentRatioObjectKey(id,ratio);
-}
-async function optionalRecord(shop,id){
- try{return await getJsonObject(recordKey(shop,id))}
- catch(e){if(e?.$metadata?.httpStatusCode===404||['NoSuchKey','NotFound'].includes(e?.name))return null;throw e;}
-}
-const types={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff'};
-export async function reserveArtworkRevision({shopId,listingId,inventory,file}){
- const id=listId(listingId),artworkId=artworkIdFromInventory(inventory);
- const manifest=await loadArtworkManifest(artworkId);
- if(manifest?.status!=='ready'||!manifest.master?.key)throw Error('Artwork master is not ready in R2.');
- const previous=await optionalRecord(shopId,id);
- if(previous){
-  if(previous.status==='awaiting_upload' && !previous.jobId &&
-     previous.filename===String(file?.name).slice(0,180) && previous.size===Number(file?.size)){
-    return {artworkId:previous.artworkId,revision:previous.revision,
-      masterKey:previous.masterKey,orientation:previous.orientation,resumed:true,
-      uploadUrl:await signedArtworkUploadUrl(previous.masterKey,previous.contentType,45*60)};
-  }
-  throw Error('An artwork revision already exists. Continue or review the existing crop job.');
- }
- const size=Number(file?.size||0), ext=String(file?.name||'').toLowerCase().match(/\.(jpg|jpeg|png|webp|tif|tiff)$/)?.[1];
- if(!ext)throw Error('Artwork source must be JPG, PNG, WebP, or TIFF.');
- if(!Number.isSafeInteger(size)||size<1024||size>200*1024*1024)throw Error('Master must be 1KB–200MB.');
- const rev=crypto.randomUUID(),masterKey=revisionMaster(artworkId,rev,ext);
- const record={shopId:String(shopId),listingId:id,artworkId,revision:rev,masterKey,
-  filename:String(file.name).slice(0,180),contentType:types[ext],size,
-  previousMasterKey:manifest.master.key,orientation:manifest.orientation,
-  status:'awaiting_upload',jobId:null,createdAt:new Date().toISOString()};
- await putJsonObject(recordKey(shopId,id),record);
- return {artworkId,revision:rev,masterKey,orientation:record.orientation,
-  uploadUrl:await signedArtworkUploadUrl(masterKey,record.contentType,45*60)};
-}
-export async function startArtworkRevisionCrop({shopId,listingId}){
- const record=await optionalRecord(shopId,listingId);
- if(!record)throw Error('Upload a replacement source first.');
- if(record.jobId){
-  const job=await getCropJob(record.jobId);
-  if(!job)throw Error('Saved crop job expired; review before retrying.');
-  return {record,job,reused:true};
- }
- if(!await artworkObjectExists(record.masterKey))throw Error('New source upload has not finished.');
- const manifest=await loadArtworkManifest(record.artworkId);
- if(manifest.master?.key!==record.previousMasterKey)throw Error('Artwork changed since upload reservation.');
- const created=await createCropJob({artworkId:record.artworkId,masterKey:record.masterKey,orientation:record.orientation});
- record.jobId=created.job.id;record.status='cropping';record.cropQueuedAt=new Date().toISOString();
- await putJsonObject(recordKey(shopId,listingId),record);
- return {record,job:created.job,reused:created.reused};
-}
-export async function checkedRevisionAssets(record,job){
- if(!record?.jobId||!job||job.id!==record.jobId||job.status!=='completed')throw Error('New artwork crops have not completed.');
- if(job.masterKey!==record.masterKey||job.artworkId!==record.artworkId)throw Error('Crop job was generated from a different master.');
- const assets={};
- for(const ratio of FULFILLMENT_RATIOS){
-  const asset=job.resultAssets?.[ratio],expected=cropOutputKeyForJob(job,ratio);
-  if(!asset?.productionReady||asset.key!==expected||asset.sourceMasterKey!==record.masterKey||
-     !Number.isFinite(Number(asset.width))||!Number.isFinite(Number(asset.height)))
-    throw Error('Replacement '+ratio+' crop is not verified.');
-  if(!await artworkObjectExists(expected))throw Error('Missing '+ratio+' crop in R2.');
-  assets[ratio]=asset;
- }
- if(!await artworkObjectExists(record.masterKey))throw Error('Replacement master missing.');
- return assets;
-}
-export async function getArtworkRevisionStatus(shopId,listingId){
- const record=await optionalRecord(shopId,listingId);
- if(!record)return {exists:false};
- const job=record.jobId?await getCropJob(record.jobId):null;
- let ready=false,error='';
- if(job?.status==='completed')try{await checkedRevisionAssets(record,job);ready=true}catch(e){error=String(e.message||e)}
- return {exists:true,artworkId:record.artworkId,filename:record.filename,jobId:record.jobId,
-  status:record.status==='activated'?'activated':job?.status||record.status,
-  ready,progress:job?.progress||0,currentRatio:job?.currentRatio||'',message:error||job?.error||job?.message||'',
-  upscaledRatios:Object.entries(job?.resultAssets||{}).filter(([,v])=>v.upscaled).map(([k])=>k)};
-}
-export async function assertArtworkRevisionReady(shopId,listingId,artworkId){
- const record=await optionalRecord(shopId,listingId);
- if(!record||record.artworkId!==validId(artworkId))throw Error('This listing has no matching replacement master.');
- const job=await getCropJob(record.jobId),assets=await checkedRevisionAssets(record,job);
- return {record,assets};
-}
-export async function activateArtworkRevision(shopId,listingId,artworkId){
- const {record,assets}=await assertArtworkRevisionReady(shopId,listingId,artworkId);
- const manifest=await loadArtworkManifest(record.artworkId);
- if(manifest.master?.key===record.masterKey)return {artworkId:record.artworkId,alreadyActive:true};
- if(manifest.master?.key!==record.previousMasterKey)throw Error('Original master changed while reposter was in progress.');
- const archiveKey='artworks/'+record.artworkId+'/revisions/'+record.revision+'/previous-manifest.json';
- await putJsonObject(archiveKey,manifest);
- await saveArtworkManifest({...manifest,master:{key:record.masterKey,originalFilename:record.filename,
-  contentType:record.contentType,size:record.size},
-  fulfillmentRatios:assets,fulfillmentRatiosReady:true,fulfillmentRatioInsufficient:{},
-  fulfillmentRatiosUpdatedAt:new Date().toISOString(),production:{},cropWorkerJobId:record.jobId,
-  activeArtworkRevision:record.revision,previousManifestSnapshotKey:archiveKey,
-  lastArtworkReplacement:{sourceListingId:record.listingId,revision:record.revision,
-   previousMasterKey:record.previousMasterKey,activatedAt:new Date().toISOString()}});
- record.status='activated';record.activatedAt=new Date().toISOString();
- await putJsonObject(recordKey(shopId,listingId),record);
- return {artworkId:record.artworkId,revision:record.revision,alreadyActive:false};
-}
-,'i').test(key);
+ const key=String(job?.masterKey||''),id=validId(job?.artworkId);
+ const parts=key.split('/');
+ return parts.length===5&&parts[0]==='artworks'&&parts[1]===id&&
+  parts[2]==='.reconvert'&&/^[0-9a-f-]{36}$/i.test(parts[3])&&
+  parts[4].startsWith('master.')&&
+  ['jpg','jpeg','png','webp','tif','tiff'].includes(parts[4].slice(7).toLowerCase());
 }
 export function cropOutputKeyForJob(job,ratio){
  const id=validId(job.artworkId);
  if(!FULFILLMENT_RATIOS.includes(ratio))throw Error('Invalid crop ratio.');
+ if(isStagedConverterCropJob(job))
+  return 'artworks/'+id+'/.reconvert/'+job.masterKey.split('/')[3]+'/fulfillment/'+ratio+'.jpg';
  if(isStagedRevisionJob(job)){
   const revision=job.masterKey.split('/')[3];
   return 'artworks/'+id+'/revisions/'+revision+'/fulfillment/'+ratio+'.jpg';
