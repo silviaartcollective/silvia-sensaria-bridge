@@ -75,7 +75,7 @@ export function apiFor(app) {
         method: 'POST',
         body: {
           workerId: WORKER_ID,
-          version: '3.0.0',
+          version: '4.0.0',
           ...extra
         }
       });
@@ -83,7 +83,7 @@ export function apiFor(app) {
     claimJob() {
       return request(app, '/api/crop-jobs/claim', {
         method: 'POST',
-        body: { workerId: WORKER_ID, version: '3.0.0' }
+        body: { workerId: WORKER_ID, version: '4.0.0' }
       });
     },
     updateProgress(jobId, patch) {
@@ -91,7 +91,7 @@ export function apiFor(app) {
         method: 'POST',
         body: {
           workerId: WORKER_ID,
-          version: '3.0.0',
+          version: '4.0.0',
           ...patch
         }
       });
@@ -101,7 +101,7 @@ export function apiFor(app) {
         method: 'POST',
         body: {
           workerId: WORKER_ID,
-          version: '3.0.0',
+          version: '4.0.0',
           assets
         }
       });
@@ -145,7 +145,7 @@ export function apiFor(app) {
         method: 'POST',
         body: {
           workerId: WORKER_ID,
-          version: '3.0.0',
+          version: '4.0.0',
           error: String(error?.message || error || 'Crop worker failed')
         }
       });
