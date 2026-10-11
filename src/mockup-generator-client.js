@@ -238,7 +238,14 @@ async function showJob(id,{quiet=false}={}){
  renderResults();renderPreviews();
  const active=job.templates.find(t=>t.status==='processing');
  const failed=job.templates.filter(t=>['failed','needs_mapping'].includes(t.status));
- if(active)message(active.name+' — '+(active.progress||'Processing on PC')+' ('+count+'/'+job.templates.length+')');
+ if(active){
+  const age=Date.now()-Date.parse(active.progressAt||active.startedAt||job.createdAt);
+  const stalled=Number.isFinite(age)&&age>70000&&/inspect/i.test(active.progress||'');
+  message(active.name+' — '+(active.progress||'Processing on PC')+
+    (Number.isFinite(age)&&age>0?' · '+Math.floor(age/1000)+'s since update':'')+
+    ' ('+count+'/'+job.templates.length+')'+
+    (stalled?' · Inspection is taking too long. Check the PC worker log if no error appears.':''),stalled);
+ }
  else if(job.status==='completed')message('All '+count+' mockups generated on the PC. Select your Etsy images.');
  else if(job.paused)message('Paused after current PSD · '+count+'/'+job.templates.length+' ready');
  else if(failed.length)message(failed.length+' mockups need attention · '+count+'/'+job.templates.length+' ready',true);
