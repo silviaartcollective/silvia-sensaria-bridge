@@ -4,7 +4,8 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
-  DeleteObjectCommand
+  DeleteObjectCommand,
+  CopyObjectCommand
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createReadStream, createWriteStream, statSync } from 'node:fs';
@@ -211,6 +212,37 @@ export async function nextArtworkId() {
   return `SAC${String(max + 1).padStart(4, '0')}`;
 }
 
+// R2 server-side copy: keeps large master and crop images off the Render app's memory.
+export async function copyArtworkObject(sourceKey,targetKey) {
+  const config=r2Config(),client=r2Client();
+  const source=String(sourceKey||''),target=String(targetKey||'');
+  if(!source||!target||source===target)throw Error('Distinct source and destination keys required.');
+  const original=await artworkObjectInfo(source);
+  const escapedSource=source.split('/').map(encodeURIComponent).join('/');
+  await client.send(new CopyObjectCommand({
+    Bucket:config.bucket,Key:target,
+    CopySource:encodeURIComponent(config.bucket)+'/'+escapedSource,
+    MetadataDirective:'COPY'
+  }));
+  const copied=await artworkObjectInfo(target);
+  if(original.size!==copied.size||copied.size<1)
+    throw Error('R2 copy size verification failed for '+target);
+  return {key:target,size:copied.size,contentType:copied.contentType};
+}
+export async function listArtworkObjectKeys(prefix) {
+  const config=r2Config(),client=r2Client(),keys=[];
+  const normalized=String(prefix||'');
+  if(!normalized||!normalized.endsWith('/'))throw Error('R2 listing requires an exact folder prefix.');
+  let continuationToken;
+  do{
+    const batch=await client.send(new ListObjectsV2Command({
+      Bucket:config.bucket,Prefix:normalized,ContinuationToken:continuationToken
+    }));
+    for(const item of batch.Contents||[])if(item.Key?.startsWith(normalized))keys.push(item.Key);
+    continuationToken=batch.IsTruncated?batch.NextContinuationToken:undefined;
+  }while(continuationToken);
+  return keys;
+}
 export async function deleteArtworkObject(key) {
   const config = r2Config();
   const client = r2Client();
