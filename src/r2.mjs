@@ -133,6 +133,12 @@ export function isMissingR2Object(error) {
     /the specified key does not exist|(?:key|object) does not exist|not.?found|no such key/i.test(message);
 }
 
+export async function artworkObjectInfo(key) {
+  const client=r2Client(),config=r2Config();
+  const response=await client.send(new HeadObjectCommand({Bucket:config.bucket,Key:String(key)}));
+  return {size:Number(response.ContentLength||0),contentType:String(response.ContentType||'')};
+}
+
 export async function artworkObjectExists(key) {
   const config = r2Config();
   const client = r2Client();
