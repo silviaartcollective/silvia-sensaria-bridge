@@ -222,6 +222,8 @@ function serialWrites(){
  };
 }
 async function processPSDJob(app,claim){
+ const startedAt=Date.now();
+ let completionRecorded=false;
  const api=clientFor(app),id=claim.job.id,itemId=claim.item.id;
  let psdPath='',artworkPath='',outputPath='';
  const queue=serialWrites();
@@ -264,10 +266,16 @@ async function processPSDJob(app,claim){
   await stage('Uploading and verifying '+claim.item.outputName);
   await uploadFile(claim.output.uploadUrl,outputPath);
   await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping));
+  completionRecorded=true;
   console.log('['+app.name+'] PSD completed '+claim.item.outputName+
    ' ('+render.dimensions.width+'x'+render.dimensions.height+', '+(render.engine||'unknown')+
    ', '+((Date.now()-startedAt)/1000).toFixed(1)+'s total)');
  }catch(error){
+  if(completionRecorded){
+   // A post-completion reporting error must not downgrade a verified JPG.
+   console.error('['+app.name+'] PSD mockup completed, but post-completion reporting failed '+claim.item.name+': '+error.message);
+   return;
+  }
   console.error('['+app.name+'] PSD mockup failed '+claim.item.name+': '+error.message);
   try{await queue(()=>api.mockupFail(id,mockupOwner,itemId,error,false))}
   catch(reportError){console.error('['+app.name+'] Could not mark PSD failed:',reportError.message)}

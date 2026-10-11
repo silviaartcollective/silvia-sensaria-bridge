@@ -227,12 +227,21 @@ export async function completeMockupItem(id,owner,templateId,details){
  j.history.push({at:iso(),event:'output_verified',name:item.name});
  await putMockupJob(j);return j;
 }
+// Failure notifications can arrive after a successful upload if the PC or HTTP reply stalls.
+export function markMockupItemFailed(item,message,needsMapping=false){
+ if(item.status==='completed')return false;
+ if(item.status!=='processing')throw Error('This PSD is not claimed for processing.');
+ item.status=needsMapping?'needs_mapping':'failed';
+ item.error=limitText(message,500);
+ item.progress=item.error;
+ return true;
+}
 export async function failMockupItem(id,owner,templateId,message,needsMapping=false){
  const j=await getMockupJob(id);
  if(!isLeaseOwner(j,owner))throw Error('Worker lease expired or belongs to another browser.');
  const item=j.templates.find(x=>x.id===templateId);
  if(!item)throw Error('Selected PSD is not part of this job.');
- item.status=needsMapping?'needs_mapping':'failed';item.error=limitText(message,500);item.progress=item.error;
+ if(!markMockupItemFailed(item,message,needsMapping))return j; // Keep a verified JPG completed.
  j.history.push({at:iso(),event:item.status,name:item.name,reason:item.error});
  await putMockupJob(j);return j;
 }
