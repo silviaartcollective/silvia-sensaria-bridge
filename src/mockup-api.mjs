@@ -5,7 +5,8 @@ import {
  listMockupTemplates,getMockupTemplate,reserveMockupTemplate,confirmMockupTemplateUpload,updateMockupTemplate,
  deleteMockupTemplate,listMockupJobs,getMockupJob,createMockupJob,markMockupArtworkUploaded,
  controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
- classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput
+ classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput,
+ hasActiveMockupLease,MOCKUP_LEASE_MS
 } from './mockup-generator.mjs';
 import {
  signedArtworkUploadUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
@@ -117,8 +118,10 @@ export async function handleMockupAPI(req,res,url,{authenticated,readJson,sendJs
    }
    if(req.method==='POST'&&parts[2]==='heartbeat'){
     const body=await readJson(req),owner=ownerCheck(body),j=await getMockupJob(id);
-    if(j.lease?.owner!==owner)throw Error('Another browser holds the current batch lease.');
-    j.lease.expiresAt=new Date(Date.now()+30*60*1000).toISOString();
+    if(!hasActiveMockupLease(j)||j.lease.owner!==owner)throw Error('This browser no longer owns the batch.');
+    const now=Date.now();
+    j.lease.renewedAt=new Date(now).toISOString();
+    j.lease.expiresAt=new Date(now+MOCKUP_LEASE_MS).toISOString();
     await putMockupJob(j);return send(200,{lease:j.lease,status:j.status,paused:j.paused}),true;
    }
    if(req.method==='POST'&&parts[2]==='complete'){
