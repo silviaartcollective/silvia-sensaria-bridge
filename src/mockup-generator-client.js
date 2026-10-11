@@ -11,6 +11,7 @@ const create=(tag,label='',attrs={})=>{
 const owner=crypto.randomUUID();
 let templates=[],jobs=[],job=null,preparing=false,requested=false,ready=false;
 let initialLoad=Promise.resolve(),selectionVersion=0,attachTimer=null,attaching=false;
+let previewRenderKey='';
 const selectionByJob=new Map();
 const selectionFor=id=>{
  if(!selectionByJob.has(id))selectionByJob.set(id,{defaultSelected:true,exceptions:new Set()});
@@ -64,8 +65,13 @@ $('creator-form').addEventListener('submit',event=>{
  }
 },true);
 function renderPreviews(){
- const list=$('mg-preview-list');list.replaceChildren();
  const completed=job?job.templates.filter(t=>t.status==='completed'):[];
+ const signature=(job?.id||'none')+'|'+completed.map(t=>t.id+':'+(t.finishedAt||'')).join(';')+
+  '|'+completed.map(t=>isSelected(job.id,t.id)?'1':'0').join('')+'|'+attaching;
+ // Do not continuously tear down and re-download thumbnails on each 6-second poll.
+ if(signature===previewRenderKey)return;
+ previewRenderKey=signature;
+ const list=$('mg-preview-list');list.replaceChildren();
  const selected=job?completed.filter(t=>isSelected(job.id,t.id)).length:0;
  $('mg-preview-count').textContent=completed.length+' ready';
  $('mg-selection-status').textContent=job
