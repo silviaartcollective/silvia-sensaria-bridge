@@ -143,28 +143,49 @@ export async function markMockupArtworkUploaded(id){
  r.artworkUploaded=true;r.status='queued';r.history.push({at:iso(),event:'artwork_uploaded'});
  return putMockupJob(r);
 }
+export const MOCKUP_LEASE_MS=120_000;
+export function hasActiveMockupLease(job,now=Date.now()){
+ const lease=job?.lease;
+ if(!lease?.owner)return false;
+ const expires=Date.parse(lease.expiresAt);
+ // Legacy 30-minute leases are judged by last activity too, so abandoned tabs recover promptly.
+ const renewed=Date.parse(lease.renewedAt||job.updatedAt||'');
+ return Number.isFinite(expires)&&Number.isFinite(renewed)&&expires>now&&renewed+MOCKUP_LEASE_MS>now;
+}
+const newMockupLease=owner=>{
+ const now=Date.now();
+ return {owner,renewedAt:new Date(now).toISOString(),expiresAt:new Date(now+MOCKUP_LEASE_MS).toISOString()};
+};
 export function isLeaseOwner(job,owner){
- return job.lease?.owner===owner && Date.parse(job.lease?.expiresAt)>Date.now();
+ return hasActiveMockupLease(job)&&job.lease.owner===owner;
 }
 export async function controlMockupJob(id,action,owner){
- const j=await getMockupJob(id);
- if(action==='pause'){j.paused=true;j.status='paused';}
- else if(action==='resume'){
+ const j=await getMockupJob(id),active=hasActiveMockupLease(j);
+ if(active&&j.lease.owner!==owner)
+  throw Error('This batch is still active in another browser. Close or stop that tab first; an abandoned batch becomes resumable after about 2 minutes.');
+ if(action==='pause'){
+  j.paused=true;j.status='paused';
+  if(!active)j.lease=null; // An active worker keeps its lease until it finishes the current PSD.
+ }else if(action==='release'){
+  // Called after the processor stops or when its browser closes.
+  if(j.lease?.owner===owner||!active){
+   j.lease=null;
+   if(j.paused)j.status='paused';
+   else if(j.templates.every(t=>t.status==='completed'))j.status='completed';
+   else j.status='attention';
+  }
+ }else if(action==='resume'){
   if(!j.artworkUploaded)throw Error('Upload artwork first.');
-  if(j.lease && Date.parse(j.lease.expiresAt)>Date.now() && j.lease.owner!==owner)
-   throw Error('This batch is currently running in another browser.');
-  j.paused=false;j.status='queued';
-  j.lease={owner,expiresAt:new Date(Date.now()+30*60*1000).toISOString()};
+  j.paused=false;j.status='queued';j.lease=newMockupLease(owner);
  }else if(action==='retry'||action==='regenerate'){
-  if(j.lease&&Date.parse(j.lease.expiresAt)>Date.now()&&j.lease.owner!==owner)
-   throw Error('Cannot rerun while another browser owns the job.');
+  if(!j.artworkUploaded)throw Error('Upload artwork first.');
   for(const t of j.templates){
    if(action==='regenerate'||['failed','needs_mapping','processing','deleted'].includes(t.status)){
     t.status='queued';t.error=null;
-    // The previous verified JPG remains stored until its replacement is verified.
+    // Verified JPGs stay in R2 until replacements pass validation.
    }
   }
-  j.paused=false;j.status='queued';j.lease={owner,expiresAt:new Date(Date.now()+30*60*1000).toISOString()};
+  j.paused=false;j.status='queued';j.lease=newMockupLease(owner);
  }else throw Error('Unsupported batch action.');
  j.history.push({at:iso(),event:action});return putMockupJob(j);
 }
@@ -172,14 +193,17 @@ export async function claimMockupWork(id,owner){
  const j=await getMockupJob(id);
  if(!j.artworkUploaded)throw Error('Artwork is not uploaded.');
  if(j.paused)return {job:j,item:null,paused:true};
- if(j.lease&&Date.parse(j.lease.expiresAt)>Date.now()&&j.lease.owner!==owner)
-  throw Error('Another browser is running this job; retry after its lease expires.');
- j.lease={owner,expiresAt:new Date(Date.now()+30*60*1000).toISOString()};
- let item=j.templates.find(t=>t.status==='processing');
- if(item && (item.startedAt && Date.now()-Date.parse(item.startedAt)>30*60*1000)){
-  item.status='queued';item=null;
+ const active=hasActiveMockupLease(j);
+ if(active&&j.lease.owner!==owner)
+  throw Error('Another browser is actively processing this batch. Close or stop that tab first.');
+ if(!active){
+  // The previous worker is gone. Requeue anything it could not finish.
+  for(const t of j.templates)if(t.status==='processing'){
+   t.status='queued';t.error=null;t.startedAt=null;
+  }
  }
- if(!item)item=j.templates.find(t=>t.status==='queued');
+ j.lease=newMockupLease(owner);
+ const item=j.templates.find(t=>t.status==='queued');
  if(!item){
   const incomplete=j.templates.filter(t=>t.status!=='completed');
   j.status=incomplete.length?'attention':'completed';j.lease=null;
