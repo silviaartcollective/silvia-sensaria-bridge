@@ -24,6 +24,7 @@ import { handleMockupAPI } from './mockup-api.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
+import { hasAuthorizedConverterLink } from './listing-converter-link.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
 import { pricingCatalogForZone, pricingCatalogForMarket, publicShippingPricingConfig } from './pricing.mjs';
 import { scanSupplierComparison } from './supplier-comparison.mjs';
@@ -2787,13 +2788,6 @@ const server = http.createServer(async (req, res) => {
       if (!manifest?.master?.key || manifest.status !== 'ready') {
         return sendJson(res, 400, { ok: false, error: `${artworkId} has not finished uploading to Cloudflare R2.` });
       }
-      if (Number(manifest.sourceEtsyListingId) !== listingId) {
-        return sendJson(res, 409, {
-          ok: false,
-          error: `${artworkId} is linked to a different Etsy listing. Conversion stopped before changing Etsy.`
-        });
-      }
-
       // Explicit reconversion reuses the exact artwork ID already linked to this listing.
       // A second conversion must never reserve another ID or cross-link different artwork.
       const reconvert = body.reconvert === true;
@@ -2808,6 +2802,13 @@ const server = http.createServer(async (req, res) => {
       if (prior.status === 'converted' && !reconvert) {
         return sendJson(res, 409, { ok: false,
           error: 'This listing was already converted. Use the Reconvert listing button to reapply settings safely.' });
+      }
+      if (!hasAuthorizedConverterLink({
+        listingId, sourceListingId: manifest.sourceEtsyListingId,
+        artworkId, reconvert, mappings: mapBefore.listings
+      })) {
+        return sendJson(res, 409, { ok:false,
+          error: 'Artwork ownership could not be verified for this Etsy listing or its reposting history. No Etsy changes were made.' });
       }
 
       const cropJobId = String(manifest.cropWorkerJobId || '');
