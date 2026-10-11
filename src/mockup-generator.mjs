@@ -176,6 +176,10 @@ export async function controlMockupJob(id,action,owner){
   }
  }else if(action==='resume'){
   if(!j.artworkUploaded)throw Error('Upload artwork first.');
+  // An abandoned worker may leave one item marked processing; preserve completed JPGs.
+  if(!active)for(const t of j.templates)if(t.status==='processing'){
+   t.status='queued';t.error=null;t.startedAt=null;
+  }
   j.paused=false;j.status='queued';j.lease=newMockupLease(owner);
  }else if(action==='retry'||action==='regenerate'){
   if(!j.artworkUploaded)throw Error('Upload artwork first.');
