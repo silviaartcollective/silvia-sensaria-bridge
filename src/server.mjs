@@ -1306,6 +1306,14 @@ async function reconcileNewEtsyPaidOrders(){
 const server = http.createServer(async (req, res) => {
   // Photopea mockup batch endpoints are private and separate from Etsy fulfillment.
   const mockupUrl=new URL(req.url||'/', 'https://'+String(req.headers.host||'localhost'));
+  if(mockupUrl.pathname==='/assets/crop-worker-auto.js'&&req.method==='GET'){
+    if(!requireAdminApi(req,res))return;
+    const js=readFileSync(new URL('./crop-worker-auto.js',import.meta.url));
+    res.writeHead(200,{'content-type':'text/javascript; charset=utf-8',
+      'content-length':js.length,'cache-control':'private, no-store',
+      'x-content-type-options':'nosniff'});
+    res.end(js);return;
+  }
   if(mockupUrl.pathname==='/assets/mockup-generator-client.js'){
     if(!requireAdminApi(req,res))return;
     const js=readFileSync(new URL('./mockup-generator-client.js',import.meta.url));
