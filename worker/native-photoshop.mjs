@@ -25,7 +25,7 @@ export function photoshopConfig({psdPath,artworkPath,outputPath,templateName='',
   stage:stagePath,report:reportPath
  };
 }
-export async function renderMockupWithPhotoshop({psdPath,artworkPath,outputPath,templateName='',mapping=null,smartObjects=[],fitMode='contain',onStage=async()=>{},timeoutMs=6*60*1000}){
+export async function renderMockupWithPhotoshop({psdPath,artworkPath,outputPath,templateName='',mapping=null,smartObjects=[],fitMode='contain',onStage=async()=>{},timeoutMs=3*60*1000}){
  if(process.platform!=='win32')throw new NativePhotoshopUnavailable('Native Photoshop requires Windows.');
  if(process.env.POD_PSD_RENDERER==='photopea')
   throw new NativePhotoshopUnavailable('Photopea renderer explicitly selected.');
