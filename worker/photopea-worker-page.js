@@ -4,7 +4,7 @@
  'use strict';
  const frame=document.getElementById('photopea');
  const photopeaOrigin='https://www.photopea.com';
- let pending=null,readyResolve=null,readyReject=null,readyPromise=null;
+ let pending=null,readyResolve=null,readyReject=null,readyPromise=null,readyTimer=null;
  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
  const errorText=err=>String(err?.message||err);
  function settle(p,error,result){
@@ -18,7 +18,8 @@
   if(event.origin!==photopeaOrigin||event.source!==frame.contentWindow)return;
   if(!pending){
    if(event.data==='done'&&readyResolve){
-    const yes=readyResolve;readyResolve=null;readyReject=null;yes();
+    const yes=readyResolve;readyResolve=null;readyReject=null;
+    if(readyTimer)clearTimeout(readyTimer);readyTimer=null;yes();
    }
    return;
   }
@@ -58,7 +59,7 @@
   if(!readyPromise){
    readyPromise=new Promise((resolve,reject)=>{
     readyResolve=resolve;readyReject=reject;
-    setTimeout(()=>{if(readyReject){readyResolve=null;readyReject=null;reject(Error('Photopea did not connect in 90 seconds. Check PC browser access to photopea.com.'));}},90000);
+    readyTimer=setTimeout(()=>{if(readyReject){readyResolve=null;readyReject=null;reject(Error('Photopea did not connect in 90 seconds. Check PC browser access to photopea.com.'));}},90000);
    });
    frame.src=photopeaOrigin+'/#'+encodeURIComponent(JSON.stringify({environment:{intro:false,vmode:2}}));
   }
