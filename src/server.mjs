@@ -1323,7 +1323,9 @@ const server = http.createServer(async (req, res) => {
     res.end(js);return;
   }
   if(await handleMockupAPI(req,res,mockupUrl,{
-    authenticated:requireAdminApi,readJson:readJsonBody,sendJson
+    authenticated:(request,response)=>isCropWorkerAuthorized(request)||requireAdminApi(request,response),
+    workerAuthorized:isCropWorkerAuthorized,
+    readJson:readJsonBody,sendJson
   }))return;
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
