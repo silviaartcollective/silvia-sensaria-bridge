@@ -1,0 +1,58 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import {renderListingConverterPage} from '../src/listing-converter-page.mjs';
+const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
+
+test('reconvert is available for linked listings without a new master upload',()=>{
+ const html=renderListingConverterPage();
+ const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+ assert.ok(script,'converter must contain an executable client script');
+ assert.doesNotThrow(()=>new vm.Script(script));
+ assert.ok(html.includes("item.converted?'Reconvert listing':'Upload artwork & convert'"));
+ assert.ok(html.includes("item.converted?reconvertListing(item,card):convertListing(item,card)"));
+ assert.ok(html.includes('async function reconvertListing(item,card)'));
+ assert.ok(html.includes('No new upload or artwork ID'));
+ assert.ok(html.includes('reconvert:true'));
+ assert.ok(html.includes('result.reconverted!==true||result.verified!==true'));
+ assert.ok(html.includes('const file=input.files?.[0];'),'initial conversion remains available');
+ assert.ok(!html.includes("(item.converted?'disabled':'')"),'converted listing is not disabled');
+});
+
+test('reconversion reuses mapped artwork and prevents cross-listing mutations',()=>{
+ const server=read('src/server.mjs');
+ assert.ok(server.includes("const reconvert = body.reconvert === true;"));
+ assert.ok(server.includes('prior.artworkId !== artworkId'));
+ assert.ok(server.includes("prior.status !== 'converted'"));
+ assert.ok(server.includes('Use the Reconvert listing button'));
+ assert.ok(server.includes('reconversionHistory'));
+ assert.ok(server.includes('reconversionCount'));
+ assert.ok(server.includes('saved?.convertedAt || finishedAt'));
+ assert.ok(server.includes('Number(manifest.sourceEtsyListingId) !== listingId'));
+ assert.ok(server.includes("cropJob.status !== 'completed'"));
+ assert.ok(server.includes("badSkus.length"),'postconversion SKUs must be verified');
+ assert.ok(server.includes("priceVerification.changed"),'postconversion prices must be verified');
+ assert.ok(server.includes("existingMediaPreserved: true"),'media stays intact');
+ assert.ok(server.includes("existingSeoPreserved: true"),'SEO stays intact');
+});
+
+test('all app HTML pages include a shop-specific favicon, including login',()=>{
+ const server=read('src/server.mjs');
+ const favicon=read('src/favicon.svg').trim();
+ assert.ok(server.includes("const source = decorateAdminHtml(html)"));
+ assert.ok(server.includes('href="/favicon.svg?v=1"'));
+ assert.ok(server.includes("url.pathname === '/favicon.svg'"));
+ assert.ok(server.includes("'content-type': 'image/svg+xml; charset=utf-8'"));
+ assert.match(favicon,/^<svg\b/);
+ assert.match(favicon,/<title>(Silvia|Japandi) Art Collective<\/title>/);
+ if(favicon.includes('data:image/png;base64,')){
+  const value=favicon.match(/data:image\/png;base64,([^"]+)/)?.[1];
+  assert.ok(value);
+  const image=Buffer.from(value,'base64');
+  assert.equal(image.subarray(0,8).toString('hex'),'89504e470d0a1a0a');
+  assert.ok(image.length<15000);
+ }else{
+  assert.ok(favicon.includes('>JA</text>'),'Japandi favicon should use its own shop identity');
+ }
+});
