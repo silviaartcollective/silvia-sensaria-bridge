@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {renderListingConverterPage} from '../src/listing-converter-page.mjs';
+import {hasAuthorizedConverterLink} from '../src/listing-converter-link.mjs';
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 
 test('reconvert is available for linked listings without a new master upload',()=>{
@@ -29,7 +30,8 @@ test('reconversion reuses mapped artwork and prevents cross-listing mutations',(
  assert.ok(server.includes('reconversionHistory'));
  assert.ok(server.includes('reconversionCount'));
  assert.ok(server.includes('saved?.convertedAt || finishedAt'));
- assert.ok(server.includes('Number(manifest.sourceEtsyListingId) !== listingId'));
+ assert.ok(server.includes('hasAuthorizedConverterLink({'));
+ assert.ok(server.includes('sourceListingId: manifest.sourceEtsyListingId'));
  assert.ok(server.includes("cropJob.status !== 'completed'"));
  assert.ok(server.includes("badSkus.length"),'postconversion SKUs must be verified');
  assert.ok(server.includes("priceVerification.changed"),'postconversion prices must be verified');
@@ -55,4 +57,21 @@ test('all app HTML pages include a shop-specific favicon, including login',()=>{
  }else{
   assert.ok(favicon.includes('>JA</text>'),'Japandi favicon should use its own shop identity');
  }
+});
+
+test('reposted listings may reconvert only through a verified same-artwork ancestry',()=>{
+ const links={
+  100:{artworkId:'SAC123',status:'reposted'},
+  101:{artworkId:'SAC123',replacedFromListingId:100,status:'reposted'},
+  102:{artworkId:'SAC123',replacedFromListingId:101,status:'converted'}
+ };
+ const testLink=(listingId,artworkId='SAC123',reconvert=true,mappings=links)=>
+  hasAuthorizedConverterLink({listingId,sourceListingId:100,artworkId,reconvert,mappings});
+ assert.equal(testLink(100,'SAC123',false),true);
+ assert.equal(testLink(102),true,'safe multi-hop repost should work');
+ assert.equal(testLink(102,'SAC123',false),false,'ordinary conversion requires original listing');
+ assert.equal(testLink(102,'SAC999'),false,'different artwork rejected');
+ assert.equal(testLink(102,'SAC123',true,{...links,101:{artworkId:'SAC999',replacedFromListingId:100}}),false);
+ assert.equal(testLink(102,'SAC123',true,{...links,101:{artworkId:'SAC123',replacedFromListingId:102}}),false);
+ assert.equal(testLink(103),false,'unlinked Etsy listing rejected');
 });
