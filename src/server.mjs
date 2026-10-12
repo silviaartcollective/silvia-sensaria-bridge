@@ -22,6 +22,7 @@ import { previewDescriptionUpdates, applyDescriptionUpdates } from './descriptio
 
 import { renderProductCreator } from './product-creator.mjs';
 import { handleMockupAPI } from './mockup-api.mjs';
+import {canonicalWallArtStyle,styleAttributes} from './etsy-style.mjs';
 import {starterDraftMedia} from './draft-starter-media.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
@@ -1234,11 +1235,7 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
 
 async function applyAllListingAttributes({ session, listingId, body, properties }) {
   const requested = [
-    ...Object.entries(listingDefaults.fixedAttributes || {}).map(([attributeName, values]) => ({
-      attributeName,
-      values,
-      optional: attributeName === 'Sustainability'
-    })),
+    ...styleAttributes(listingDefaults.fixedAttributes,body.listing_style),
     ...(body.homestyle ? [{ attributeName: 'Homestyle', values: [body.homestyle], optional: false }] : [])
   ];
 
@@ -3532,6 +3529,10 @@ const server = http.createServer(async (req, res) => {
       }
 
       const body = await readJsonBody(req);
+      // Fail before creating any Etsy draft rather than silently applying Art deco.
+      if(canonicalWallArtStyle(body.listing_style)===null){
+        return sendJson(res,400,{ok:false,error:'Select a valid Etsy Style before creating this draft.'});
+      }
       const seoDescription = String(body.seo_description || '').trim();
       const shopSectionName = String(body.seo_section_name || '').trim();
       const shopSectionUrl = String(body.seo_section_url || '').trim();

@@ -119,12 +119,28 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
             <textarea id="seo_generator_output" placeholder="Paste the complete SEO output here..."></textarea>
           </label>
           <button class="btn secondary" id="apply-seo-btn" type="button">Apply SEO Output</button>
-          <div class="uploadmeta">The creator reads SEO Title, Short SEO Description, MORE ART FROM SILVIA ART COLLECTIVE, Homestyle (1), and SEO Tags (13). Homestyle is applied automatically to the Etsy listing.</div>
+          <div class="uploadmeta">Paste SEO Title, ABOUT THIS ARTWORK, MORE ART FROM SILVIA ART COLLECTIVE, Style, and SEO Tags (13). Style automatically selects the matching Etsy listing attribute. Older Homestyle (1) output is still supported.</div>
         </div>
         <label>Etsy title<input id="title" maxlength="140" required placeholder="Enter the SEO title for this artwork"></label>
         <label>Short SEO Description <span class="hint">placed below ABOUT THIS ARTWORK</span><textarea id="seo_description" required placeholder="Paste the Short SEO Description from your SEO generator..."></textarea></label>
         <input id="seo_section_name" type="hidden">
         <input id="seo_section_url" type="hidden">
+        <label>Etsy Style <span class="hint">automatically selected from pasted SEO, or change here</span>
+          <select id="listing_style" required>
+            <option value="Art deco">Art deco</option>
+            <option value="Bohemian & eclectic">Bohemian & eclectic</option>
+            <option value="Coastal & tropical">Coastal & tropical</option>
+            <option value="Contemporary">Contemporary</option>
+            <option value="Country & farmhouse">Country & farmhouse</option>
+            <option value="Gothic">Gothic</option>
+            <option value="Lodge">Lodge</option>
+            <option value="Mid-century">Mid-century</option>
+            <option value="Minimalist">Minimalist</option>
+            <option value="Rustic & primitive">Rustic & primitive</option>
+            <option value="Victorian">Victorian</option>
+          </select>
+        </label>
+        <div class="status ok" id="style-status">Style: Art deco · saved when the Etsy draft is created.</div>
         <input id="homestyle" type="hidden">
         <div class="status" id="homestyle-status" style="display:none"></div>
         <label>SEO tags <span class="hint">13 comma-separated Etsy tags</span><input id="tags" placeholder="silvia wall art, neutral wall art, ..."></label>
@@ -285,19 +301,19 @@ function applySeoOutput(){
   const title=firstNonEmptyLine(blockAfterHeading(
     text,
     ['SEO Title'],
-    ['Short SEO Description','ABOUT THIS ARTWORK','MORE ART FROM SILVIA ART COLLECTIVE','Homestyle (1)','SEO Tags (13)']
+    ['Short SEO Description','ABOUT THIS ARTWORK','MORE ART FROM SILVIA ART COLLECTIVE','Style','Homestyle (1)','Homestyle','SEO Tags (13)','SEO Tags']
   ));
 
   const description=blockAfterHeading(
     text,
     ['Short SEO Description','ABOUT THIS ARTWORK'],
-    ['MORE ART FROM SILVIA ART COLLECTIVE','Homestyle (1)','SEO Tags (13)']
+    ['MORE ART FROM SILVIA ART COLLECTIVE','Style','Homestyle (1)','Homestyle','SEO Tags (13)','SEO Tags']
   );
 
   const moreArt=blockAfterHeading(
     text,
     ['MORE ART FROM SILVIA ART COLLECTIVE'],
-    ['Homestyle (1)','SEO Tags (13)']
+    ['Style','Homestyle (1)','Homestyle','SEO Tags (13)','SEO Tags']
   );
   const moreArtLines=moreArt.split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean);
   const sectionName=moreArtLines.find(x=>!/^https?:\\/\\//i.test(x))||'';
@@ -306,7 +322,13 @@ function applySeoOutput(){
   const homestyle=firstNonEmptyLine(blockAfterHeading(
     text,
     ['Homestyle (1)','Homestyle'],
-    ['SEO Tags (13)']
+    ['Style','SEO Tags (13)','SEO Tags']
+  ));
+
+  const styleText=firstNonEmptyLine(blockAfterHeading(
+    text,
+    ['Style'],
+    ['Homestyle (1)','Homestyle','SEO Tags (13)','SEO Tags']
   ));
 
   const tags=blockAfterHeading(
@@ -319,7 +341,23 @@ function applySeoOutput(){
   if(description)document.getElementById('seo_description').value=description.trim();
   if(sectionName)document.getElementById('seo_section_name').value=sectionName;
   if(sectionUrl)document.getElementById('seo_section_url').value=sectionUrl;
-  if(homestyle){
+  const chosenStyle=styleText||homestyle;
+  if(chosenStyle){
+    const select=document.getElementById('listing_style');
+    const match=Array.from(select.options).find(option=>
+      normalizedSeoLine(option.value)===normalizedSeoLine(chosenStyle));
+    const status=document.getElementById('style-status');
+    if(match){
+      select.value=match.value;
+      status.className='status ok';
+      status.textContent='Style: '+match.value+' · will be applied automatically to Etsy.';
+    }else{
+      select.value='';
+      status.className='status warn';
+      status.textContent='Style "'+chosenStyle+'" is not an available Etsy Style. Select a valid style above before creating the draft.';
+    }
+  }
+  if(homestyle&&!styleText){
     document.getElementById('homestyle').value=homestyle;
     const hs=document.getElementById('homestyle-status');
     hs.style.display='block';
@@ -744,6 +782,7 @@ form.addEventListener('submit',async(e)=>{
     seo_section_name:document.getElementById('seo_section_name').value.trim(),
     seo_section_url:document.getElementById('seo_section_url').value.trim(),
     homestyle:document.getElementById('homestyle').value.trim(),
+    listing_style:document.getElementById('listing_style').value.trim(),
     tags:document.getElementById('tags').value.split(',').map(x=>x.trim()).filter(Boolean),
     taxonomy_id:1027,
     shipping_profile_id:Number(shipping.value),
