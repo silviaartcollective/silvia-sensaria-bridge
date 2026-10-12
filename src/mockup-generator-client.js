@@ -192,7 +192,7 @@ async function loadTemplates(){
  const selected=new Set([...$('mg-templates').querySelectorAll('input:checked')].map(x=>x.value));
  if(!defaultSelectionLoaded){
   defaultSelectionLoaded=true;
-  if(!selected.size)for(const t of templates.filter(t=>t.status==='ready').slice(0,7))selected.add(t.id);
+  if(!selected.size)for(const t of templates.filter(t=>t.status==='ready').slice(0,16))selected.add(t.id);
  }
  const box=$('mg-templates');box.replaceChildren();
  $('mg-saved-count').textContent='('+templates.filter(t=>t.status==='ready').length+')';

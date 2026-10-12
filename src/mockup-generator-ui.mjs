@@ -3,7 +3,7 @@ return `
 <section class="uploadbox" id="mockup-generator-panel" aria-label="Generate mockups">
  <div class="mg-workspace"><div class="mg-main"><div><strong>Generate listing mockups</strong>
  <div class="uploadmeta">Optional: choose only the PSD templates you need, then queue them on your PC. You can create the Etsy draft immediately without waiting for rendering. Keep the draft unpublished until its final mockups are ready.</div></div>
- <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically generate up to 7 selected mockups after each master artwork uploads. Draft creation never waits.</span></label></div>
+ <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically queue the first 16 selected mockups after each master artwork uploads. The master artwork plus 3 preset photos leave 16 additional Etsy photo slots. Use “Select first 7” for a smaller, faster batch.</span></label></div>
  <div class="uploadrow">
   <label>Add PSD / PSB mockups <span class="hint">optional if templates are saved</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
@@ -52,7 +52,7 @@ return `
   <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
    <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
   </div>
-  <div id="mg-selection-status" class="uploadmeta">Up to 17 finished artwork mockups plus 3 reusable images can be attached. Older batches remain in troubleshooting.</div>
+  <div id="mg-selection-status" class="uploadmeta">A starter draft contains 1 master photo and 3 preset photos, leaving 16 slots for generated JPGs (20 Etsy photos total). Older batches remain in troubleshooting.</div>
   <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside></div>
  <div id="mg-worker-status" class="uploadmeta" role="status">Checking shared PC Crop + Mockup Worker…</div>

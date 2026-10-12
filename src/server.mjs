@@ -4234,8 +4234,32 @@ function escapeHtml(value) {
 server.keepAliveTimeout = 120_000;
 server.headersTimeout = 120_000;
 
+// One-time recovery after deployment for recent drafts created before automatic
+// PSD completion callbacks existed. No repeated scans or duplicate uploads.
+async function recoverRecentGeneratedJpgs(){
+  const threshold=Date.now()-72*60*60*1000;
+  const jobs=await listMockupJobs();
+  const recent=jobs.filter(job=>job.artworkId&&job.sourceMasterKey&&
+    Date.parse(job.updatedAt||job.createdAt||'')>=threshold&&
+    job.templates?.some(item=>item.status==='completed'&&item.outputKey));
+  for(const job of recent){
+    try{
+      const manifest=await loadArtworkManifest(job.artworkId);
+      if(!manifest?.etsyDraftListingId||
+         manifest.etsyDraftSetup?.status!=='completed'||
+         manifest.master?.key!==job.sourceMasterKey)continue;
+      await syncGeneratedMockupsForArtwork({artworkId:job.artworkId,jobId:job.id});
+    }catch(error){
+      console.error('Recent PSD recovery failed for '+job.artworkId+':',error);
+    }
+  }
+}
+
 server.listen(port, '0.0.0.0', () => {
   console.log(`Silvia Sensaria bridge listening on port ${port}`);
+  setTimeout(()=>{void recoverRecentGeneratedJpgs().catch(
+    error=>console.error('PSD startup recovery failed:',error)
+  );},30000).unref();
   if(AUTO_REVIEW_ENABLED){
     setTimeout(()=>{void reconcileNewEtsyPaidOrders();},30000).unref();
     setInterval(()=>{void reconcileNewEtsyPaidOrders();},AUTO_REVIEW_INTERVAL_MS).unref();
