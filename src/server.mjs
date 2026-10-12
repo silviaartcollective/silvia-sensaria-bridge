@@ -21,6 +21,8 @@ import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
+import {getMockupJob} from './mockup-generator.mjs';
+import {mockupObjectKey} from './production.mjs';
 import { handleMockupAPI } from './mockup-api.mjs';
 import {canonicalWallArtStyle,styleAttributes} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
@@ -57,6 +59,7 @@ import { etsyReceiptToSensariaCsvFromR2 } from './fulfillment.mjs';
 import {
   checkR2Connection,
   getArtworkObject,
+  copyArtworkObject,
   signedArtworkUrl,
   signedArtworkUploadUrl,
   artworkObjectExists,
@@ -3549,6 +3552,75 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
     }
+  }
+
+  const appendGeneratedPath=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/append-generated-mockups$/);
+  if(req.method==='POST'&&appendGeneratedPath){
+    if(!requireAdminApi(req,res))return;
+    try{
+      const artworkId=appendGeneratedPath[1],body=await readJsonBody(req);
+      const manifest=await loadArtworkManifest(artworkId);
+      if(!manifest?.master?.key||manifest.status!=='ready')
+        throw Error('The artwork is not verified in Cloudflare R2.');
+      const job=await getMockupJob(String(body.jobId||''));
+      if(job.artworkId!==artworkId||job.sourceMasterKey!==manifest.master.key)
+        throw Error('This PSD batch belongs to another artwork. No images were modified.');
+      const chosen=new Set((body.templateIds||[]).map(String));
+      const outputs=job.templates.filter(t=>t.status==='completed'&&t.outputKey&&
+        (!chosen.size||chosen.has(t.id))).slice(0,17);
+      if(!outputs.length)throw Error('No verified JPGs are ready in this batch.');
+      if(manifest.etsyDraftListingId&&(
+        inflightDraftSetups.has(artworkId)||manifest.etsyDraftSetup?.status!=='completed')){
+        return sendJson(res,409,{ok:false,error:'Etsy draft setup is still running. Reapply completed mockups when configuration finishes.'});
+      }
+      const current=(manifest.mockups||[]).slice(0,17);
+      const existingSource=new Set(current.map(x=>x.generatedFromKey).filter(Boolean));
+      let prepared=0;
+      for(const t of outputs){
+        if(existingSource.has(t.outputKey)||current.length>=17)continue;
+        const index=current.length,key=mockupObjectKey(artworkId,index,'jpg');
+        await copyArtworkObject(t.outputKey,key);
+        current.push({index,originalFilename:t.outputName,key,contentType:'image/jpeg',
+          generatedFromKey:t.outputKey,sourceJobId:job.id});
+        existingSource.add(t.outputKey);prepared++;
+      }
+      manifest.mockups=current;
+      await saveArtworkManifest(manifest);
+      if(!manifest.etsyDraftListingId)
+        return sendJson(res,200,{ok:true,prepared,uploaded:0,pendingDraft:true,
+          r2Prefix:'artworks/'+artworkId+'/',message:'Completed PSDs stored in R2 for the future Etsy draft.'});
+      const session=await getEtsySession();
+      const listingId=Number(manifest.etsyDraftListingId);
+      const latestListing=await getListing({listingId,
+        keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+      if(latestListing.state!=='draft')
+        throw Error('Automatic photo updates are limited to unpublished Etsy drafts.');
+      const existingPhotos=await getEtsyListingImages({listingId,
+        keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+      const available=Math.max(0,20-existingPhotos.length);
+      const uploadedSource=new Set(manifest.etsyGeneratedSourceKeys||[]);
+      let uploaded=0;
+      for(const item of current.filter(m=>m.sourceJobId===job.id&&
+        m.generatedFromKey&&!uploadedSource.has(m.generatedFromKey)).slice(0,available)){
+        const original=await getArtworkObject(item.key);
+        const optimized=await optimizeEtsyImageObject(original);
+        const result=await withEtsyListingRetry(()=>uploadListingImage({
+          shopId:session.shop.shop_id,listingId,imageBuffer:optimized.body,
+          filename:item.originalFilename,contentType:optimized.contentType||'image/jpeg',
+          rank:existingPhotos.length+uploaded+1,altText:manifest.title||'',
+          keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
+        }),{attempts:8,baseDelayMs:180});
+        uploaded++;
+        manifest.etsyMedia ||= {images:[],video:null};
+        manifest.etsyMedia.images.push({key:item.key,rank:existingPhotos.length+uploaded,
+          listingImageId:result.listing_image_id||null,filename:item.originalFilename});
+        manifest.etsyGeneratedSourceKeys=[...(manifest.etsyGeneratedSourceKeys||[]),item.generatedFromKey];
+        await saveArtworkManifest(manifest);
+      }
+      return sendJson(res,200,{ok:true,prepared,uploaded,
+        photoCount:existingPhotos.length+uploaded,full:existingPhotos.length+uploaded>=20,
+        r2Prefix:'artworks/'+artworkId+'/'});
+    }catch(error){return sendJson(res,409,{ok:false,error:String(error?.message||error)})}
   }
 
   const draftSetupStatusPath=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/draft-setup$/);

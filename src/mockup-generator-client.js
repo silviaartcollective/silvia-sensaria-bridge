@@ -128,6 +128,31 @@ function selectionChanged(){
   attachTimer=setTimeout(()=>{attachTimer=null;if(job?.id===id)act(useResults)},650);
  }
 }
+async function syncGeneratedJpgs(batchId,templateIds){
+ const artworkId=$('artwork_id').value.trim();
+ if(!artworkId||job?.artworkId!==artworkId)return;
+ // Server-to-server R2 copies avoid reuploading large generated JPGs from the browser.
+ for(let attempt=0;attempt<90;attempt++){
+  try{
+   const response=await fetch('/api/artworks/'+encodeURIComponent(artworkId)+'/append-generated-mockups',{
+    method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({jobId:batchId,templateIds})
+   });
+   const data=await response.json();
+   if(response.status===409&&/setup is still running/i.test(data.error||'')){
+    message('Waiting for Etsy draft configuration before adding generated JPGs…');
+    await new Promise(resolve=>setTimeout(resolve,5000));
+    continue;
+   }
+   if(!response.ok||!data.ok)throw Error(data.error||'PSD mockup sync failed');
+   message(data.pendingDraft
+    ?'Generated JPGs saved in '+data.r2Prefix+' for your future Etsy draft.'
+    :'Added '+data.uploaded+' generated mockups to Etsy ('+data.photoCount+'/20 photos).');
+   return;
+  }catch(error){failure(error);return}
+ }
+ message('Etsy setup is still busy. Click Apply selected to listing to retry the mockup sync.',true);
+}
 async function useResults(){
  if(!currentBatch())throw Error('These mockups were created for a different artwork. Create a fresh batch for this master.');
  if(attaching)return;
@@ -149,7 +174,8 @@ async function useResults(){
   panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
   $('upload-status').textContent=chosen.length+' selected PC-generated mockups ready for the Etsy draft.'+
     (selected.length>17?' Etsy can fit only the first 17 selected artwork mockups alongside 3 preset photos.':'');
-  message('Selected mockups ready for Etsy ('+chosen.length+' JPGs)');
+  message('Selected mockups ready ('+chosen.length+' JPGs). Syncing to the linked Etsy draft if one exists…');
+  void syncGeneratedJpgs(batchId,chosen.map(t=>t.id)).catch(failure);
  }finally{attaching=false;renderPreviews()}
 }
 async function loadTemplates(){
