@@ -13,6 +13,8 @@ import {
 } from './r2.mjs';
 import {randomUUID} from 'node:crypto';
 import {streamMockupZip} from './mockup-zip.mjs';
+import {loadArtworkManifest} from './artwork-storage.mjs';
+import {copyArtworkObject,artworkObjectInfo} from './r2.mjs';
 
 const ID='[a-f0-9-]{36}';
 const maxLength=200;
@@ -126,6 +128,24 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
   }
   if(parts[0]==='jobs'){
    if(req.method==='GET'&&parts.length===1)return send(200,{jobs:await listMockupJobs()}),true;
+   // Queue from the already-uploaded R2 master instead of uploading it twice.
+   if(req.method==='POST'&&parts.length===2&&parts[1]==='from-artwork'){
+    const body=await readJson(req),artworkId=String(body.artworkId||'');
+    if(!/^[A-Z]{2,5}[0-9]{1,12}$/.test(artworkId))throw Error('Valid artwork ID required.');
+    const manifest=await loadArtworkManifest(artworkId);
+    if(!manifest||manifest.status!=='ready'||!manifest.master?.key)
+     throw Error('Upload and confirm the master artwork before generating mockups.');
+    const master=manifest.master;
+    const info=await artworkObjectInfo(master.key);
+    const job=await createMockupJob({
+      filename:master.originalFilename||artworkId+'.jpg',
+      size:info.size,templateIds:body.templateIds,fitMode:body.fitMode||'contain'
+    });
+    job.artworkId=artworkId;job.sourceMasterKey=master.key;
+    await putMockupJob(job);
+    await copyArtworkObject(master.key,job.artworkKey);
+    return send(201,{job:await markMockupArtworkUploaded(job.id)}),true;
+   }
    if(req.method==='POST'&&parts.length===1){
     const job=await createMockupJob(await readJson(req));
     return send(201,{job,uploadUrl:await signedArtworkUploadUrl(job.artworkKey,'application/octet-stream',3600)}),true;

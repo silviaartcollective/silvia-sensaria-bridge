@@ -547,6 +547,10 @@ async function uploadArtworkToR2(){
         // Re-queue idempotently so an earlier upload whose crop queue failed
         // can repair itself without forcing the artwork to be uploaded again.
         try{ await queueCropJob(existingId); }catch{}
+        window.dispatchEvent(new CustomEvent('pod-artwork-uploaded',{detail:{
+          artworkId:existingId,filename:masterFileInput.files?.[0]?.name,
+          size:masterFileInput.files?.[0]?.size,lastModified:masterFileInput.files?.[0]?.lastModified
+        }}));
         return existingId;
       }
     }catch{}
@@ -630,6 +634,10 @@ async function uploadArtworkToR2(){
     uploadProgress.style.width='100%';
     uploadStatus.className='status ok';
     uploadStatus.innerHTML='<strong>'+data.artworkId+' uploaded.</strong><br>Master artwork and '+uploads.length+' media'+(uploads.length===1?'':'s')+' are stored in R2 and linked to this product.'+ratioSummary;
+    // Fire and forget: mockup rendering must not hold up draft creation.
+    window.dispatchEvent(new CustomEvent('pod-artwork-uploaded',{detail:{
+      artworkId:data.artworkId,filename:master.name,size:master.size,lastModified:master.lastModified
+    }}));
     return data.artworkId;
   }catch(err){
     uploadProgress.style.width='0%';

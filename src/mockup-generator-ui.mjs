@@ -3,6 +3,7 @@ return `
 <section class="uploadbox" id="mockup-generator-panel" aria-label="Generate mockups">
  <div class="mg-workspace"><div class="mg-main"><div><strong>Generate listing mockups</strong>
  <div class="uploadmeta">Optional: choose only the PSD templates you need, then queue them on your PC. You can create the Etsy draft immediately without waiting for rendering. Keep the draft unpublished until its final mockups are ready.</div></div>
+ <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically generate up to 7 selected mockups after each master artwork uploads. Draft creation never waits.</span></label></div>
  <div class="uploadrow">
   <label>Add PSD / PSB mockups <span class="hint">optional if templates are saved</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
@@ -19,7 +20,7 @@ return `
   <button class="btn secondary" type="button" id="mg-generate">Queue selected mockups on PC</button>
   <button class="btn secondary" type="button" id="mg-pause" disabled>Pause after current PSD</button>
  </div>
- <div id="mg-progress" class="status" role="status" aria-live="polite">Choose master artwork above. The shared PC worker will automatically process saved PSDs.</div>
+ <div id="mg-progress" class="status" role="status" aria-live="polite">Select a master artwork; after it uploads, your selected PSD templates will generate in the background.</div>
  <div class="progress" aria-label="Mockup generation progress"><span id="mg-progress-bar"></span></div>
  <details class="mg-advanced">
   <summary>View individual results and downloads</summary>
@@ -51,7 +52,7 @@ return `
   <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
    <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
   </div>
-  <div id="mg-selection-status" class="uploadmeta">All finished mockups are selected by default. Etsy can use up to 7 alongside your 3 preset images.</div>
+  <div id="mg-selection-status" class="uploadmeta">Only finished mockups for this artwork can be attached. Older batches are available under Saved batches & troubleshooting.</div>
   <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside></div>
  <div id="mg-worker-status" class="uploadmeta" role="status">Checking shared PC Crop + Mockup Worker…</div>
