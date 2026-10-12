@@ -34,7 +34,7 @@ test('PSD render jobs are explicit, with no automatic 26-template selection or d
  const js=read('src/mockup-generator-client.js'),ui=read('src/mockup-generator-ui.mjs');
  assert.doesNotThrow(()=>new vm.Script(js));
  assert.ok(js.includes("cb.checked=!cb.disabled&&selected.has(template.id)"));
- assert.ok(js.includes("['mg-generate',createJob]"));
+ assert.ok(js.includes("['mg-generate',()=>createJob()]"));
  assert.ok(!js.includes("event.stopImmediatePropagation()"));
  assert.ok(!js.includes('maybeAutoStart'));
  assert.ok(js.includes("$('mg-select-seven').addEventListener('click',selectSeven)"));
