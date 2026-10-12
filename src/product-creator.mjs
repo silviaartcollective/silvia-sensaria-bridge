@@ -342,6 +342,7 @@ function applySeoOutput(){
   if(sectionName)document.getElementById('seo_section_name').value=sectionName;
   if(sectionUrl)document.getElementById('seo_section_url').value=sectionUrl;
   const chosenStyle=styleText||homestyle;
+  if(styleText)document.getElementById('homestyle').value='';
   if(chosenStyle){
     const select=document.getElementById('listing_style');
     const match=Array.from(select.options).find(option=>
@@ -372,6 +373,13 @@ function applySeoOutput(){
   }
 }
 applySeoButton.addEventListener('click',applySeoOutput);
+document.getElementById('listing_style').addEventListener('change',event=>{
+  const status=document.getElementById('style-status');
+  status.className=event.target.value?'status ok':'status warn';
+  status.textContent=event.target.value
+    ?'Style: '+event.target.value+' · will be applied automatically to Etsy.'
+    :'Select an Etsy Style before creating the draft.';
+});
 
 function option(select,value,label){const o=document.createElement('option');o.value=value;o.textContent=label;select.appendChild(o)}
 function setSelect(select,value){if(value!==undefined&&value!==null&&value!=='')select.value=String(value)}

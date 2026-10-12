@@ -689,10 +689,12 @@ function findTaxonomyProperty(properties, attributeName, desiredValues = []) {
   const wantedName = normalizeEtsyPropertyText(attributeName);
   const desired = desiredValues.map(normalizeEtsyPropertyText).filter(Boolean);
 
-  const byName = properties.find((property) => {
-    const names = propertyNames(property);
-    return names.includes(wantedName) || names.some((name) => name.includes(wantedName) || wantedName.includes(name));
-  });
+  // Prefer exact Style over Homestyle (or Size/Product - Style).
+  const byName = properties.find(property=>propertyNames(property).includes(wantedName))
+    || properties.find(property=>{
+      const names=propertyNames(property);
+      return names.some(name=>name.includes(wantedName)||wantedName.includes(name));
+    });
   if (byName) return byName;
 
   if (desired.length) {
