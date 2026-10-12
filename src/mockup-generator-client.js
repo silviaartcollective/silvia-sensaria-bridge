@@ -161,7 +161,17 @@ async function useResults(){
  if(!selected.length){markRequested();throw Error('Select at least one generated JPG.')}
  attaching=true;renderPreviews();
  try{
-  const dt=new DataTransfer(),chosen=selected.slice(0,17);
+  const chosen=selected.slice(0,17),artworkId=$('artwork_id').value.trim();
+  if(job.artworkId&&job.artworkId===artworkId){
+    // Server-to-server R2 sync avoids fetching 17 large JPGs back into the browser.
+    lastAppliedBatchId=batchId;appliedCount=chosen.length;
+    ready=true;requested=true;
+    panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
+    message('Syncing '+chosen.length+' verified JPGs directly from Cloudflare R2…');
+    void syncGeneratedJpgs(batchId,chosen.map(t=>t.id)).catch(failure);
+    return;
+  }
+  const dt=new DataTransfer();
   for(const t of chosen){
    const response=await fetch('/api/mockups/jobs/'+batchId+'/download/'+t.id,{cache:'no-store'});
    if(!response.ok)throw Error('Could not retrieve '+t.outputName+' (HTTP '+response.status+')');
@@ -174,8 +184,7 @@ async function useResults(){
   panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
   $('upload-status').textContent=chosen.length+' selected PC-generated mockups ready for the Etsy draft.'+
     (selected.length>17?' Etsy can fit only the first 17 selected artwork mockups alongside 3 preset photos.':'');
-  message('Selected mockups ready ('+chosen.length+' JPGs). Syncing to the linked Etsy draft if one exists…');
-  void syncGeneratedJpgs(batchId,chosen.map(t=>t.id)).catch(failure);
+  message('Selected mockups ready ('+chosen.length+' JPGs).');
  }finally{attaching=false;renderPreviews()}
 }
 async function loadTemplates(){

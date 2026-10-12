@@ -3615,6 +3615,8 @@ const server = http.createServer(async (req, res) => {
         manifest.etsyMedia.images.push({key:item.key,rank:existingPhotos.length+uploaded,
           listingImageId:result.listing_image_id||null,filename:item.originalFilename});
         manifest.etsyGeneratedSourceKeys=[...(manifest.etsyGeneratedSourceKeys||[]),item.generatedFromKey];
+        if(manifest.etsyDraftSetup?.status==='completed'&&manifest.etsyDraftSetup.media)
+          manifest.etsyDraftSetup.media.imageCount=existingPhotos.length+uploaded;
         await saveArtworkManifest(manifest);
       }
       return sendJson(res,200,{ok:true,prepared,uploaded,
