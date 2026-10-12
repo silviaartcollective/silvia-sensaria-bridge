@@ -3645,7 +3645,11 @@ const server = http.createServer(async (req, res) => {
         productionPartners: productionPartners.results || productionPartners || []
       });
     } catch (error) {
-      return sendJson(res, 500, { ok: false, error: error?.message || String(error)   const appendGeneratedPath=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/append-generated-mockups$/);
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  const appendGeneratedPath=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/append-generated-mockups$/);
   if(req.method==='POST'&&appendGeneratedPath){
     if(!requireAdminApi(req,res))return;
     try{
@@ -3655,9 +3659,6 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res,200,result);
     }catch(error){return sendJson(res,409,{ok:false,error:String(error?.message||error)})}
-  }
-
-error)})}
   }
 
   const draftSetupStatusPath=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/draft-setup$/);
