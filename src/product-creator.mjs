@@ -125,6 +125,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
         <label>Short SEO Description <span class="hint">placed below ABOUT THIS ARTWORK</span><textarea id="seo_description" required placeholder="Paste the Short SEO Description from your SEO generator..."></textarea></label>
         <input id="seo_section_name" type="hidden">
         <input id="seo_section_url" type="hidden">
+        <div class="status" id="seo-section-status" style="display:none"></div>
         <label>Etsy Style <span class="hint">automatically selected from pasted SEO, or change here</span>
           <select id="listing_style" required>
             <option value="Art deco">Art deco</option>
@@ -294,6 +295,47 @@ function firstNonEmptyLine(value){
   return String(value||'').split(/\\r?\\n/).map(x=>x.trim()).find(Boolean)||'';
 }
 
+function selectSeoShopSection(){
+  const sectionName=document.getElementById('seo_section_name').value.trim();
+  const sectionUrl=document.getElementById('seo_section_url').value.trim();
+  const status=document.getElementById('seo-section-status');
+  if(!sectionName&&!sectionUrl){
+    status.style.display='none';
+    return true;
+  }
+  status.style.display='block';
+  const id=sectionUrl.match(/[?&]section_id=(\d+)(?:[&#]|$)/)?.[1]||'';
+  const choices=Array.from(section.options);
+  const byId=id?choices.find(o=>String(o.value)===id):null;
+  const byName=sectionName?choices.find(o=>normalizedSeoLine(o.textContent)===normalizedSeoLine(sectionName)):null;
+  // When a specific Etsy section ID is present, never fall back to a different shop section.
+  const conflicting=byId&&byName&&String(byId.value)!==String(byName.value);
+  const target=conflicting?null:(byId||(!id?byName:null));
+  if(target){
+    section.value=target.value;
+    status.className='status ok';
+    status.textContent='Shop section: '+target.textContent.trim()+' · selected from SEO.';
+    return true;
+  }
+  section.value='';
+  status.className='status warn';
+  status.textContent='Could not match the pasted SEO shop section to this Etsy shop. Check the section name and link, then apply SEO again.';
+  return false;
+}
+function warnOnShopSectionChange(){
+  const sectionUrl=document.getElementById('seo_section_url').value.trim();
+  const id=sectionUrl.match(/[?&]section_id=(\d+)(?:[&#]|$)/)?.[1]||'';
+  if(!id)return;
+  const status=document.getElementById('seo-section-status');
+  status.style.display='block';
+  const selected=Array.from(section.options).find(o=>String(o.value)===String(section.value));
+  const valid=String(section.value)===id;
+  status.className=valid?'status ok':'status warn';
+  status.textContent=valid
+    ?'Shop section: '+selected.textContent.trim()+' · matches pasted SEO.'
+    :'This shop section differs from the pasted SEO link. Reapply SEO or correct the section before creating the draft.';
+}
+
 function applySeoOutput(){
   const text=seoGeneratorOutput.value.trim();
   if(!text)return;
@@ -339,8 +381,8 @@ function applySeoOutput(){
 
   if(title)document.getElementById('title').value=title.replace(/^[-•]\\s*/,'').trim();
   if(description)document.getElementById('seo_description').value=description.trim();
-  if(sectionName)document.getElementById('seo_section_name').value=sectionName;
-  if(sectionUrl)document.getElementById('seo_section_url').value=sectionUrl;
+  document.getElementById('seo_section_name').value=sectionName;
+  document.getElementById('seo_section_url').value=sectionUrl;
   const chosenStyle=styleText||homestyle;
   if(styleText)document.getElementById('homestyle').value='';
   if(chosenStyle){
@@ -367,12 +409,10 @@ function applySeoOutput(){
   }
   if(tags)document.getElementById('tags').value=tags.replace(/^[-•]\\s*/,'').trim();
 
-  if(sectionName){
-    const target=Array.from(section.options).find(o=>o.textContent.trim().toLowerCase()===sectionName.toLowerCase());
-    if(target)section.value=target.value;
-  }
+  selectSeoShopSection();
 }
 applySeoButton.addEventListener('click',applySeoOutput);
+section.addEventListener('change',warnOnShopSectionChange);
 document.getElementById('listing_style').addEventListener('change',event=>{
   const status=document.getElementById('style-status');
   status.className=event.target.value?'status ok':'status warn';
@@ -740,6 +780,9 @@ async function loadOptions(){
     }
 
     applyPreset(d.detectedPreset||{});
+    // Preset settings sometimes finish loading after SEO is pasted.
+    // Keep the SEO section authoritative across this asynchronous load.
+    selectSeoShopSection();
     if(d.variantCatalog?.ownedByApp){
       badge.textContent='Etsy presets + app-owned variants loaded';
     }

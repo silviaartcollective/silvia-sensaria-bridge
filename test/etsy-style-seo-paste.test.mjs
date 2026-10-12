@@ -28,7 +28,12 @@ test('full SEO paste fills title, artwork description, section, Style and all ta
  fields.listing_style.options=ETSY_WALL_ART_STYLES.map(value=>({value}));
  fields['style-status']={textContent:'',style:{display:'none'},className:''};
  fields['homestyle-status']={innerHTML:'',style:{display:'none'},className:''};
- const section={options:[{value:'floral',textContent:'Floral Wall Art'}],value:''};
+ fields['seo-section-status']={textContent:'',style:{display:'none'},className:''};
+ const section={options:[
+  {value:'59806016',textContent:'Neutral Landscape Art'},
+  {value:'60115367',textContent:'Abstract & Contemporary'},
+  {value:'60115369',textContent:'Floral Wall Art'}
+ ],value:'59806016'};
  const input={value:`SEO Title
 White Floral Wall Art: Neutral Beige Sage Textured Botanical Painting
 
@@ -53,6 +58,10 @@ white floral art, neutral floral art, floral wall art, textured flowers, white f
  assert.ok(!fields.seo_description.value.includes('MORE ART'));
  assert.equal(fields.seo_section_url.value,'https://www.etsy.com/shop/SilviaArtCollective?ref=dashboard-header&section_id=60115369');
  assert.equal(fields.listing_style.value,'Contemporary');
+ assert.equal(section.value,'60115369','Fancy Unicode section heading + Etsy ID must select Floral Wall Art');
+ section.value='59806016'; // Simulate a late Etsy default overriding the section.
+ vm.runInNewContext('selectSeoShopSection()',ctx);
+ assert.equal(section.value,'60115369','SEO wins over late loading defaults');
  assert.equal(fields.tags.value.split(',').length,13);
  assert.equal(fields.tags.value.split(',')[12].trim(),'neutral wall decor');
  assert.equal(fields.homestyle.value,'');
@@ -65,4 +74,19 @@ test('Etsy Style is submitted for draft creation using supported taxonomy proper
  assert.ok(server.includes('styleAttributes(listingDefaults.fixedAttributes'));
  assert.ok(server.includes('canonicalWallArtStyle(body.listing_style)'));
  assert.ok(!server.includes("attributeName:'Style', values:['Art deco']"));
+});
+
+test('server rejects mismatched or forged SEO shop-section links before creating a draft',async()=>{
+ const {assertSeoShopSection,seoEtsySectionId}=await import('../src/seo-shop-section.mjs');
+ const link='https://www.etsy.com/shop/SilviaArtCollective?ref=dashboard-header&section_id=60115369';
+ assert.equal(seoEtsySectionId(link),'60115369');
+ assert.equal(assertSeoShopSection(link,60115369),'60115369');
+ assert.throws(()=>assertSeoShopSection(link,59806016),/does not match/);
+ assert.throws(()=>seoEtsySectionId('https://other.example/shop?section_id=60115369'),/etsy.com/);
+ assert.throws(()=>seoEtsySectionId('https://www.etsy.com/shop/SilviaArtCollective'),/section_id/);
+ assert.equal(assertSeoShopSection('',59806016),null);
+ const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
+ const route=server.slice(server.indexOf("if (req.method === 'POST' && url.pathname === '/etsy/drafts')"));
+ assert.ok(route.indexOf('assertSeoShopSection(body.seo_section_url,body.shop_section_id)')>=0);
+ assert.ok(route.indexOf('assertSeoShopSection(body.seo_section_url,body.shop_section_id)')<route.indexOf('createDraftListing('));
 });
