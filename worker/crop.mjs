@@ -26,10 +26,14 @@ export async function inspectMaster(masterPath, orientation) {
     ...dimensions,
     exifOrientation: Number(metadata.orientation || 1),
     orientation: (() => {
-      const requested = String(orientation || '').trim().toLowerCase();
-      if (requested === 'square') return 'square';
-      if (requested === 'landscape' || requested === 'horizontal') return 'landscape';
-      return 'portrait';
+      const actual=dimensions.width>dimensions.height?'landscape':
+        dimensions.height>dimensions.width?'portrait':'square';
+      const requested=String(orientation||'').trim().toLowerCase();
+      if(actual==='square')throw Error('Square artwork requires dedicated square production ratios.');
+      if((requested==='landscape'||requested==='portrait')&&requested!==actual)
+        throw Error('Master orientation mismatch: actual image is '+actual+
+          ', but crop job is '+requested+'. Reconfirm artwork upload and queue a corrected crop job.');
+      return actual;
     })()
   };
 }

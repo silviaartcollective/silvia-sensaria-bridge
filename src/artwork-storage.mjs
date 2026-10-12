@@ -22,6 +22,7 @@ import {
   renderProductionArtworkToFile
 } from './production.mjs';
 import { generateFulfillmentRatios } from './artwork-ratios.mjs';
+import {inspectStoredMasterGeometry} from './master-geometry.mjs';
 
 let productionRenderTail = Promise.resolve();
 
@@ -169,6 +170,23 @@ export async function completeArtworkUpload(artworkId) {
     throw new Error(`${missingMockups.length} mockup upload(s) have not finished`);
   }
 
+  // R2 pixel metadata is authoritative. A user dropdown must never turn a
+  // horizontal master into vertical fulfillment crop files.
+  const geometry=await inspectStoredMasterGeometry(manifest.master.key);
+  const priorOrientation=String(manifest.orientation||'').toLowerCase();
+  if(priorOrientation!==geometry.orientation){
+    // Old wrong-orientation assets must not be served as production-ready.
+    manifest.fulfillmentRatiosReady=false;
+    manifest.fulfillmentRatios={};
+    manifest.fulfillmentRatioInsufficient={};
+    manifest.cropWorkerJobId=null;
+    manifest.fulfillmentRatiosUpdatedAt=null;
+  }
+  manifest.orientation=geometry.orientation;
+  manifest.master.width=geometry.width;
+  manifest.master.height=geometry.height;
+  manifest.master.orientation=geometry.orientation;
+  manifest.master.orientationVerifiedAt=new Date().toISOString();
   manifest.status = 'ready';
   manifest.uploadCompletedAt = new Date().toISOString();
   await saveArtworkManifest(manifest);

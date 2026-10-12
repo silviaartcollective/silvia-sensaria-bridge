@@ -81,7 +81,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
           <div class="twocol">
             <label>Artwork ID <span class="hint">assigned automatically</span><input id="artwork_id" class="mono" readonly placeholder="Assigned after upload"></label>
             <label>Orientation
-              <select id="orientation"><option>Portrait</option><option>Landscape</option><option>Square</option></select>
+              <select id="orientation"><option value="auto" selected>Auto detect from artwork</option><option value="Portrait">Portrait</option><option value="Landscape">Landscape</option><option value="Square">Square</option></select>
             </label>
           </div>
           <div class="uploadrow">

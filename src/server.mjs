@@ -2051,7 +2051,14 @@ const server = http.createServer(async (req, res) => {
       if (!manifest?.master?.key || manifest.status !== 'ready') {
         throw new Error(`Artwork ${artworkId} must be fully uploaded before queueing crops`);
       }
-      const orientation = String(input.orientation || manifest.orientation || 'portrait').trim().toLowerCase();
+      // Verified R2 master pixels, not browser input, control all crop targets.
+      if(!manifest.master?.orientation)
+        throw Error('Master image geometry was not verified. Confirm the R2 artwork upload again.');
+      const orientation=manifest.orientation;
+      if(orientation==='square')
+        throw Error('Square artwork requires separate square production ratios.');
+      if(!['landscape','portrait'].includes(orientation))
+        throw Error('Unknown master image orientation; complete R2 upload again.');
       const created = await createCropJob({
         artworkId,
         masterKey: manifest.master.key,
@@ -3285,7 +3292,7 @@ const server = http.createServer(async (req, res) => {
 
       const reservation = await reserveArtworkUpload({
         title: listing.title || '',
-        orientation: String(body.orientation || 'portrait').toLowerCase(),
+        orientation: String(body.orientation || 'auto').toLowerCase(),
         master: body.master,
         mockups: []
       });
@@ -3740,7 +3747,7 @@ const server = http.createServer(async (req, res) => {
           const created = await createCropJob({
             artworkId: body.artwork_id,
             masterKey: manifest.master.key,
-            orientation: body.orientation || manifest.orientation || 'portrait'
+            orientation: manifest.orientation
           });
           manifest.cropWorkerJobId = created.job.id;
           manifest.cropWorkerQueuedAt = manifest.cropWorkerQueuedAt || new Date().toISOString();

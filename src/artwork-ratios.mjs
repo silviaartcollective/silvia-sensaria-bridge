@@ -46,10 +46,10 @@ export const SIZE_TO_FULFILLMENT_RATIO = Object.freeze({
 });
 
 function normalizeOrientation(value, width, height) {
-  const requested = String(value || '').trim().toLowerCase();
-  if (requested === 'landscape' || requested === 'horizontal') return 'landscape';
-  if (requested === 'portrait' || requested === 'vertical') return 'portrait';
-  return Number(width) > Number(height) ? 'landscape' : 'portrait';
+  const actual=Number(width)>Number(height)?'landscape':Number(height)>Number(width)?'portrait':'square';
+  if(actual==='square')throw Error('Square master artwork needs dedicated square crop ratios.');
+  // Pixel dimensions are authoritative even if an older manifest says portrait.
+  return actual;
 }
 
 function orientedPair(ratio, orientation) {
