@@ -3,6 +3,7 @@ import {loadArtworkManifest,saveArtworkManifest} from './artwork-storage.mjs';
 import {createCropJob,getCropJob} from './crop-job-store.mjs';
 import {getJsonObject,putJsonObject,artworkObjectExists,signedArtworkUploadUrl} from './r2.mjs';
 import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey} from './artwork-ratios.mjs';
+import {inspectStoredMasterGeometry} from './master-geometry.mjs';
 const PREFIX='SAC';
 const validId=v=>{const id=String(v||'').toUpperCase();if(!new RegExp('^'+PREFIX+'\\d+$').test(id))throw Error('Converted '+PREFIX+' artwork required.');return id;};
 const listId=v=>{const id=String(v||'');if(!/^[1-9]\d{0,19}$/.test(id))throw Error('Valid Etsy listing ID required.');return id;};
@@ -87,6 +88,10 @@ export async function startArtworkRevisionCrop({shopId,listingId}){
  if(!await artworkObjectExists(record.masterKey))throw Error('New source upload has not finished.');
  const manifest=await loadArtworkManifest(record.artworkId);
  if(manifest.master?.key!==record.previousMasterKey)throw Error('Artwork changed since upload reservation.');
+ const geometry=await inspectStoredMasterGeometry(record.masterKey);
+ if(geometry.orientation==='square')throw Error('Square replacement requires dedicated square crop sizes.');
+ record.orientation=geometry.orientation;
+ record.masterGeometry=geometry;
  const created=await createCropJob({artworkId:record.artworkId,masterKey:record.masterKey,orientation:record.orientation});
  record.jobId=created.job.id;record.status='cropping';record.cropQueuedAt=new Date().toISOString();
  await putJsonObject(recordKey(shopId,listingId),record);
@@ -131,8 +136,9 @@ export async function activateArtworkRevision(shopId,listingId,artworkId){
  if(manifest.master?.key!==record.previousMasterKey)throw Error('Original master changed while reposter was in progress.');
  const archiveKey='artworks/'+record.artworkId+'/revisions/'+record.revision+'/previous-manifest.json';
  await putJsonObject(archiveKey,manifest);
- await saveArtworkManifest({...manifest,master:{key:record.masterKey,originalFilename:record.filename,
-  contentType:record.contentType,size:record.size},
+ await saveArtworkManifest({...manifest,orientation:record.orientation,master:{key:record.masterKey,originalFilename:record.filename,
+  contentType:record.contentType,size:record.size,
+  width:record.masterGeometry?.width,height:record.masterGeometry?.height,orientation:record.orientation},
   fulfillmentRatios:assets,fulfillmentRatiosReady:true,fulfillmentRatioInsufficient:{},
   fulfillmentRatiosUpdatedAt:new Date().toISOString(),production:{},cropWorkerJobId:record.jobId,
   activeArtworkRevision:record.revision,previousManifestSnapshotKey:archiveKey,

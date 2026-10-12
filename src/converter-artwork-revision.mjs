@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { loadArtworkManifest,saveArtworkManifest } from './artwork-storage.mjs';
 import { createCropJob,getCropJob,readCropJobStore } from './crop-job-store.mjs';
 import { checkedRevisionAssets } from './artwork-revision.mjs';
+import {inspectStoredMasterGeometry} from './master-geometry.mjs';
 import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey} from './artwork-ratios.mjs';
 import { getJsonObject,putJsonObject,artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl,
   copyArtworkObject,deleteArtworkObject,listArtworkObjectKeys } from './r2.mjs';
@@ -44,7 +45,8 @@ export async function reserveConverterArtworkRevision({shopId,listingId,artworkI
  const manifest=await loadArtworkManifest(aid);
  if(manifest?.status!=='ready'||!manifest.master?.key)
   throw Error('The existing master artwork is not ready in R2.');
- const targetOrientation=String(orientation||manifest.orientation||'portrait').toLowerCase();
+ const requested=String(orientation||'auto').toLowerCase();
+ const targetOrientation=requested==='auto'?manifest.orientation:requested;
  if(targetOrientation!==String(manifest.orientation||'portrait').toLowerCase())
   throw Error('The uploaded artwork orientation differs from the existing listing. Choose artwork with the same orientation.');
  const recordKey=keyFor(shopId,id);
@@ -97,6 +99,12 @@ export async function startConverterArtworkCrop({shopId,listingId,revision,artwo
  const uploaded=await artworkObjectInfo(record.masterKey);
  if(uploaded.size!==record.size)
   throw Error('New artwork upload size mismatch. Select and upload the master again before cropping.');
+ const geometry=await inspectStoredMasterGeometry(record.masterKey);
+ if(geometry.orientation!==manifest.orientation)
+  throw Error('The replacement source is '+geometry.orientation+' but the listing is '+manifest.orientation+
+    '. The app will not crop horizontal artwork into vertical ratios.');
+ record.orientation=geometry.orientation;
+ record.masterGeometry=geometry;
  if(record.jobId){
   const job=await getCropJob(record.jobId);
   if(!job)throw Error('Previously queued crop job could not be found. Review the listing before retrying.');
@@ -204,8 +212,10 @@ export async function activateConverterArtworkRevision({shopId,listingId,revisio
    ...assets[r],key:dest.ratios[r],sourceMasterKey:dest.master
   }]));
   const next={
-   ...manifest,master:{key:dest.master,originalFilename:checked.filename,
-     contentType:checked.contentType,size:checked.size},
+   ...manifest,orientation:checked.orientation,master:{key:dest.master,originalFilename:checked.filename,
+     contentType:checked.contentType,size:checked.size,
+     width:checked.masterGeometry?.width,height:checked.masterGeometry?.height,
+     orientation:checked.orientation},
    fulfillmentRatios:ratios,fulfillmentRatiosReady:true,
    fulfillmentRatioInsufficient:{},fulfillmentRatiosUpdatedAt:updatedAt,
    production:{},cropWorkerJobId:checked.jobId,
