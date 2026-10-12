@@ -1502,7 +1502,7 @@ async function performListingConversion(body){
         throw Error('Cannot safely convert a listing whose Etsy description could not be verified.');
       // Keep all existing SEO, links, and artwork text. Adjust only the
       // existing canvas-thickness phrase, using the Description Updater preset.
-      const expectedDescription=reviseCanvasThickness(expectedDescription);
+      const expectedDescription=reviseCanvasThickness(originalDescription);
       if(expectedDescription.length>13000)
         throw Error('Corrected Etsy description exceeds 13,000 characters.');
 
