@@ -1701,7 +1701,7 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
       const manifest=await loadArtworkManifest(artworkId);
       if(!manifest?.master?.key||manifest.status!=='ready')
         throw Error('The artwork is not verified in Cloudflare R2.');
-      const job=await getMockupJob(String(body.jobId||''));
+      const job=await getMockupJob(String(jobId||''));
       if(job.artworkId!==artworkId||job.sourceMasterKey!==manifest.master.key)
         throw Error('This PSD batch belongs to another artwork. No images were modified.');
       // Selected outputs belong to this verified job only.
