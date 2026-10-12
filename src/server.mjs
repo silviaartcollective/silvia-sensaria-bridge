@@ -1002,69 +1002,46 @@ async function prepareMediaPlan({ session, manifest }) {
 
   const customImages = customMedia.filter(item =>
     String(item?.contentType||'').startsWith('image/')
-  );
+  ).slice(0,12); // Etsy supports at most 15 listing images; reserve 3 preset slots.
   const starterOnly=customImages.length===0;
-  // No PSD/reference lookup is required for an unpublished starter draft.
-  let reference=null;
-  if(!starterOnly){
-   let reference = currentMockupReference(session);
-   if (!reference) {
-     const shopArgs = {
-       shopId: session.shop.shop_id,
-       keystring: session.keystring,
-       sharedSecret: session.sharedSecret,
-       accessToken: session.accessToken
-     };
-     const listings = await getShopListings({ ...shopArgs, state: 'active', limit: 100 });
-     const sourceListings = (listings.results || listings || []).map((listing) => ({
-       listing_id: listing.listing_id,
-       title: listing.title
-     }));
-     reference = await cacheRecentMockupReference(session, sourceListings);
-   }
-
-  }
-
-  // The established Silvia listing layout has preset images interleaved at
-  // Etsy IMAGE ranks 2, 5 and 15. The listing video is separate and Etsy shows
-  // it as the second featured tile automatically. Match only artwork-specific
-  // mockups against the remaining reference-image slots.
+  // The locked reference is only an ordering hint. No active listing is needed.
+  const reference=starterOnly?null:currentMockupReference(session);
   const presetImageRanks = new Map([
     [2, 'choose-option'],
     [5, 'choose-frame'],
     [15, 'promotion']
   ]);
-
-  if (!reference && !starterOnly) {
-    throw new Error('No usable active Etsy listing was found to use as the locked mockup reference.');
-  }
-
   const referenceCustomImages = (reference?.images || []).filter((_, index) =>
     !presetImageRanks.has(index + 1)
   );
-
-  const sortResult = customImages.length
-    ? await sortCustomMockupsByReference({
-        customMedia: customImages,
-        referenceImages: referenceCustomImages,
-        getObject: getArtworkObject
-      })
-    : {
-        items: [],
-        applied: true,
-        reason: 'Draft created without generated mockups; master artwork is the first image',
-        averageScore: null,
-        matches: []
-      };
-
-  const requiredMatchedSlots = Math.min(customImages.length, referenceCustomImages.length);
-  if (customImages.length >= 2 && (
-    !sortResult.applied ||
-    (sortResult.matches || []).length !== requiredMatchedSlots
-  )) {
-    throw new Error(
-      `Exact mockup ordering could not be matched to #${reference.listingId}. ${sortResult.reason || 'The available template slots could not be matched reliably.'}`
-    );
+  // Never reject a draft because matching images is slow, unavailable, or uncertain.
+  // In that case preserve the user's uploaded JPG order instead.
+  let sortResult={
+    items:customImages,
+    applied:false,
+    reason:starterOnly?'Draft created from master artwork and preset images':
+      'No reliable locked reference; preserving uploaded mockup order',
+    averageScore:null,
+    matches:[],
+    preparedBuffers:new Map()
+  };
+  if(!starterOnly&&referenceCustomImages.length){
+    try{
+      const matched=await sortCustomMockupsByReference({
+        customMedia:customImages,
+        referenceImages:referenceCustomImages,
+        getObject:getArtworkObject
+      });
+      const required=Math.min(customImages.length,referenceCustomImages.length);
+      if(matched.applied&&(matched.matches||[]).length===required){
+        sortResult=matched;
+      }else{
+        sortResult.reason=(matched.reason||'No reliable match')+'; preserving uploaded mockup order';
+      }
+    }catch(error){
+      sortResult.reason='Mockup reference lookup failed; preserving uploaded mockup order: '+
+        String(error?.message||error).slice(0,100);
+    }
   }
 
   const presetByRole = new Map(PRESET_MEDIA.map((item) => [item.role, {
@@ -1076,11 +1053,12 @@ async function prepareMediaPlan({ session, manifest }) {
 
   // Convert the stable v3 reference-slot identities into the exact canonical
   // 15-image shop layout shown in the approved Etsy listing.
-  const canonicalCustomItems = starterOnly ? [] : canonicalCustomMockupOrder(sortResult.items);
+  const canonicalCustomItems = starterOnly ? [] :
+    (sortResult.applied ? canonicalCustomMockupOrder(sortResult.items) : sortResult.items);
 
   const orderedImages = starterOnly ? starterDraftMedia(manifest.master,PRESET_MEDIA).filter(item=>item.presetRole!=='video') : [];
   let customIndex = 0;
-  const totalImageCount = customImages.length + 3;
+  const totalImageCount = canonicalCustomItems.length + 3;
   for (let rank = 1; !starterOnly && rank <= totalImageCount; rank += 1) {
     const presetRole = presetImageRanks.get(rank);
     if (presetRole && presetByRole.get(presetRole)) {
@@ -1093,6 +1071,14 @@ async function prepareMediaPlan({ session, manifest }) {
   while (customIndex < canonicalCustomItems.length) {
     orderedImages.push(canonicalCustomItems[customIndex]);
     customIndex += 1;
+  }
+  // For partial batches (e.g. 1–7 JPGs), ranks 5 and 15 may be beyond
+  // the batch length. Still attach all 3 reusable shop images.
+  if(!starterOnly){
+    for(const role of ['choose-option','choose-frame','promotion']){
+      const preset=presetByRole.get(role);
+      if(preset&&!orderedImages.some(image=>image.presetRole===role))orderedImages.push(preset);
+    }
   }
 
   const videoPreset = presetByRole.get('video');
@@ -1141,8 +1127,8 @@ async function prepareMediaPlan({ session, manifest }) {
       referenceListingId: reference?.listingId || null,
       referenceTitle: reference?.title || null,
       presetImageRanks: Object.fromEntries([...presetImageRanks.entries()].map(([rank, role]) => [role, rank])),
-      canonicalLayoutApplied: canonicalCustomItems.length === 12,
-      canonicalLayoutVersion: canonicalCustomItems.length === 12 ? 'silvia-15-v1' : null,
+      canonicalLayoutApplied: sortResult.applied && canonicalCustomItems.length === 12,
+      canonicalLayoutVersion: sortResult.applied && canonicalCustomItems.length === 12 ? 'silvia-15-v1' : null,
       matches: sortResult.matches || []
     }
   };

@@ -383,7 +383,16 @@ $('mockup_files').addEventListener('change',()=>{
   message('Using manually selected JPG mockups for this Etsy listing.');
  }
 });
-$('master_file').addEventListener('change',clearCurrentBatch);
+$('master_file').addEventListener('change',()=>{
+ clearCurrentBatch();
+ // Master selection, not Create Etsy Draft, starts mockup rendering.
+ // This direct job owns a fresh copy of the selected master; if draft upload
+ // completes later, the artwork-uploaded event must not create a second job.
+ const file=$('master_file').files?.[0];
+ if(file&&$('mg-auto-queue').checked){
+  void initialLoad.then(()=>createJob({automatic:true})).catch(failure);
+ }
+});
 window.addEventListener('pod-artwork-uploaded',event=>{
  const info=event.detail||{},file=$('master_file').files?.[0];
  if(!file||!info.artworkId||file.name!==info.filename||file.size!==Number(info.size)||
