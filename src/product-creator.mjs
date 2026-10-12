@@ -641,7 +641,7 @@ async function uploadArtworkToR2(){
 
     uploadProgress.style.width='100%';
     uploadStatus.className='status ok';
-    uploadStatus.innerHTML='<strong>'+data.artworkId+' uploaded.</strong><br>Master artwork and '+uploads.length+' media'+(uploads.length===1?'':'s')+' are stored in R2 and linked to this product.'+ratioSummary;
+    uploadStatus.innerHTML='<strong>'+data.artworkId+' uploaded and verified in R2.</strong><br>Cloudflare object prefix: artworks/'+data.artworkId+'/<br>Master artwork and '+uploads.length+' media'+(uploads.length===1?'':'s')+' are stored in R2 and linked to this product.'+ratioSummary;
     // Fire and forget: mockup rendering must not hold up draft creation.
     window.dispatchEvent(new CustomEvent('pod-artwork-uploaded',{detail:{
       artworkId:data.artworkId,filename:master.name,size:master.size,lastModified:master.lastModified

@@ -33,7 +33,7 @@ let nextAppIndex = 0;
 let activeJob = null;
 let heartbeatInFlight = false;
 const mockupOwner = crypto.randomUUID();
-const mockupPollAt = new Map(),mockupUnsupported=new Set();
+const mockupPollAt = new Map(),mockupUnsupported=new Map(); // Retry temporarily unavailable PSD endpoints.
 let preferMockupNext=false; // A crop backlog must not starve all pending PSD jobs.
 
 function sleep(ms) {
@@ -335,7 +335,7 @@ async function pollOnce(){
       }
       }else{
       for(const app of cycle){
-        if(stopping||mockupUnsupported.has(app.appUrl))continue;
+        if(stopping||(mockupUnsupported.get(app.appUrl)||0)>Date.now())continue;
         if(Date.now()-(mockupPollAt.get(app.appUrl)||0)<12000)continue;
         mockupPollAt.set(app.appUrl,Date.now());
         try{
@@ -351,8 +351,8 @@ async function pollOnce(){
         }catch(error){
           // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
           if(/404|not found|non-json/i.test(error.message)){
-            mockupUnsupported.add(app.appUrl);
-            console.log('['+app.name+'] PSD API unavailable; crop service remains enabled.');
+            mockupUnsupported.set(app.appUrl,Date.now()+60000);
+            console.log('['+app.name+'] PSD API unavailable; will retry in one minute. Crop service remains enabled.');
           }else console.error('['+app.name+'] PSD polling failed:',error.message);
         }
       }
