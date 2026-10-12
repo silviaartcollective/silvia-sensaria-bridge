@@ -3645,15 +3645,21 @@ const server = http.createServer(async (req, res) => {
       body.quantity = 999;
 
       const taxonomyPromise = getCachedTaxonomyProperties(session, body.taxonomy_id);
-      const mediaPrepStartedAt = Date.now();
+      let mediaPrepStartedAt = 0;
       // Start image sorting/download/optimization immediately and let it run while
       // Etsy creates/configures the draft. This removes media-prep time from the
       // critical path without performing concurrent Etsy writes.
       let mediaPrepMs = 0;
-      const mediaPlanPromise = prepareMediaPlan({ session, manifest }).then(
-        (plan) => ({ ok: true, plan, ms: Date.now() - mediaPrepStartedAt }),
-        (error) => ({ ok: false, error, ms: Date.now() - mediaPrepStartedAt })
-      );
+      let mediaPlanPromise = null;
+      // start media preparation only once the draft has been created
+      // and the configuration task is running, not during draft creation.
+      const startMediaPlan=()=>{
+        mediaPrepStartedAt=Date.now();
+        mediaPlanPromise=prepareMediaPlan({session,manifest}).then(
+          plan=>({ok:true,plan,ms:Date.now()-mediaPrepStartedAt}),
+          error=>({ok:false,error,ms:Date.now()-mediaPrepStartedAt})
+        );
+      };
 
       let draft;
       const draftStartedAt = Date.now();
@@ -3688,6 +3694,7 @@ const server = http.createServer(async (req, res) => {
       inflightDraftSetups.add(setupId);
       void (async()=>{
         try{
+          startMediaPlan();
       // Taxonomy/media preparation above can stay parallel because it does not
       // mutate Etsy. Etsy listing writes themselves must be serialized: Etsy
       // returns HTTP 409 when two processes edit the same listing at once.
