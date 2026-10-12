@@ -3932,11 +3932,6 @@ const server = http.createServer(async (req, res) => {
           manifest.etsyDraftSetup={...summary,status:'completed',
             completedAt:new Date().toISOString(),r2Prefix:'artworks/'+setupId+'/'};
           await saveArtworkManifest(manifest);
-          // The initial set may only contain the master + three presets.
-          // Sync individually completed PSDs even if the browser is no longer open.
-          void reconcileCompletedMockupsForArtwork(setupId).catch(
-            error=>console.error('PSD catch-up after Etsy draft setup failed:',error)
-          );
         }catch(error){
           console.error('Etsy draft setup failed for '+setupId+':',error);
           try{
@@ -3946,7 +3941,13 @@ const server = http.createServer(async (req, res) => {
               failedAt:new Date().toISOString()};
             await saveArtworkManifest(updated);
           }catch(saveError){console.error('Could not record draft setup failure:',saveError);}
-        }finally{inflightDraftSetups.delete(setupId)}
+        }finally{
+          inflightDraftSetups.delete(setupId);
+          if(manifest.etsyDraftSetup?.status==='completed')
+            void reconcileCompletedMockupsForArtwork(setupId).catch(
+              error=>console.error('PSD catch-up after Etsy draft setup failed:',error)
+            );
+        }
       })();
       return sendJson(res,201,{ok:true,processing:true,
         status:'running',listingId:draft.listing_id,state:'draft',
