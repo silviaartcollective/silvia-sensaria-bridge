@@ -11,11 +11,12 @@ test('Etsy photo plan supports all 20 photo slots, three preset plus 17 original
  assert.match(ui,/id="mg-select-seventeen"/);
  assert.match(source,/items:\[\.\.\.matched\.items,\.\.\.customImages\.slice\(12\)\]/);
 });
-test('Gelato converter restores exact original Etsy description including section URL',()=>{
+test('Gelato converter updates canvas thickness but preserves existing Etsy SEO and section URL',()=>{
  const source=read('src/server.mjs');
  assert.match(source,/const originalDescription=String\(originalListing\.description\|\|''\)/);
- assert.match(source,/description: originalDescription/);
- assert.match(source,/if\(String\(updatedListing\.description\|\|''\)!==originalDescription\)/);
+ assert.match(source,/description: expectedDescription/);
+ assert.match(source,/const expectedDescription=reviseCanvasThickness\(originalDescription\)/);
+ assert.match(source,/if\(String\(updatedListing\.description\|\|''\)!==expectedDescription\)/);
  assert.match(source,/Etsy did not preserve the original description and section link/);
  const etsy=read('src/etsy.mjs');
  assert.match(etsy,/export async function getListing\(/);
