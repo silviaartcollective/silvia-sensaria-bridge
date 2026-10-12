@@ -37,6 +37,6 @@ test('PSD render jobs are explicit, with no automatic 26-template selection or d
  assert.ok(js.includes("['mg-generate',createJob]"));
  assert.ok(!js.includes("event.stopImmediatePropagation()"));
  assert.ok(!js.includes('maybeAutoStart'));
- assert.ok(js.includes("['mg-select-seven',selectSeven]"));
+ assert.ok(js.includes("$('mg-select-seven').addEventListener('click',selectSeven)"));
  assert.ok(ui.includes('id="mg-select-seven"'));
 });
