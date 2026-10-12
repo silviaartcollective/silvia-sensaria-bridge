@@ -22,6 +22,7 @@ import { previewDescriptionUpdates, applyDescriptionUpdates } from './descriptio
 
 import { renderProductCreator } from './product-creator.mjs';
 import { handleMockupAPI } from './mockup-api.mjs';
+import {starterDraftMedia} from './draft-starter-media.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
@@ -995,25 +996,30 @@ async function prepareMediaPlan({ session, manifest }) {
     throw new Error('The 3 preset images + listing video are not installed in R2 yet.');
   }
 
-  let reference = currentMockupReference(session);
-  if (!reference) {
-    const shopArgs = {
-      shopId: session.shop.shop_id,
-      keystring: session.keystring,
-      sharedSecret: session.sharedSecret,
-      accessToken: session.accessToken
-    };
-    const listings = await getShopListings({ ...shopArgs, state: 'active', limit: 100 });
-    const sourceListings = (listings.results || listings || []).map((listing) => ({
-      listing_id: listing.listing_id,
-      title: listing.title
-    }));
-    reference = await cacheRecentMockupReference(session, sourceListings);
-  }
-
-  const customImages = customMedia.filter((item) =>
-    String(item?.contentType || '').startsWith('image/')
+  const customImages = customMedia.filter(item =>
+    String(item?.contentType||'').startsWith('image/')
   );
+  const starterOnly=customImages.length===0;
+  // No PSD/reference lookup is required for an unpublished starter draft.
+  let reference=null;
+  if(!starterOnly){
+   let reference = currentMockupReference(session);
+   if (!reference) {
+     const shopArgs = {
+       shopId: session.shop.shop_id,
+       keystring: session.keystring,
+       sharedSecret: session.sharedSecret,
+       accessToken: session.accessToken
+     };
+     const listings = await getShopListings({ ...shopArgs, state: 'active', limit: 100 });
+     const sourceListings = (listings.results || listings || []).map((listing) => ({
+       listing_id: listing.listing_id,
+       title: listing.title
+     }));
+     reference = await cacheRecentMockupReference(session, sourceListings);
+   }
+
+  }
 
   // The established Silvia listing layout has preset images interleaved at
   // Etsy IMAGE ranks 2, 5 and 15. The listing video is separate and Etsy shows
@@ -1025,11 +1031,11 @@ async function prepareMediaPlan({ session, manifest }) {
     [15, 'promotion']
   ]);
 
-  if (!reference) {
+  if (!reference && !starterOnly) {
     throw new Error('No usable active Etsy listing was found to use as the locked mockup reference.');
   }
 
-  const referenceCustomImages = (reference.images || []).filter((_, index) =>
+  const referenceCustomImages = (reference?.images || []).filter((_, index) =>
     !presetImageRanks.has(index + 1)
   );
 
@@ -1042,7 +1048,7 @@ async function prepareMediaPlan({ session, manifest }) {
     : {
         items: [],
         applied: true,
-        reason: 'no custom mockups',
+        reason: 'Draft created without generated mockups; master artwork is the first image',
         averageScore: null,
         matches: []
       };
@@ -1066,12 +1072,12 @@ async function prepareMediaPlan({ session, manifest }) {
 
   // Convert the stable v3 reference-slot identities into the exact canonical
   // 15-image shop layout shown in the approved Etsy listing.
-  const canonicalCustomItems = canonicalCustomMockupOrder(sortResult.items);
+  const canonicalCustomItems = starterOnly ? [] : canonicalCustomMockupOrder(sortResult.items);
 
-  const orderedImages = [];
+  const orderedImages = starterOnly ? starterDraftMedia(manifest.master,PRESET_MEDIA).filter(item=>item.presetRole!=='video') : [];
   let customIndex = 0;
   const totalImageCount = customImages.length + 3;
-  for (let rank = 1; rank <= totalImageCount; rank += 1) {
+  for (let rank = 1; !starterOnly && rank <= totalImageCount; rank += 1) {
     const presetRole = presetImageRanks.get(rank);
     if (presetRole && presetByRole.get(presetRole)) {
       orderedImages.push(presetByRole.get(presetRole));
@@ -1125,7 +1131,7 @@ async function prepareMediaPlan({ session, manifest }) {
     mediaItems,
     objectByKey,
     sort: {
-      applied: Boolean(sortResult.applied),
+      applied: !starterOnly && Boolean(sortResult.applied),
       reason: sortResult.reason || null,
       averageScore: sortResult.averageScore ?? null,
       referenceListingId: reference?.listingId || null,
@@ -3547,12 +3553,7 @@ const server = http.createServer(async (req, res) => {
           error: 'The artwork upload is not complete in R2. Re-upload the master artwork and listing media before creating the Etsy draft.'
         });
       }
-      if (!(manifest.mockups || []).some((item) => String(item?.contentType || '').startsWith('image/'))) {
-        return sendJson(res, 400, {
-          ok: false,
-          error: 'At least one listing mockup image is required before creating the Etsy draft.'
-        });
-      }
+      // The master is used as the featured image when optional PSD mockups are pending.
 
       // Repair/ensure the production crop queue independently of Etsy draft creation.
       // A crop failure must never block creation of the Etsy draft.

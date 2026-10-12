@@ -88,13 +88,13 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
             <label>Master artwork
               <input id="master_file" type="file" accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff">
             </label>
-            <label>Artwork mockups
+            <label>Artwork mockups <span class="hint">optional</span>
               <input id="mockup_files" type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp">
             </label>
           </div>
-          <div class="uploadmeta">Upload only the artwork-specific mockups here. The 3 reusable shop mockups and 1 listing video are appended automatically from the preset library.</div>
+          <div class="uploadmeta">Mockups are optional. Create the draft before mockups finish: the master artwork becomes the first listing image, followed by the 3 saved preset images and video. Finished PSD mockups can be added later in Etsy.</div>
           <div class="progress"><span id="upload-progress"></span></div>
-          <div class="status" id="upload-status">Choose the master artwork and artwork mockups. They upload to R2 automatically, then attach to the Etsy draft with the preset media.</div>
+          <div class="status" id="upload-status">Choose the master artwork to create your draft now. Mockup generation is optional and will never block drafts.</div>
           <div class="actions"><a class="btn secondary" id="launch-crop-worker" href="pod-crop-worker://start">Launch Shared Crop Worker</a></div>
           <div class="status" id="crop-worker-status">Production crops will be queued after the master artwork finishes uploading.</div>
         </div>
@@ -724,9 +724,7 @@ loadOptions();
 form.addEventListener('submit',async(e)=>{
   e.preventDefault();
 
-  // This runs directly from the user's click, so browsers are much more likely
-  // to allow the custom Windows protocol than if we wait until after uploads.
-  try{ window.location.href='pod-crop-worker://start'; }catch{}
+  // Draft creation does not launch PSD rendering on the PC.
 
   button.disabled=true;
   result.className='result';

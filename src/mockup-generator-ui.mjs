@@ -2,7 +2,7 @@ export function renderMockupGeneratorSection(){
 return `
 <section class="uploadbox" id="mockup-generator-panel" aria-label="Generate mockups">
  <div class="mg-workspace"><div class="mg-main"><div><strong>Generate listing mockups</strong>
- <div class="uploadmeta">Choose master artwork to queue saved PSD templates on your shared PC worker. Close this tab if needed; rendering continues on the PC. Choose finished JPGs on the right.</div></div>
+ <div class="uploadmeta">Optional: choose only the PSD templates you need, then queue them on your PC. You can create the Etsy draft immediately without waiting for rendering. Keep the draft unpublished until its final mockups are ready.</div></div>
  <div class="uploadrow">
   <label>Add PSD / PSB mockups <span class="hint">optional if templates are saved</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
@@ -12,10 +12,11 @@ return `
   </label>
  </div>
  <details id="mg-saved-details"><summary>Saved PSD templates <span id="mg-saved-count"></span> · select which to use</summary>
+  <div class="mg-actions"><button class="btn secondary" type="button" id="mg-select-seven">Select first 7</button><button class="btn secondary" type="button" id="mg-clear-templates">Clear selection</button></div>
   <div id="mg-templates" class="mg-template-list"></div>
  </details>
  <div class="mg-actions">
-  <button class="btn secondary" type="button" id="mg-generate">Queue mockups on PC</button>
+  <button class="btn secondary" type="button" id="mg-generate">Queue selected mockups on PC</button>
   <button class="btn secondary" type="button" id="mg-pause" disabled>Pause after current PSD</button>
  </div>
  <div id="mg-progress" class="status" role="status" aria-live="polite">Choose master artwork above. The shared PC worker will automatically process saved PSDs.</div>

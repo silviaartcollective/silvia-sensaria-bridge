@@ -5,18 +5,18 @@ import vm from 'node:vm';
 import {renderMockupGeneratorSection} from '../src/mockup-generator-ui.mjs';
 import {MOCKUP_LEASE_MS,hasActiveMockupLease,knownMockupArtworkTarget} from '../src/mockup-generator.mjs';
 const read=p=>readFileSync(new URL('../src/'+p,import.meta.url),'utf8');
-test('upload queues PC mockups automatically and preview checkboxes attach selected images',()=>{
+test('PSD generation is optional and preview checkboxes attach selected images',()=>{
  const client=read('mockup-generator-client.js'),html=renderMockupGeneratorSection();
  assert.doesNotThrow(()=>new vm.Script(client));
  for(const id of ['mg-preview-list','mg-preview-count','mg-select-all','mg-deselect-all','mg-apply-selected','mg-worker-status'])
   assert.ok(html.includes('id="'+id+'"'),id);
  assert.ok(!html.includes('id="mg-editor"'));
- assert.ok(client.includes("addEventListener('change',()=>act(maybeAutoStart))"));
- assert.ok(client.includes('await createJob()'));
+ assert.ok(!client.includes('maybeAutoStart'));
+ assert.ok(client.includes("['mg-generate',createJob]"));
  assert.ok(client.includes('defaultSelected:true'));
  assert.ok(client.includes('selected.slice(0,7)'));
  assert.ok(client.includes("$('mockup_files').files=dt.files"));
- assert.ok(client.includes('if(requested&&!ready)'));
+ assert.ok(!client.includes('event.stopImmediatePropagation()'));
 });
 test('worker lease expires after two minutes with legacy browser lock recovery',()=>{
  const now=Date.now(),iso=n=>new Date(n).toISOString();

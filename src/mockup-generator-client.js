@@ -58,12 +58,7 @@ async function upload(url,file,type){
 }
 function progress(done,total){$('mg-progress-bar').style.width=(total?Math.round(100*done/total):0)+'%'}
 function markRequested(){requested=true;ready=false;panel.dataset.generationRequested='true';panel.dataset.generationReady='false'}
-$('creator-form').addEventListener('submit',event=>{
- if(requested&&!ready){
-  event.preventDefault();event.stopImmediatePropagation();
-  failure(Error('The PC worker is still generating mockups or your image selection has not been attached. Select the finished JPGs first.'));
- }
-},true);
+// PSD generation is optional; draft submission must never wait for the worker.
 function renderPreviews(){
  const completed=job?job.templates.filter(t=>t.status==='completed'):[];
  const signature=(job?.id||'none')+'|'+completed.map(t=>t.id+':'+(t.finishedAt||'')).join(';')+
@@ -140,7 +135,7 @@ async function loadTemplates(){
  for(const template of templates){
   const row=create('label'),cb=create('input','',{type:'checkbox',value:template.id});
   cb.disabled=template.status!=='ready';
-  cb.checked=cb.disabled?false:(selected.size?selected.has(template.id):true);
+  cb.checked=!cb.disabled&&selected.has(template.id);
   row.append(cb,create('span',template.name+(template.mapping?' · mapped':' · auto-map')));
   box.append(row);
  }
@@ -330,14 +325,14 @@ async function saveMapping(){
  $('mg-mapping').hidden=true;
  await retry();
 }
-async function maybeAutoStart(){
- await initialLoad;
- if(preparing||!$('master_file').files.length)return;
- const chosen=$('mg-templates').querySelectorAll('input:checked').length;
- if(!chosen&&!$('mg-psds').files.length){
-  message('Master artwork selected. Add PSD templates to start the PC generator.');return;
- }
- await createJob();
+function selectSeven(){
+ const ready=[...$('mg-templates').querySelectorAll('input[type=checkbox]')].filter(cb=>!cb.disabled);
+ ready.forEach((cb,index)=>{cb.checked=index<7});
+ message('Selected '+Math.min(7,ready.length)+' PSD templates. Queue only when needed; Etsy drafts do not wait.');
+}
+function clearTemplates(){
+ for(const cb of $('mg-templates').querySelectorAll('input[type=checkbox]'))cb.checked=false;
+ message('No PSD templates selected. You can create the Etsy draft now.');
 }
 $('mockup_files').addEventListener('change',()=>{
  if($('mockup_files').files.length){
@@ -346,8 +341,8 @@ $('mockup_files').addEventListener('change',()=>{
   message('Using manually selected JPG mockups for this Etsy listing.');
  }
 });
-$('master_file').addEventListener('change',()=>act(maybeAutoStart));
-$('mg-psds').addEventListener('change',()=>act(maybeAutoStart));
+$('mg-select-seven').addEventListener('click',selectSeven);
+$('mg-clear-templates').addEventListener('click',clearTemplates);
 $('mg-select-all').addEventListener('click',()=>{
  if(!job)return;selectionByJob.set(job.id,{defaultSelected:true,exceptions:new Set()});selectionChanged();
 });
@@ -362,8 +357,8 @@ for(const [id,method] of [
 initialLoad=Promise.all([loadTemplates(),loadJobs(),workerStatus()]);
 initialLoad.then(()=>{
  renderPreviews();
- if($('master_file').files.length)void maybeAutoStart().catch(failure);
- else if(jobs[0])void showJob(jobs[0].id).catch(failure);
+ if(jobs[0])void showJob(jobs[0].id).catch(failure);
+ else message('Optional: choose PSD templates and click Queue selected mockups when needed.');
 }).catch(failure);
 // Polling updates are UI-only. The PC worker continues running if this tab closes.
 setInterval(()=>{
