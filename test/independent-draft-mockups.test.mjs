@@ -9,7 +9,7 @@ test('mockup reference is advisory, never required to create an Etsy draft',()=>
  assert.ok(begin>0&&end>begin);
  assert.ok(code.includes('const reference=starterOnly?null:currentMockupReference(session);'));
  assert.ok(code.includes('catch(error)'));
- assert.ok(code.includes('sortResult.items=customImages'));
+ assert.ok(code.includes('items:customImages'));
  assert.ok(!code.includes('No usable active Etsy listing was found'));
  assert.ok(!code.includes('No locked Etsy mockup reference is available'));
  assert.ok(!code.includes('Exact mockup ordering could not be matched'));
