@@ -18,7 +18,7 @@ import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEts
 
 const TRACKING_SHOP_NAME="Silvia Art Collective";
 import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
-import { previewDescriptionUpdates, applyDescriptionUpdates } from './description-updater.mjs';
+import { previewDescriptionUpdates, applyDescriptionUpdates, reviseCanvasThickness } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
 import {getMockupJob,listMockupJobs} from './mockup-generator.mjs';
@@ -1409,6 +1409,23 @@ async function performListingConversion(body){
         if(!enabled.length||enabled.some(p=>!String(p.sku||'').startsWith(artworkId+'-'))||
            priceSyncPlanForInventory(inventory).changed)
           throw Error('Previously completed conversion could not be verified against current Etsy variants and pricing.');
+        const recoveryListing=await getListing({
+          listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
+          accessToken:session.accessToken
+        });
+        const recoveryDescription=reviseCanvasThickness(String(recoveryListing.description||''));
+        if(recoveryDescription!==String(recoveryListing.description||'')){
+          await withEtsyListingRetry(()=>updateListing({
+            shopId:session.shop.shop_id,listingId,
+            listing:{description:recoveryDescription},
+            keystring:session.keystring,sharedSecret:session.sharedSecret,
+            accessToken:session.accessToken
+          }));
+          const confirmed=await getListing({listingId,keystring:session.keystring,
+            sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+          if(String(confirmed.description||'')!==recoveryDescription)
+            throw Error('Could not verify corrected 1.25-inch canvas description.');
+        }
         if(reconvert){
           const historical=Array.isArray(prior.reconversionHistory)?prior.reconversionHistory:[];
           if(!historical.some(entry=>entry.revision===body.revision)){
@@ -1483,6 +1500,11 @@ async function performListingConversion(body){
       const originalDescription=String(originalListing.description||'');
       if(!originalDescription.trim())
         throw Error('Cannot safely convert a listing whose Etsy description could not be verified.');
+      // Keep all existing SEO, links, and artwork text. Adjust only the
+      // existing canvas-thickness phrase, using the Description Updater preset.
+      const expectedDescription=reviseCanvasThickness(expectedDescription);
+      if(expectedDescription.length>13000)
+        throw Error('Corrected Etsy description exceeds 13,000 characters.');
 
       const currentInventory = await getListingInventory({
         listingId,
@@ -1511,7 +1533,7 @@ async function performListingConversion(body){
         listingId,
         listing: {
           taxonomy_id: listingDefaults.taxonomyId,
-          description: originalDescription,
+          description: expectedDescription,
           shipping_profile_id: managedShippingProfile?.shipping_profile_id || undefined,
           readiness_state_id: readinessStateId,
           should_auto_renew: listingDefaults.autoRenew,
@@ -1563,14 +1585,14 @@ async function performListingConversion(body){
         listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
         accessToken:session.accessToken
       });
-      if(String(updatedListing.description||'')!==originalDescription){
+      if(String(updatedListing.description||'')!==expectedDescription){
         await withEtsyListingRetry(()=>updateListing({
-          shopId:session.shop.shop_id,listingId,listing:{description:originalDescription},
+          shopId:session.shop.shop_id,listingId,listing:{description:expectedDescription},
           keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
         }));
         const restored=await getListing({listingId,keystring:session.keystring,
           sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-        if(String(restored.description||'')!==originalDescription)
+        if(String(restored.description||'')!==expectedDescription)
           throw Error('Etsy did not preserve the original description and section link.');
       }
       const properties = await getCachedTaxonomyProperties(session, listingDefaults.taxonomyId);
@@ -1585,13 +1607,13 @@ async function performListingConversion(body){
       // Preserve the entire original description, including the shop-section link.
       const finalListing=await getListing({listingId,keystring:session.keystring,
         sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-      if(String(finalListing.description||'')!==originalDescription){
+      if(String(finalListing.description||'')!==expectedDescription){
         await withEtsyListingRetry(()=>updateListing({shopId:session.shop.shop_id,
-          listingId,listing:{description:originalDescription},
+          listingId,listing:{description:expectedDescription},
           keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken}));
         const checked=await getListing({listingId,keystring:session.keystring,
           sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-        if(String(checked.description||'')!==originalDescription)
+        if(String(checked.description||'')!==expectedDescription)
           throw Error('The original description and shop-section URL were not restored.');
       }
 
