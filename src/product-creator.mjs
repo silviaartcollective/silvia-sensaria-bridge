@@ -891,7 +891,7 @@ form.addEventListener('submit',async(e)=>{
             if(!response.ok)throw Error(report.error||'Could not check draft progress');
             const state=report.setup?.status||'unknown';
             if(state==='completed'){
-              result.textContent='Etsy draft #'+String(report.listingId)+' is fully configured. '+String(report.setup.media?.imageCount||0)+' photos and '+(report.setup.media?.videoUploaded?'video':'no video')+' uploaded. R2 artwork confirmed: '+String(report.r2Prefix);
+              result.textContent='Etsy draft #'+String(report.listingId)+' initial setup complete: '+String(report.setup.media?.imageCount||0)+' photos and '+(report.setup.media?.videoUploaded?'video':'no video')+'. Generated PSD mockups upload separately as they finish. R2: '+String(report.r2Prefix);
               return;
             }
             if(state==='failed'||state==='interrupted'){

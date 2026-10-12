@@ -13,7 +13,7 @@ import {
 } from './r2.mjs';
 import {randomUUID} from 'node:crypto';
 import {streamMockupZip} from './mockup-zip.mjs';
-import {loadArtworkManifest} from './artwork-storage.mjs';
+import {loadArtworkManifest,saveArtworkManifest} from './artwork-storage.mjs';
 import {copyArtworkObject,artworkObjectInfo} from './r2.mjs';
 
 const ID='[a-f0-9-]{36}';
@@ -48,7 +48,7 @@ function makeError(error){
  const msg=String(error?.message||error||'Unexpected error');
  return {ok:false,error:msg.slice(0,450)};
 }
-export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorized=()=>false,readJson,sendJson}){
+export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorized=()=>false,readJson,sendJson,onMockupCompleted=()=>{}}){
  if(!url.pathname.startsWith('/api/mockups/'))return false;
  if(!authenticated(req,res))return true;
  if(req.method!=='GET'){
@@ -144,7 +144,11 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     job.artworkId=artworkId;job.sourceMasterKey=master.key;
     await putMockupJob(job);
     await copyArtworkObject(master.key,job.artworkKey);
-    return send(201,{job:await markMockupArtworkUploaded(job.id)}),true;
+    const confirmed=await markMockupArtworkUploaded(job.id);
+    // Persist the linkage for refresh/restart recovery and progress UI.
+    manifest.mockupJobIds=[...new Set([...(manifest.mockupJobIds||[]),job.id])].slice(-30);
+    await saveArtworkManifest(manifest);
+    return send(201,{job:confirmed}),true;
    }
    if(req.method==='POST'&&parts.length===1){
     const job=await createMockupJob(await readJson(req));
@@ -195,6 +199,10 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     const result=await completeMockupItem(id,owner,itemId,{outputKey:key,
      dimensions:{width:metadata.width,height:metadata.height},mapping:str(body.mapping)});
     if(old&&old!==key)await deleteArtworkObject(old).catch(()=>{});
+    // Successful JPG verification is the trigger; do not wait for all PSDs.
+    void Promise.resolve().then(()=>onMockupCompleted(result)).catch(
+      error=>console.error('PSD completion notification failed:',error)
+    );
     return send(200,{job:result}),true;
    }
    if(req.method==='POST'&&parts[2]==='fail'){

@@ -21,7 +21,7 @@ import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
-import {getMockupJob} from './mockup-generator.mjs';
+import {getMockupJob,listMockupJobs} from './mockup-generator.mjs';
 import {mockupObjectKey} from './production.mjs';
 import { handleMockupAPI } from './mockup-api.mjs';
 import {canonicalWallArtStyle,styleAttributes} from './etsy-style.mjs';
@@ -1691,6 +1691,95 @@ const conversionQueueTimer=setInterval(()=>{
 },9000);
 conversionQueueTimer.unref?.();
 
+// Serialize all server-side Etsy uploads and R2 manifest changes for one artwork.
+// The PC worker can finish PSDs while Product Creator is closed.
+const generatedMockupSyncTail=new Map();
+async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
+  const previous=generatedMockupSyncTail.get(artworkId)||Promise.resolve();
+  const work=previous.catch(()=>{}).then(async()=>{
+    const chosen=new Set((Array.isArray(templateIds)?templateIds:[]).map(String));
+      const manifest=await loadArtworkManifest(artworkId);
+      if(!manifest?.master?.key||manifest.status!=='ready')
+        throw Error('The artwork is not verified in Cloudflare R2.');
+      const job=await getMockupJob(String(body.jobId||''));
+      if(job.artworkId!==artworkId||job.sourceMasterKey!==manifest.master.key)
+        throw Error('This PSD batch belongs to another artwork. No images were modified.');
+      // Selected outputs belong to this verified job only.
+      const outputs=job.templates.filter(t=>t.status==='completed'&&t.outputKey&&
+        (!chosen.size||chosen.has(t.id))).slice(0,17);
+      if(!outputs.length)throw Error('No verified JPGs are ready in this batch.');
+      if(manifest.etsyDraftListingId&&(
+        inflightDraftSetups.has(artworkId)||manifest.etsyDraftSetup?.status!=='completed')){
+        return {ok:true,pendingSetup:true,message:'Draft setup still running; completed PSDs will sync afterward.'};
+      }
+      const current=(manifest.mockups||[]).slice(0,17);
+      const existingSource=new Set(current.map(x=>x.generatedFromKey).filter(Boolean));
+      let prepared=0;
+      for(const t of outputs){
+        if(existingSource.has(t.outputKey)||current.length>=17)continue;
+        const index=current.length,key=mockupObjectKey(artworkId,index,'jpg');
+        await copyArtworkObject(t.outputKey,key);
+        current.push({index,originalFilename:t.outputName,key,contentType:'image/jpeg',
+          generatedFromKey:t.outputKey,sourceJobId:job.id});
+        existingSource.add(t.outputKey);prepared++;
+      }
+      manifest.mockups=current;
+      await saveArtworkManifest(manifest);
+      if(!manifest.etsyDraftListingId)
+        return {ok:true,prepared,uploaded:0,pendingDraft:true,
+          r2Prefix:'artworks/'+artworkId+'/',message:'Completed PSDs stored in R2 for the future Etsy draft.'};
+      const session=await getEtsySession();
+      const listingId=Number(manifest.etsyDraftListingId);
+      const latestListing=await getListing({listingId,
+        keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+      if(latestListing.state!=='draft')
+        throw Error('Automatic photo updates are limited to unpublished Etsy drafts.');
+      const existingPhotos=await getEtsyListingImages({listingId,
+        keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+      const available=Math.max(0,20-existingPhotos.length);
+      const uploadedSource=new Set(manifest.etsyGeneratedSourceKeys||[]);
+      let uploaded=0;
+      for(const item of current.filter(m=>m.sourceJobId===job.id&&
+        m.generatedFromKey&&!uploadedSource.has(m.generatedFromKey)).slice(0,available)){
+        const original=await getArtworkObject(item.key);
+        const optimized=await optimizeEtsyImageObject(original);
+        const result=await withEtsyListingRetry(()=>uploadListingImage({
+          shopId:session.shop.shop_id,listingId,imageBuffer:optimized.body,
+          filename:item.originalFilename,contentType:optimized.contentType||'image/jpeg',
+          rank:existingPhotos.length+uploaded+1,altText:manifest.title||'',
+          keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
+        }),{attempts:8,baseDelayMs:180});
+        uploaded++;
+        manifest.etsyMedia ||= {images:[],video:null};
+        manifest.etsyMedia.images.push({key:item.key,rank:existingPhotos.length+uploaded,
+          listingImageId:result.listing_image_id||null,filename:item.originalFilename});
+        manifest.etsyGeneratedSourceKeys=[...(manifest.etsyGeneratedSourceKeys||[]),item.generatedFromKey];
+        if(manifest.etsyDraftSetup?.status==='completed'&&manifest.etsyDraftSetup.media)
+          manifest.etsyDraftSetup.media.imageCount=existingPhotos.length+uploaded;
+        await saveArtworkManifest(manifest);
+      }
+      return {ok:true,prepared,uploaded,
+        photoCount:existingPhotos.length+uploaded,full:existingPhotos.length+uploaded>=20,
+        r2Prefix:'artworks/'+artworkId+'/'};
+
+  });
+  generatedMockupSyncTail.set(artworkId,work);
+  try{return await work}
+  finally{if(generatedMockupSyncTail.get(artworkId)===work)generatedMockupSyncTail.delete(artworkId)}
+}
+async function reconcileCompletedMockupsForArtwork(artworkId){
+  const manifest=await loadArtworkManifest(artworkId);
+  if(!manifest?.master?.key)return;
+  // Also recover PSD batches that predate the manifest job-ID field.
+  const saved=await listMockupJobs();
+  const linked=saved.filter(j=>j.artworkId===artworkId&&j.sourceMasterKey===manifest.master.key &&
+    j.templates?.some(t=>t.status==='completed'&&t.outputKey));
+  for(const item of linked){
+    try{await syncGeneratedMockupsForArtwork({artworkId,jobId:item.id})}
+    catch(error){console.error('Etsy PSD catch-up failed '+artworkId+' '+item.id+':',error)}
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   // Photopea mockup batch endpoints are private and separate from Etsy fulfillment.
   const mockupUrl=new URL(req.url||'/', 'https://'+String(req.headers.host||'localhost'));
@@ -1713,7 +1802,13 @@ const server = http.createServer(async (req, res) => {
   if(await handleMockupAPI(req,res,mockupUrl,{
     authenticated:(request,response)=>isCropWorkerAuthorized(request)||requireAdminApi(request,response),
     workerAuthorized:isCropWorkerAuthorized,
-    readJson:readJsonBody,sendJson
+    readJson:readJsonBody,sendJson,
+    onMockupCompleted:(verifiedJob)=>{
+      if(!verifiedJob?.artworkId||!verifiedJob?.sourceMasterKey)return;
+      void syncGeneratedMockupsForArtwork({
+        artworkId:verifiedJob.artworkId,jobId:verifiedJob.id
+      }).catch(error=>console.error('PSD auto-sync failed:',error));
+    }
   }))return;
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -3550,79 +3645,19 @@ const server = http.createServer(async (req, res) => {
         productionPartners: productionPartners.results || productionPartners || []
       });
     } catch (error) {
-      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
-    }
-  }
-
-  const appendGeneratedPath=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/append-generated-mockups$/);
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error)   const appendGeneratedPath=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/append-generated-mockups$/);
   if(req.method==='POST'&&appendGeneratedPath){
     if(!requireAdminApi(req,res))return;
     try{
-      const artworkId=appendGeneratedPath[1],body=await readJsonBody(req);
-      const manifest=await loadArtworkManifest(artworkId);
-      if(!manifest?.master?.key||manifest.status!=='ready')
-        throw Error('The artwork is not verified in Cloudflare R2.');
-      const job=await getMockupJob(String(body.jobId||''));
-      if(job.artworkId!==artworkId||job.sourceMasterKey!==manifest.master.key)
-        throw Error('This PSD batch belongs to another artwork. No images were modified.');
-      const chosen=new Set((body.templateIds||[]).map(String));
-      const outputs=job.templates.filter(t=>t.status==='completed'&&t.outputKey&&
-        (!chosen.size||chosen.has(t.id))).slice(0,17);
-      if(!outputs.length)throw Error('No verified JPGs are ready in this batch.');
-      if(manifest.etsyDraftListingId&&(
-        inflightDraftSetups.has(artworkId)||manifest.etsyDraftSetup?.status!=='completed')){
-        return sendJson(res,409,{ok:false,error:'Etsy draft setup is still running. Reapply completed mockups when configuration finishes.'});
-      }
-      const current=(manifest.mockups||[]).slice(0,17);
-      const existingSource=new Set(current.map(x=>x.generatedFromKey).filter(Boolean));
-      let prepared=0;
-      for(const t of outputs){
-        if(existingSource.has(t.outputKey)||current.length>=17)continue;
-        const index=current.length,key=mockupObjectKey(artworkId,index,'jpg');
-        await copyArtworkObject(t.outputKey,key);
-        current.push({index,originalFilename:t.outputName,key,contentType:'image/jpeg',
-          generatedFromKey:t.outputKey,sourceJobId:job.id});
-        existingSource.add(t.outputKey);prepared++;
-      }
-      manifest.mockups=current;
-      await saveArtworkManifest(manifest);
-      if(!manifest.etsyDraftListingId)
-        return sendJson(res,200,{ok:true,prepared,uploaded:0,pendingDraft:true,
-          r2Prefix:'artworks/'+artworkId+'/',message:'Completed PSDs stored in R2 for the future Etsy draft.'});
-      const session=await getEtsySession();
-      const listingId=Number(manifest.etsyDraftListingId);
-      const latestListing=await getListing({listingId,
-        keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-      if(latestListing.state!=='draft')
-        throw Error('Automatic photo updates are limited to unpublished Etsy drafts.');
-      const existingPhotos=await getEtsyListingImages({listingId,
-        keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-      const available=Math.max(0,20-existingPhotos.length);
-      const uploadedSource=new Set(manifest.etsyGeneratedSourceKeys||[]);
-      let uploaded=0;
-      for(const item of current.filter(m=>m.sourceJobId===job.id&&
-        m.generatedFromKey&&!uploadedSource.has(m.generatedFromKey)).slice(0,available)){
-        const original=await getArtworkObject(item.key);
-        const optimized=await optimizeEtsyImageObject(original);
-        const result=await withEtsyListingRetry(()=>uploadListingImage({
-          shopId:session.shop.shop_id,listingId,imageBuffer:optimized.body,
-          filename:item.originalFilename,contentType:optimized.contentType||'image/jpeg',
-          rank:existingPhotos.length+uploaded+1,altText:manifest.title||'',
-          keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
-        }),{attempts:8,baseDelayMs:180});
-        uploaded++;
-        manifest.etsyMedia ||= {images:[],video:null};
-        manifest.etsyMedia.images.push({key:item.key,rank:existingPhotos.length+uploaded,
-          listingImageId:result.listing_image_id||null,filename:item.originalFilename});
-        manifest.etsyGeneratedSourceKeys=[...(manifest.etsyGeneratedSourceKeys||[]),item.generatedFromKey];
-        if(manifest.etsyDraftSetup?.status==='completed'&&manifest.etsyDraftSetup.media)
-          manifest.etsyDraftSetup.media.imageCount=existingPhotos.length+uploaded;
-        await saveArtworkManifest(manifest);
-      }
-      return sendJson(res,200,{ok:true,prepared,uploaded,
-        photoCount:existingPhotos.length+uploaded,full:existingPhotos.length+uploaded>=20,
-        r2Prefix:'artworks/'+artworkId+'/'});
+      const body=await readJsonBody(req);
+      const result=await syncGeneratedMockupsForArtwork({
+        artworkId:appendGeneratedPath[1],jobId:String(body.jobId||''),templateIds:body.templateIds||[]
+      });
+      return sendJson(res,200,result);
     }catch(error){return sendJson(res,409,{ok:false,error:String(error?.message||error)})}
+  }
+
+error)})}
   }
 
   const draftSetupStatusPath=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/draft-setup$/);
@@ -3896,6 +3931,11 @@ const server = http.createServer(async (req, res) => {
           manifest.etsyDraftSetup={...summary,status:'completed',
             completedAt:new Date().toISOString(),r2Prefix:'artworks/'+setupId+'/'};
           await saveArtworkManifest(manifest);
+          // The initial set may only contain the master + three presets.
+          // Sync individually completed PSDs even if the browser is no longer open.
+          void reconcileCompletedMockupsForArtwork(setupId).catch(
+            error=>console.error('PSD catch-up after Etsy draft setup failed:',error)
+          );
         }catch(error){
           console.error('Etsy draft setup failed for '+setupId+':',error);
           try{
