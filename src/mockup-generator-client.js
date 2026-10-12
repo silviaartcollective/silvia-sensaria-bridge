@@ -395,7 +395,8 @@ $('master_file').addEventListener('change',()=>{
  // completes later, the artwork-uploaded event must not create a second job.
  const file=$('master_file').files?.[0];
  if(file&&$('mg-auto-queue').checked){
-  void initialLoad.then(()=>createJob({automatic:true})).catch(failure);
+  // Queue from the one verified artwork in R2; don't upload the master twice.
+  void initialLoad.then(()=>window.startProductArtworkUpload()).catch(failure);
  }
 });
 window.addEventListener('pod-artwork-uploaded',event=>{

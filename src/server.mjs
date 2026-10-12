@@ -3575,6 +3575,9 @@ const server = http.createServer(async (req, res) => {
           error: 'The artwork upload is not complete in R2. Re-upload the master artwork and listing media before creating the Etsy draft.'
         });
       }
+      // An R2 "folder" is an object prefix. Verify the real master, not just its JSON manifest.
+      if(!manifest.master?.key||!(await artworkObjectExists(manifest.master.key)))
+        return sendJson(res,409,{ok:false,error:'The master image is missing from Cloudflare R2. No Etsy draft was created.'});
       // The master is used as the featured image when optional PSD mockups are pending.
 
       // Repair/ensure the production crop queue independently of Etsy draft creation.

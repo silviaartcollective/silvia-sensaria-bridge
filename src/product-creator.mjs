@@ -537,6 +537,14 @@ async function queueCropJob(artworkId){
   return d;
 }
 
+let sharedArtworkUpload=null;
+// One R2 upload is shared by the draft button and automatic PSD generation.
+window.startProductArtworkUpload=()=>{
+ if(sharedArtworkUpload)return sharedArtworkUpload;
+ if(!masterFileInput.files?.[0])return Promise.reject(Error('Choose the master artwork first.'));
+ sharedArtworkUpload=uploadArtworkToR2().finally(()=>{sharedArtworkUpload=null});
+ return sharedArtworkUpload;
+};
 async function uploadArtworkToR2(){
   let existingId=document.getElementById('artwork_id').value.trim();
 
@@ -829,7 +837,7 @@ form.addEventListener('submit',async(e)=>{
   try{
     if(!document.getElementById('artwork_id').value.trim()){
       button.textContent='Uploading artwork…';
-      await uploadArtworkToR2();
+      await window.startProductArtworkUpload();
     }
 
     button.textContent='Creating Etsy draft…';
