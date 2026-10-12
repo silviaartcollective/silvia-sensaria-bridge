@@ -423,6 +423,14 @@ export async function getShopListings({
   return response.json();
 }
 
+export async function getListing({listingId,keystring,sharedSecret,accessToken}){
+ const response=await fetch(`${ETSY_API_BASE}/application/listings/${encodeURIComponent(listingId)}`,{
+   headers:apiHeaders({keystring,sharedSecret,accessToken})
+ });
+ if(!response.ok)throw Error('Etsy listing verification failed ('+response.status+'): '+await response.text());
+ return response.json();
+}
+
 export async function getShopSections({
   shopId,
   keystring,

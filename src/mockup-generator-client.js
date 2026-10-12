@@ -136,7 +136,7 @@ async function useResults(){
  if(!selected.length){markRequested();throw Error('Select at least one generated JPG.')}
  attaching=true;renderPreviews();
  try{
-  const dt=new DataTransfer(),chosen=selected.slice(0,7);
+  const dt=new DataTransfer(),chosen=selected.slice(0,17);
   for(const t of chosen){
    const response=await fetch('/api/mockups/jobs/'+batchId+'/download/'+t.id,{cache:'no-store'});
    if(!response.ok)throw Error('Could not retrieve '+t.outputName+' (HTTP '+response.status+')');
@@ -148,7 +148,7 @@ async function useResults(){
   ready=true;requested=true;
   panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
   $('upload-status').textContent=chosen.length+' selected PC-generated mockups ready for the Etsy draft.'+
-    (selected.length>7?' Only the first 7 selected images are attached.':'');
+    (selected.length>17?' Etsy can fit only the first 17 selected artwork mockups alongside 3 preset photos.':'');
   message('Selected mockups ready for Etsy ('+chosen.length+' JPGs)');
  }finally{attaching=false;renderPreviews()}
 }
@@ -372,6 +372,11 @@ function selectSeven(){
  ready.forEach((cb,index)=>{cb.checked=index<7});
  message('Selected '+Math.min(7,ready.length)+' PSD templates. Queue only when needed; Etsy drafts do not wait.');
 }
+function selectSeventeen(){
+ const available=[...$('mg-templates').querySelectorAll('input[type=checkbox]')].filter(cb=>!cb.disabled);
+ available.forEach((cb,i)=>{cb.checked=i<17});
+ message('Selected '+Math.min(17,available.length)+' PSDs for the available artwork photo slots.');
+}
 function clearTemplates(){
  for(const cb of $('mg-templates').querySelectorAll('input[type=checkbox]'))cb.checked=false;
  message('No PSD templates selected. You can create the Etsy draft now.');
@@ -406,6 +411,7 @@ window.addEventListener('pod-artwork-uploaded',event=>{
  }).catch(failure);
 });
 $('mg-select-seven').addEventListener('click',selectSeven);
+$('mg-select-seventeen').addEventListener('click',selectSeventeen);
 $('mg-clear-templates').addEventListener('click',clearTemplates);
 $('mg-select-all').addEventListener('click',()=>{
  if(!job)return;selectionByJob.set(job.id,{defaultSelected:true,exceptions:new Set()});selectionChanged();

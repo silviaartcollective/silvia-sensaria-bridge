@@ -13,7 +13,7 @@ return `
   </label>
  </div>
  <details id="mg-saved-details"><summary>Saved PSD templates <span id="mg-saved-count"></span> · select which to use</summary>
-  <div class="mg-actions"><button class="btn secondary" type="button" id="mg-select-seven">Select first 7</button><button class="btn secondary" type="button" id="mg-clear-templates">Clear selection</button></div>
+  <div class="mg-actions"><button class="btn secondary" type="button" id="mg-select-seven">Select first 7</button><button class="btn secondary" type="button" id="mg-select-seventeen">Select first 17 (Etsy max)</button><button class="btn secondary" type="button" id="mg-clear-templates">Clear selection</button></div>
   <div id="mg-templates" class="mg-template-list"></div>
  </details>
  <div class="mg-actions">
@@ -52,7 +52,7 @@ return `
   <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
    <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
   </div>
-  <div id="mg-selection-status" class="uploadmeta">Only finished mockups for this artwork can be attached. Older batches are available under Saved batches & troubleshooting.</div>
+  <div id="mg-selection-status" class="uploadmeta">Up to 17 finished artwork mockups plus 3 reusable images can be attached. Older batches remain in troubleshooting.</div>
   <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside></div>
  <div id="mg-worker-status" class="uploadmeta" role="status">Checking shared PC Crop + Mockup Worker…</div>

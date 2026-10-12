@@ -122,6 +122,7 @@ import {
   deleteShopShippingProfile,
   getShopReadinessStateDefinitions,
   getShopListings,
+  getListing,
   getShopSections,
   getShopReturnPolicies,
   getShopProductionPartners,
@@ -1002,7 +1003,7 @@ async function prepareMediaPlan({ session, manifest }) {
 
   const customImages = customMedia.filter(item =>
     String(item?.contentType||'').startsWith('image/')
-  ).slice(0,12); // Etsy supports at most 15 listing images; reserve 3 preset slots.
+  ).slice(0,17); // Etsy supports 20 photo slots, with 3 reserved for preset images.
   const starterOnly=customImages.length===0;
   // The locked reference is only an ordering hint. No active listing is needed.
   const reference=starterOnly?null:currentMockupReference(session);
@@ -1027,14 +1028,17 @@ async function prepareMediaPlan({ session, manifest }) {
   };
   if(!starterOnly&&referenceCustomImages.length){
     try{
+      // The original locked template identifies only its first 12 artwork mockups.
+      // Place up to 5 additional mockups after that group, reaching Etsy's 20-photo limit.
+      const referenceCandidates=customImages.slice(0,12);
       const matched=await sortCustomMockupsByReference({
-        customMedia:customImages,
+        customMedia:referenceCandidates,
         referenceImages:referenceCustomImages,
         getObject:getArtworkObject
       });
-      const required=Math.min(customImages.length,referenceCustomImages.length);
+      const required=Math.min(referenceCandidates.length,referenceCustomImages.length);
       if(matched.applied&&(matched.matches||[]).length===required){
-        sortResult=matched;
+        sortResult={...matched,items:[...matched.items,...customImages.slice(12)]};
       }else{
         sortResult.reason=(matched.reason||'No reliable match')+'; preserving uploaded mockup order';
       }
@@ -1127,8 +1131,8 @@ async function prepareMediaPlan({ session, manifest }) {
       referenceListingId: reference?.listingId || null,
       referenceTitle: reference?.title || null,
       presetImageRanks: Object.fromEntries([...presetImageRanks.entries()].map(([rank, role]) => [role, rank])),
-      canonicalLayoutApplied: sortResult.applied && canonicalCustomItems.length === 12,
-      canonicalLayoutVersion: sortResult.applied && canonicalCustomItems.length === 12 ? 'silvia-15-v1' : null,
+      canonicalLayoutApplied: sortResult.applied && canonicalCustomItems.length >= 12,
+      canonicalLayoutVersion: sortResult.applied && canonicalCustomItems.length >= 12 ? 'silvia-15-v1' : null,
       matches: sortResult.matches || []
     }
   };
@@ -1462,6 +1466,15 @@ async function performListingConversion(body){
       if (!listing) {
         return conversionReply(404, { ok: false, error: 'The Etsy listing is no longer active or draft.' });
       }
+      // Capture the full original description before mutating a Gelato listing.
+      // This includes the shop-section heading and its direct Etsy URL.
+      const originalListing=await getListing({
+        listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
+        accessToken:session.accessToken
+      });
+      const originalDescription=String(originalListing.description||'');
+      if(!originalDescription.trim())
+        throw Error('Cannot safely convert a listing whose Etsy description could not be verified.');
 
       const currentInventory = await getListingInventory({
         listingId,
@@ -1490,6 +1503,7 @@ async function performListingConversion(body){
         listingId,
         listing: {
           taxonomy_id: listingDefaults.taxonomyId,
+          description: originalDescription,
           shipping_profile_id: managedShippingProfile?.shipping_profile_id || undefined,
           readiness_state_id: readinessStateId,
           should_auto_renew: listingDefaults.autoRenew,
@@ -1536,6 +1550,21 @@ async function performListingConversion(body){
         throw new Error(`Etsy conversion verification found ${badSkus.length} enabled variant(s) without ${artworkId} SKUs.`);
       }
 
+      // Etsy may rewrite description on structural updates; verify and restore it.
+      const updatedListing=await getListing({
+        listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
+        accessToken:session.accessToken
+      });
+      if(String(updatedListing.description||'')!==originalDescription){
+        await withEtsyListingRetry(()=>updateListing({
+          shopId:session.shop.shop_id,listingId,listing:{description:originalDescription},
+          keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
+        }));
+        const restored=await getListing({listingId,keystring:session.keystring,
+          sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+        if(String(restored.description||'')!==originalDescription)
+          throw Error('Etsy did not preserve the original description and section link.');
+      }
       const properties = await getCachedTaxonomyProperties(session, listingDefaults.taxonomyId);
       const attributes = await applyAllListingAttributes({
         session,
