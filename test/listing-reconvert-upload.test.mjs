@@ -24,6 +24,7 @@ function fixture(){
   putJsonObject:async(key,value)=>states.set(key,clone(value)),
   artworkObjectExists:async key=>objects.has(key),
   artworkObjectInfo:async key=>({size:objects.get(key)?.size||0}),
+  inspectStoredMasterGeometry:async key=>({width:6000,height:4000,orientation:'landscape'}),
   signedArtworkUploadUrl:async key=>'https://example.invalid/'+key,
   copyArtworkObject:async(from,to)=>{
    if(!objects.has(from))throw Error('Missing copy source '+from);
