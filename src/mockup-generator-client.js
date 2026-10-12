@@ -425,11 +425,13 @@ for(const [id,method] of [
  ['mg-generate',()=>createJob()],['mg-refresh-jobs',loadJobs],['mg-pause',pause],
  ['mg-retry',retry],['mg-regenerate',regenerate],['mg-save-map',saveMapping]
 ])$(id).addEventListener('click',()=>act(method));
-initialLoad=Promise.all([loadTemplates(),loadJobs(),workerStatus()]);
+// Template readiness controls auto-queue; a failed worker-status request must not
+// disable uploads or generation.
+initialLoad=loadTemplates();
+void Promise.allSettled([loadJobs(),workerStatus()]);
 initialLoad.then(()=>{
- // Do not show the most recent archived job as the current artwork.
  renderPreviews();
- message('The first 7 saved PSDs are selected. Upload a new master to queue its mockups automatically.');
+ message('Saved PSD templates loaded. Master uploads automatically queue selected mockups.');
 }).catch(failure);
 // Polling updates are UI-only. The PC worker continues running if this tab closes.
 setInterval(()=>{

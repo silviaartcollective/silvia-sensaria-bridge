@@ -34,6 +34,7 @@ let activeJob = null;
 let heartbeatInFlight = false;
 const mockupOwner = crypto.randomUUID();
 const mockupPollAt = new Map(),mockupUnsupported=new Set();
+let preferMockupNext=false; // A crop backlog must not starve all pending PSD jobs.
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -314,39 +315,47 @@ async function pollOnce(){
   try{
     const cycle=rotatingApps(APP_CONNECTIONS,nextAppIndex);
     if(APP_CONNECTIONS.length)nextAppIndex=(nextAppIndex+1)%APP_CONNECTIONS.length;
-    // Production crop jobs retain priority, and the same worker then accepts PSD jobs.
-    for(const app of cycle){
-      if(stopping)break;
-      try{
-        const api=clientFor(app);
-        const result=await api.claimJob();
-        if(!result.job)continue;
-        activeJob={app,job:result.job,type:'crop'};
-        await heartbeatAll();
-        try{await processJob(app,result.job);}
-        finally{activeJob=null;await heartbeatAll()}
-        return;
-      }catch(error){console.error('['+app.name+'] Crop polling failed:',error.message)}
-    }
-    for(const app of cycle){
-      if(stopping||mockupUnsupported.has(app.appUrl))continue;
-      if(Date.now()-(mockupPollAt.get(app.appUrl)||0)<12000)continue;
-      mockupPollAt.set(app.appUrl,Date.now());
-      try{
-        const api=clientFor(app);
-        const claimed=await api.claimMockup(mockupOwner);
-        if(!claimed.item)continue;
-        activeJob={app,job:{id:claimed.job.id},type:'mockup'};
-        await heartbeatAll();
-        try{await processPSDJob(app,claimed)}
-        finally{activeJob=null;await heartbeatAll()}
-        return;
-      }catch(error){
-        // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
-        if(/404|not found|non-json/i.test(error.message)){
-          mockupUnsupported.add(app.appUrl);
-          console.log('['+app.name+'] PSD API unavailable; crop service remains enabled.');
-        }else console.error('['+app.name+'] PSD polling failed:',error.message);
+    // Fair scheduling: alternate crop and mockup work whenever both queues have jobs.
+    // Crop processing is never allowed to starve PSD generation indefinitely.
+    for(const kind of (preferMockupNext?['mockup','crop']:['crop','mockup'])){
+      if(kind==='crop'){
+      for(const app of cycle){
+        if(stopping)break;
+        try{
+          const api=clientFor(app);
+          const result=await api.claimJob();
+          if(!result.job)continue;
+          activeJob={app,job:result.job,type:'crop'};
+          await heartbeatAll();
+          try{await processJob(app,result.job);}
+          finally{activeJob=null;await heartbeatAll()}
+          preferMockupNext=true;
+          return;
+        }catch(error){console.error('['+app.name+'] Crop polling failed:',error.message)}
+      }
+      }else{
+      for(const app of cycle){
+        if(stopping||mockupUnsupported.has(app.appUrl))continue;
+        if(Date.now()-(mockupPollAt.get(app.appUrl)||0)<12000)continue;
+        mockupPollAt.set(app.appUrl,Date.now());
+        try{
+          const api=clientFor(app);
+          const claimed=await api.claimMockup(mockupOwner);
+          if(!claimed.item)continue;
+          activeJob={app,job:{id:claimed.job.id},type:'mockup'};
+          await heartbeatAll();
+          try{await processPSDJob(app,claimed)}
+          finally{activeJob=null;await heartbeatAll()}
+          preferMockupNext=false;
+          return;
+        }catch(error){
+          // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
+          if(/404|not found|non-json/i.test(error.message)){
+            mockupUnsupported.add(app.appUrl);
+            console.log('['+app.name+'] PSD API unavailable; crop service remains enabled.');
+          }else console.error('['+app.name+'] PSD polling failed:',error.message);
+        }
+      }
       }
     }
   }finally{busy=false;}
