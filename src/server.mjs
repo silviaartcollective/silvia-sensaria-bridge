@@ -154,6 +154,7 @@ const unresolvedSizes = Object.entries(sizeMatrix)
 let etsySessionCache = null;
 const taxonomyCache = new Map();
 const mockupReferenceCache = new Map();
+const inflightDraftSetups = new Set();
 
 function moneyAmount(value) {
   if (value && typeof value === 'object' && Number.isFinite(Number(value.amount))) {
@@ -3532,6 +3533,21 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  const draftSetupStatusPath=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/draft-setup$/);
+  if(req.method==='GET'&&draftSetupStatusPath){
+    if(!requireAdminApi(req,res))return;
+    try{
+      const artworkId=draftSetupStatusPath[1],manifest=await loadArtworkManifest(artworkId);
+      if(!manifest)return sendJson(res,404,{ok:false,error:'R2 artwork record does not exist.'});
+      const masterExists=Boolean(manifest.master?.key&&await artworkObjectExists(manifest.master.key));
+      const stored=manifest.etsyDraftSetup||null;
+      const status=stored?.status==='running'&&!inflightDraftSetups.has(artworkId)?'interrupted':(stored?.status||'not_started');
+      return sendJson(res,200,{ok:true,artworkId,r2Prefix:'artworks/'+artworkId+'/',
+        masterExists,listingId:manifest.etsyDraftListingId||null,
+        setup:stored?{...stored,status}: {status},state:status});
+    }catch(error){return sendJson(res,500,{ok:false,error:error.message})}
+  }
+
   if (req.method === 'POST' && url.pathname === '/etsy/drafts') {
     if (!requireAdminApi(req, res)) return;
     const startedAt = Date.now();
@@ -3578,6 +3594,13 @@ const server = http.createServer(async (req, res) => {
       // An R2 "folder" is an object prefix. Verify the real master, not just its JSON manifest.
       if(!manifest.master?.key||!(await artworkObjectExists(manifest.master.key)))
         return sendJson(res,409,{ok:false,error:'The master image is missing from Cloudflare R2. No Etsy draft was created.'});
+      if(manifest.etsyDraftListingId&&manifest.etsyDraftSetup?.status==='completed'){
+        return sendJson(res,200,{ok:true,...manifest.etsyDraftSetup,processing:false});
+      }
+      if(manifest.etsyDraftListingId&&inflightDraftSetups.has(body.artwork_id)){
+        return sendJson(res,202,{ok:true,processing:true,status:'running',
+          listingId:manifest.etsyDraftListingId,message:'Draft setup is already running.'});
+      }
       // The master is used as the featured image when optional PSD mockups are pending.
 
       // Repair/ensure the production crop queue independently of Etsy draft creation.
@@ -3655,6 +3678,16 @@ const server = http.createServer(async (req, res) => {
       }
       const draftMs = Date.now() - draftStartedAt;
 
+      // Return the Etsy draft ID immediately. Inventory, photos, video and
+      // attributes continue in the server worker, not in the browser request.
+      // A retry reuses manifest.etsyDraftListingId instead of duplicating Etsy listings.
+      manifest.etsyDraftSetup={status:'running',listingId:draft.listing_id,
+        startedAt:new Date().toISOString(),message:'Applying variants, attributes and listing media'};
+      await saveArtworkManifest(manifest);
+      const setupId=body.artwork_id;
+      inflightDraftSetups.add(setupId);
+      void (async()=>{
+        try{
       // Taxonomy/media preparation above can stay parallel because it does not
       // mutate Etsy. Etsy listing writes themselves must be serialized: Etsy
       // returns HTTP 409 when two processes edit the same listing at once.
@@ -3718,7 +3751,7 @@ const server = http.createServer(async (req, res) => {
       };
       await saveArtworkManifest(manifest);
 
-      return sendJson(res, 201, {
+      const summary = {
         ok: true,
         listingId: draft.listing_id,
         state: draft.state || 'draft',
@@ -3758,7 +3791,28 @@ const server = http.createServer(async (req, res) => {
           variation2: 'Product - Style',
           pricing: variantInventory.pricing
         }
-      });
+      };
+
+
+          manifest.etsyDraftSetup={...summary,status:'completed',
+            completedAt:new Date().toISOString(),r2Prefix:'artworks/'+setupId+'/'};
+          await saveArtworkManifest(manifest);
+        }catch(error){
+          console.error('Etsy draft setup failed for '+setupId+':',error);
+          try{
+            const updated=await loadArtworkManifest(setupId)||manifest;
+            updated.etsyDraftSetup={status:'failed',listingId:draft.listing_id,
+              error:String(error?.message||error).slice(0,650),
+              failedAt:new Date().toISOString()};
+            await saveArtworkManifest(updated);
+          }catch(saveError){console.error('Could not record draft setup failure:',saveError);}
+        }finally{inflightDraftSetups.delete(setupId)}
+      })();
+      return sendJson(res,201,{ok:true,processing:true,
+        status:'running',listingId:draft.listing_id,state:'draft',
+        title:body.title,resumed:Boolean(draft.resumed),
+        r2Prefix:'artworks/'+setupId+'/',
+        message:'Etsy draft created. Media, inventory and attributes are configuring in the background.'});
     } catch (error) {
       return sendJson(res, 500, {
         ok:false,

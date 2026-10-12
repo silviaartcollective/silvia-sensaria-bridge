@@ -878,6 +878,33 @@ form.addEventListener('submit',async(e)=>{
       throw new Error(String(detail)+suffix);
     }
     result.className='result show';
+    if(d.processing){
+      result.textContent='Etsy draft #'+String(d.listingId)+' created. Configuring images, video and variants. R2: '+String(d.r2Prefix||'')+'. Keep unpublished until setup completes.';
+      const id=document.getElementById('artwork_id').value.trim();
+      // Poll read-only R2 status. Closing this tab does not cancel the server job.
+      void (async()=>{
+        for(let attempt=0;attempt<180;attempt++){
+          await new Promise(resolve=>setTimeout(resolve,5000));
+          try{
+            const response=await fetch('/api/artworks/'+encodeURIComponent(id)+'/draft-setup',{cache:'no-store'});
+            const report=await readJsonResponse(response,'Draft setup status');
+            if(!response.ok)throw Error(report.error||'Could not check draft progress');
+            const state=report.setup?.status||'unknown';
+            if(state==='completed'){
+              result.textContent='Etsy draft #'+String(report.listingId)+' is fully configured. '+String(report.setup.media?.imageCount||0)+' photos and '+(report.setup.media?.videoUploaded?'video':'no video')+' uploaded. R2 artwork confirmed: '+String(report.r2Prefix);
+              return;
+            }
+            if(state==='failed'||state==='interrupted'){
+              result.textContent='Etsy draft #'+String(report.listingId)+' exists, but setup '+state+': '+String(report.setup?.error||'Please click Create Etsy Draft again to resume. Do not create a new listing.');
+              return;
+            }
+            result.textContent='Etsy draft #'+String(report.listingId)+' created. Etsy media and inventory still configuring. R2 master '+(report.masterExists?'verified':'MISSING')+'.';
+          }catch(error){result.textContent='Draft #'+String(d.listingId)+' created; status check failed: '+error.message+'. Use Create Etsy Draft again to resume.';return}
+        }
+        result.textContent='Draft #'+String(d.listingId)+' exists. Setup is still running or needs a status refresh.';
+      })();
+      return;
+    }
     const variantSummary=d.variants
       ? '<br>Variants: '+String(d.variants.count||0)+' · Size → Product - Style · USD '+String(d.variants.minimumPrice||'')+'+'
       : '';
