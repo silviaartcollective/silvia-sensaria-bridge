@@ -1366,6 +1366,10 @@ async function performListingConversion(body){
       if (!manifest?.master?.key || manifest.status !== 'ready') {
         return conversionReply(400, { ok: false, error: `${artworkId} has not finished uploading to Cloudflare R2.` });
       }
+      // A valid R2 manifest without its master is not a fully linked artwork.
+      if(!(await artworkObjectExists(manifest.master.key)))
+        return conversionReply(409,{ok:false,error:'Artwork '+artworkId+
+          ' has no master file in Cloudflare R2. Conversion stopped before Etsy changes.'});
       // Explicit reconversion reuses the exact artwork ID already linked to this listing.
       // A second conversion must never reserve another ID or cross-link different artwork.
       const reconvert = body.reconvert === true;
@@ -1573,6 +1577,20 @@ async function performListingConversion(body){
         body: {},
         properties
       });
+
+      // Final verification must come after all structural and taxonomy writes.
+      // Preserve the entire original description, including the shop-section link.
+      const finalListing=await getListing({listingId,keystring:session.keystring,
+        sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+      if(String(finalListing.description||'')!==originalDescription){
+        await withEtsyListingRetry(()=>updateListing({shopId:session.shop.shop_id,
+          listingId,listing:{description:originalDescription},
+          keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken}));
+        const checked=await getListing({listingId,keystring:session.keystring,
+          sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+        if(String(checked.description||'')!==originalDescription)
+          throw Error('The original description and shop-section URL were not restored.');
+      }
 
       manifest.etsyConfiguredAt = new Date().toISOString();
       manifest.etsyConfiguration = {
