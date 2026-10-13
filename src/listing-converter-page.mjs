@@ -577,8 +577,8 @@ async function convertListing(item,card){
   status.textContent='Choose the matching master artwork first.';return;
  }
  const confirmed=confirm(
-  'Convert this Etsy listing to the Silvia system?\n\n'+item.title+
-  '\n\nThe listing stays live/draft. The master will be uploaded to R2 and its production crops queued. '+
+  'Convert this Etsy listing to the Silvia system?\\n\\n'+item.title+
+  '\\n\\nThe listing stays live/draft. The master will be uploaded to R2 and its production crops queued. '+
   'The conversion queue verifies Etsy settings, SKUs and pricing after crops finish. '+
   'Existing photos, video, title, description and tags stay in place.'
  );
@@ -630,7 +630,7 @@ async function convertListing(item,card){
   if(!setup.cropsReady&&!setup.workerOnline){
    status.className='cardstatus warn';
    status.textContent='Artwork '+setup.artworkId+' safely uploaded; crops are queued. '+
-    'Start the shared PC worker and retry with the same file to resume. No Etsy changes were made.';
+    'Start worker/start-worker.cmd on your PC, then retry with the same file to resume. No Etsy changes were made.';
    return;
   }
   if(!setup.cropsReady){
