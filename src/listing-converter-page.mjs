@@ -85,6 +85,56 @@ let listingData=[],queueJobs=[];
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
+// A burst of clicks must not start dozens of R2 uploads or reservations at once.
+// The setup slot is released as soon as the crop job has been queued, rather
+// than occupying the slot during potentially long crop processing.
+const MAX_SIMULTANEOUS_SETUPS=2;
+let activeSetups=0;
+const waitingSetups=[];
+function withSetupSlot(work,onWaiting){
+ return new Promise((resolve,reject)=>{
+  const start=async()=>{
+   activeSetups++;
+   try{resolve(await work())}
+   catch(error){reject(error)}
+   finally{
+    activeSetups--;
+    const next=waitingSetups.shift();
+    if(next)next();
+   }
+  };
+  if(activeSetups>=MAX_SIMULTANEOUS_SETUPS){
+   onWaiting?.(waitingSetups.length+1);
+   waitingSetups.push(start);
+  }else void start();
+ });
+}
+function temporaryNetworkFailure(error){
+ const name=String(error?.name||'');
+ const message=String(error?.message||error||'');
+ return /^(TimeoutError|AbortError|TypeError|NetworkError)$/i.test(name)||
+  /timed? out|timeout|failed to fetch|network (?:request|error)|fetch failed/i.test(message);
+}
+async function requestJsonRetry(url,options={},maxAttempts=4){
+ for(let attempt=0;attempt<maxAttempts;attempt++){
+  try{
+   const response=await fetch(url,options);
+   const data=await response.json();
+   const retryable=[408,429,500,502,503,504].includes(response.status)||
+     (!response.ok&&temporaryNetworkFailure({message:data?.error}));
+   if(retryable&&attempt+1<maxAttempts){
+    await sleep(850*(2**attempt)+Math.floor(Math.random()*250));continue;
+   }
+   if(!response.ok||!data?.ok)throw Error(data?.error||'Request failed ('+response.status+')');
+   return data;
+  }catch(error){
+   if(attempt+1>=maxAttempts||!temporaryNetworkFailure(error))throw error;
+   await sleep(850*(2**attempt)+Math.floor(Math.random()*250));
+  }
+ }
+ throw Error('Temporary network failure; retry this listing.');
+}
+
 async function detectOrientation(file){
   try{
     const bitmap=await createImageBitmap(file);
@@ -102,9 +152,20 @@ async function artworkFingerprint(file){
 
 async function putFile(url,file,onProgress,contentType){
   onProgress(20);
-  const response=await fetch(url,{method:'PUT',headers:{'content-type':contentType||file.type||'image/jpeg'},body:file});
-  if(!response.ok)throw new Error('Cloudflare upload failed ('+response.status+')');
-  onProgress(65);
+  for(let attempt=0;attempt<3;attempt++){
+   try{
+    const response=await fetch(url,{method:'PUT',
+     headers:{'content-type':contentType||file.type||'image/jpeg'},body:file});
+    if(!response.ok){
+     if(![408,429,500,502,503,504].includes(response.status)||attempt===2)
+      throw Error('Cloudflare upload failed ('+response.status+')');
+    }else{onProgress(65);return}
+   }catch(error){
+    if(attempt===2||!temporaryNetworkFailure(error))throw error;
+   }
+   onProgress(20);
+   await sleep(1100*(2**attempt));
+  }
 }
 
 // One batched request monitors ALL waiting artworks rather than a separate
