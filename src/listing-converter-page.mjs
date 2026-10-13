@@ -246,7 +246,8 @@ function renderCards(){
       '<div class="body">'+
         '<div class="title">'+esc(item.title||'Untitled listing')+'</div>'+
         '<div class="meta">'+state+mapped+'<span class="pill">#'+esc(item.listingId)+'</span></div>'+
-        '<div class="meta"><a class="etsy-view" href="https://www.etsy.com/listing/'+encodeURIComponent(String(item.listingId))+'" target="_blank" rel="noopener noreferrer" aria-label="View listing '+esc(item.listingId)+' on Etsy">View on Etsy ↗</a></div>+          (item.originalListedAt?'<div class="meta">Originally listed: '+esc(new Date(item.originalListedAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric',timeZone:'UTC'}))+'</div>':'')+
+        '<div class="meta"><a class="etsy-view" href="https://www.etsy.com/listing/'+encodeURIComponent(String(item.listingId))+'" target="_blank" rel="noopener noreferrer" aria-label="View listing '+esc(item.listingId)+' on Etsy">View on Etsy ↗</a></div>'+ 
+        (item.originalListedAt?'<div class="meta">Originally listed: '+esc(new Date(item.originalListedAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric',timeZone:'UTC'}))+'</div>':'')+
         '<div class="upload">'+
           (item.converted
            ?'<div class="status reconvert-note">Upload the master artwork again (required). Fresh production crops will replace the old ones only after verification. Artwork ID '+esc(item.artworkId)+' is preserved.</div>'
