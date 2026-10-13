@@ -225,7 +225,70 @@ async function removeQueuedConversion(item,card){
  if(!response.ok||!result.ok)throw Error(result.error||'Could not remove queued conversion');
  await refreshConversionQueue();
 }
+// Render listing cards immediately. Preview requests are limited and only start
+// when a card nears the viewport; Etsy no longer gates the initial page render.
+const previewQueue=[],pendingPreviews=new Set();
+let activePreviews=0;
+const MAX_PREVIEW_REQUESTS=4;
+function updateCardPreview(item){
+ const id=String(item.listingId);
+ const card=cards.querySelector('article[data-listing-id="'+id+'"]');
+ const preview=card?.querySelector('.preview');
+ if(!preview)return;
+ preview.innerHTML=item.firstImageUrl
+  ?'<img src="'+esc(item.firstImageUrl)+'" loading="lazy" decoding="async" alt="">'
+  :'<div class="empty">'+
+    (item.imageError?'Etsy image preview unavailable':'No listing image')+'</div>';
+}
+function pumpPreviews(){
+ while(activePreviews<MAX_PREVIEW_REQUESTS&&previewQueue.length){
+  const listingId=previewQueue.shift();
+  activePreviews++;
+  void (async()=>{
+   let data;
+   try{
+    const res=await fetch('/api/listing-converter/listing-image?listingId='+
+      encodeURIComponent(String(listingId)),{cache:'no-store'});
+    data=await res.json();
+    if(!res.ok||!data.ok)throw Error(data.error||'Preview unavailable');
+   }catch(error){
+    data={firstImageUrl:null,imageCount:0,imageError:String(error?.message||error)};
+   }finally{
+    const item=listingData.find(row=>Number(row.listingId)===listingId);
+    if(item){
+     item.firstImageUrl=data.firstImageUrl||null;
+     item.imageCount=Number(data.imageCount||0);
+     item.imageError=data.imageError||null;
+     item.imageLoaded=true;
+     updateCardPreview(item);
+    }
+    pendingPreviews.delete(listingId);
+    activePreviews--;
+    pumpPreviews();
+   }
+  })();
+ }
+}
+function queuePreview(item){
+ const id=Number(item.listingId);
+ if(!Number.isSafeInteger(id)||id<=0||item.imageLoaded||pendingPreviews.has(id))return;
+ pendingPreviews.add(id);
+ previewQueue.push(id);
+ pumpPreviews();
+}
+const previewObserver=typeof IntersectionObserver==='function'?
+ new IntersectionObserver(entries=>{
+  for(const entry of entries){
+   if(!entry.isIntersecting)continue;
+   previewObserver.unobserve(entry.target);
+   const id=Number(entry.target.dataset.listingId);
+   const item=listingData.find(row=>Number(row.listingId)===id);
+   if(item)queuePreview(item);
+  }
+ },{rootMargin:'400px 0px'}):null;
+
 function renderCards(){
+  if(previewObserver)previewObserver.disconnect();
   const q=search.value.trim().toLowerCase();
   cards.innerHTML='';
   const visible=listingData.filter(item=>!q||String(item.title||'').toLowerCase().includes(q)||String(item.listingId).includes(q));
@@ -238,8 +301,10 @@ function renderCards(){
     const mapped=item.artworkId?'<span class="pill done">'+esc(item.artworkId)+'</span>':'<span class="pill warn">Gelato / not linked</span>';
     const state='<span class="pill">'+esc(item.state||'')+'</span>';
     const image=item.firstImageUrl
-      ?'<img src="'+esc(item.firstImageUrl)+'" alt="">'
-      :'<div class="empty">'+(item.imageError?'Image preview unavailable — click Refresh listings':'No listing image')+'</div>';
+      ?'<img src="'+esc(item.firstImageUrl)+'" loading="lazy" decoding="async" alt="">'
+      :'<div class="empty">'+(item.imageLoaded
+       ?(item.imageError?'Etsy image preview unavailable':'No listing image')
+       :'Preview loads when visible')+'</div>';
 
     card.innerHTML=
       '<div class="preview">'+image+'</div>'+
@@ -270,6 +335,10 @@ function renderCards(){
     });
     cards.appendChild(card);
     showQueueState(item,card);
+    if(!item.imageLoaded){
+     if(previewObserver)previewObserver.observe(card);
+     else queuePreview(item);
+    }
   }
 }
 
@@ -456,14 +525,21 @@ async function convertListing(item,card){
 async function loadListings(){
   refresh.disabled=true;
   listStatus.className='status';
-  listStatus.textContent='Loading Etsy listings and first mockups…';
+  listStatus.textContent='Loading Etsy listing details…';
   try{
     const r=await fetch('/api/listing-converter/listings',{cache:'no-store'});
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Could not load listings');
-    listingData=d.listings||[];
-    await refreshConversionQueue();
+    const previous=new Map(listingData.map(item=>[Number(item.listingId),item]));
+    listingData=(d.listings||[]).map(item=>{
+      const before=previous.get(Number(item.listingId));
+      return before?.imageLoaded&&!before.imageError
+       ?{...item,firstImageUrl:before.firstImageUrl,imageCount:before.imageCount,
+          imageError:null,imageLoaded:true}
+       :{...item,imageLoaded:false};
+    });
     renderCards();
+    void refreshConversionQueue();
   }catch(error){
     listStatus.className='status bad';
     listStatus.textContent=String(error.message||error);
