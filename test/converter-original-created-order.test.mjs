@@ -37,7 +37,8 @@ test('converter sorts by true original timestamp rather than Etsy updated order'
  const end=server.indexOf('function sendJson(',start);
  assert.ok(start!==-1&&end>start);
  const fragment=server.slice(start,end);
- assert.ok(fragment.includes('originalCreationTimestamp: originalEtsyCreationTimestamp(listing)'));
+ assert.ok(fragment.includes('const originalCreationTimestamp=originalEtsyCreationTimestamp(listing);'));
+ assert.ok(fragment.includes('originalCreationTimestamp,'));
  assert.ok(fragment.includes('return { listings: sortConverterListingsOldestFirst(rows), converterMap };'));
  assert.ok(ui.includes('Oldest originally listed first'));
  assert.ok(ui.includes('item.originalListedAt'));
