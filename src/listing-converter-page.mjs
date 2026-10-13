@@ -320,12 +320,11 @@ async function refreshConversionQueue(){
  }catch(error){console.warn('Conversion queue:',error.message)}
 }
 async function queuedConversion(item,card,payload){
- const response=await fetch('/api/listing-converter/convert',{
+ const result=await requestJsonRetry('/api/listing-converter/convert',{
   method:'POST',headers:{'content-type':'application/json'},
   body:JSON.stringify(payload)
  });
- const result=await response.json();
- if(!response.ok||!result.ok||!result.job)throw Error(result.error||'Could not queue Etsy conversion');
+ if(!result.job)throw Error(result.error||'Could not queue Etsy conversion');
  queueJobs=queueJobs.filter(j=>j.id!==result.job.id);
  queueJobs.push({...result.job,position:result.position});
  showQueueState(item,card);void refreshConversionQueue();
@@ -488,42 +487,46 @@ async function reconvertListing(item,card){
   status.className='cardstatus';
   let revision=null;
   try{
-    status.textContent='Checking the new master artwork before upload…';
-    const sha256=await artworkFingerprint(file);
-    bar.style.width='9%';
-    status.textContent='Reserving a fresh upload for '+artworkId+' (no new artwork ID)…';
-    let response=await fetch('/api/listing-converter/reconvert/reserve',{
+    const setup=await withSetupSlot(async()=>{
+     status.textContent='Checking the new master artwork before upload…';
+     const sha256=await artworkFingerprint(file);
+     bar.style.width='9%';
+     status.textContent='Reserving a fresh upload for '+artworkId+' (no new artwork ID)…';
+     const reserved=await requestJsonRetry('/api/listing-converter/reconvert/reserve',{
       method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({listingId:item.listingId,artworkId,orientation,
-        master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size,sha256}})
-    });
-    let result=await response.json();
-    if(!response.ok||!result.ok)throw Error(result.error||'Could not reserve replacement artwork');
-    revision=result.revision;
-    if(!result.uploadAlreadyPresent){
+       master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size,sha256}})
+     });
+     revision=reserved.revision;
+     if(!reserved.uploadAlreadyPresent){
       status.textContent='Uploading fresh master artwork '+file.name+' for '+artworkId+'…';
-      await putFile(result.upload.uploadUrl,file,p=>{bar.style.width=p+'%'},
-        result.upload.contentType);
-    }else{
-      status.textContent='Resuming the previously uploaded replacement '+file.name+'…';
+      await putFile(reserved.upload.uploadUrl,file,p=>{bar.style.width=p+'%'},reserved.upload.contentType);
+     }else{
+      status.textContent='Resuming previously uploaded master '+file.name+'…';
       bar.style.width='65%';
-    }
-    bar.style.width='68%';
-    status.textContent='Queueing new production crops for '+artworkId+'…';
-    response=await fetch('/api/listing-converter/reconvert/crop',{
+     }
+     bar.style.width='68%';
+     status.textContent='Queueing replacement production crops for '+artworkId+'…';
+     const started=await requestJsonRetry('/api/listing-converter/reconvert/crop',{
       method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({listingId:item.listingId,artworkId,revision})
+     });
+     return {jobId:started.job?.id,cropsReady:started.job?.status==='completed',
+      workerOnline:started.worker?.online};
+    },position=>{
+     status.textContent='Waiting for artwork upload slot (#'+position+
+      '). Existing master and other conversions remain safe.';
     });
-    result=await response.json();
-    if(!response.ok||!result.ok)throw Error(result.error||'Could not queue replacement artwork crops');
-    if(result.job?.status!=='completed'&&!result.worker?.online){
-      status.className='cardstatus warn';
-      status.textContent='New master uploaded and crops queued. Start the shared PC worker, then choose this same file and click Reconvert listing to resume. Existing artwork and Etsy listing are unchanged.';
-      return;
+    if(!setup.cropsReady&&!setup.workerOnline){
+     status.className='cardstatus warn';
+     status.textContent='New master uploaded and crops queued. Start the shared PC worker, then choose this same file and click Reconvert listing to resume. Existing artwork and Etsy listing are unchanged.';
+     return;
     }
-    await waitForCrop(result.job.id,
+    if(!setup.cropsReady){
+     await waitForCrop(setup.jobId,
       message=>{status.textContent='New artwork · '+message},
       percentage=>{bar.style.width=percentage+'%'});
+    }
     bar.style.width='95%';
     status.className='cardstatus';
     status.textContent='New crops completed. Adding Etsy reconversion to the queue…';
