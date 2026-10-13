@@ -31,6 +31,7 @@ import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
 import {originalEtsyCreationTimestamp,sortConverterListingsOldestFirst} from './converter-listing-order.mjs';
+import { listingSeoPreservation } from './converter-description.mjs';
 import { hasAuthorizedConverterLink } from './listing-converter-link.mjs';
 import {
  enqueueConversion,getConversionJob,getConversionQueueSummary,claimNextConversion,
@@ -1362,6 +1363,41 @@ async function cachedConverterShippingProfiles(session){
   return data;
  }catch(error){converterShippingCache.delete(key);throw error}
 }
+// Keep the full listing text and actual Etsy shop-section assignment. Etsy
+// sometimes normalizes line endings or whitespace; missing words/links never pass.
+async function ensureConverterListingSeo(session,listingId,expectedDescription,originalShopSectionId){
+ const args={listingId,keystring:session.keystring,
+  sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+ let latest=await getListing(args);
+ let report=listingSeoPreservation(latest,expectedDescription,originalShopSectionId);
+ if(report.ok)return latest;
+ // Read-after-write can be briefly stale. Check before issuing a second PATCH.
+ for(let attempt=0;attempt<2;attempt++){
+  await sleepMs(800);
+  latest=await getListing(args);
+  report=listingSeoPreservation(latest,expectedDescription,originalShopSectionId);
+  if(report.ok)return latest;
+ }
+ const correction={};
+ if(!report.descriptionPreserved)correction.description=expectedDescription;
+ if(!report.sectionPreserved)correction.shop_section_id=Number(originalShopSectionId);
+ await withEtsyListingRetry(()=>updateListing({
+  shopId:session.shop.shop_id,listingId,listing:correction,
+  keystring:session.keystring,sharedSecret:session.sharedSecret,
+  accessToken:session.accessToken
+ }));
+ for(let attempt=0;attempt<4;attempt++){
+  if(attempt)await sleepMs(800);
+  latest=await getListing(args);
+  report=listingSeoPreservation(latest,expectedDescription,originalShopSectionId);
+  if(report.ok)return latest;
+ }
+ throw Error('Etsy could not verify preserved listing content: '+
+  [!report.descriptionPreserved?'description text or shop-section URL differs':null,
+   !report.sectionPreserved?'shop section assignment differs':null].filter(Boolean).join('; ')+
+   '. The original description remains saved in the converter recovery record.');
+}
+
 async function performListingConversion(body){
       const listingId = Number(body.listingId);
       const artworkId = String(body.artworkId || '').trim().toUpperCase();
@@ -1418,18 +1454,8 @@ async function performListingConversion(body){
           accessToken:session.accessToken
         });
         const recoveryDescription=reviseCanvasThickness(String(recoveryListing.description||''));
-        if(recoveryDescription!==String(recoveryListing.description||'')){
-          await withEtsyListingRetry(()=>updateListing({
-            shopId:session.shop.shop_id,listingId,
-            listing:{description:recoveryDescription},
-            keystring:session.keystring,sharedSecret:session.sharedSecret,
-            accessToken:session.accessToken
-          }));
-          const confirmed=await getListing({listingId,keystring:session.keystring,
-            sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-          if(String(confirmed.description||'')!==recoveryDescription)
-            throw Error('Could not verify corrected 1.25-inch canvas description.');
-        }
+        await ensureConverterListingSeo(session,listingId,recoveryDescription,
+          Number(recoveryListing.shop_section_id)||null);
         if(reconvert){
           const historical=Array.isArray(prior.reconversionHistory)?prior.reconversionHistory:[];
           if(!historical.some(entry=>entry.revision===body.revision)){
@@ -1501,14 +1527,31 @@ async function performListingConversion(body){
         listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
         accessToken:session.accessToken
       });
-      const originalDescription=String(originalListing.description||'');
+      // Initial conversions capture their SEO before Etsy's first structural write.
+      // A failed conversion can then recover the ORIGINAL text, not an already
+      // modified description returned by Etsy on the next retry.
+      const savedDescription=!reconvert&&typeof prior.originalDescription==='string'&&
+        prior.originalDescription.trim()?prior.originalDescription:null;
+      const originalDescription=savedDescription||String(originalListing.description||'');
       if(!originalDescription.trim())
         throw Error('Cannot safely convert a listing whose Etsy description could not be verified.');
-      // Keep all existing SEO, links, and artwork text. Adjust only the
-      // existing canvas-thickness phrase, using the Description Updater preset.
+      const originalShopSectionId=Number(
+        (!reconvert&&prior.originalShopSectionId)||originalListing.shop_section_id
+      )||null;
       const expectedDescription=reviseCanvasThickness(originalDescription);
       if(expectedDescription.length>13000)
         throw Error('Corrected Etsy description exceeds 13,000 characters.');
+      if(!reconvert&&!savedDescription){
+        const snapshotMap=await loadListingConverterMap();
+        const current=snapshotMap.listings?.[String(listingId)];
+        if(!current||current.artworkId!==artworkId||current.status!=='reserved')
+          throw Error('Conversion reservation changed before the description could be backed up.');
+        snapshotMap.listings[String(listingId)]={
+          ...current,originalDescription,originalShopSectionId,
+          descriptionCapturedAt:new Date().toISOString()
+        };
+        await saveListingConverterMap(snapshotMap);
+      }
 
       const currentInventory = await getListingInventory({
         listingId,
@@ -1538,6 +1581,7 @@ async function performListingConversion(body){
         listing: {
           taxonomy_id: listingDefaults.taxonomyId,
           description: expectedDescription,
+          ...(originalShopSectionId?{shop_section_id:originalShopSectionId}:{}),
           shipping_profile_id: managedShippingProfile?.shipping_profile_id || undefined,
           readiness_state_id: readinessStateId,
           should_auto_renew: listingDefaults.autoRenew,
@@ -1584,21 +1628,8 @@ async function performListingConversion(body){
         throw new Error(`Etsy conversion verification found ${badSkus.length} enabled variant(s) without ${artworkId} SKUs.`);
       }
 
-      // Etsy may rewrite description on structural updates; verify and restore it.
-      const updatedListing=await getListing({
-        listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
-        accessToken:session.accessToken
-      });
-      if(String(updatedListing.description||'')!==expectedDescription){
-        await withEtsyListingRetry(()=>updateListing({
-          shopId:session.shop.shop_id,listingId,listing:{description:expectedDescription},
-          keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
-        }));
-        const restored=await getListing({listingId,keystring:session.keystring,
-          sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-        if(String(restored.description||'')!==expectedDescription)
-          throw Error('Etsy did not preserve the original description and section link.');
-      }
+      // Compare safely after taxonomy/inventory updates and restore if necessary.
+      await ensureConverterListingSeo(session,listingId,expectedDescription,originalShopSectionId);
       const properties = await getCachedTaxonomyProperties(session, listingDefaults.taxonomyId);
       const attributes = await applyAllListingAttributes({
         session,
@@ -1607,19 +1638,8 @@ async function performListingConversion(body){
         properties
       });
 
-      // Final verification must come after all structural and taxonomy writes.
-      // Preserve the entire original description, including the shop-section link.
-      const finalListing=await getListing({listingId,keystring:session.keystring,
-        sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-      if(String(finalListing.description||'')!==expectedDescription){
-        await withEtsyListingRetry(()=>updateListing({shopId:session.shop.shop_id,
-          listingId,listing:{description:expectedDescription},
-          keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken}));
-        const checked=await getListing({listingId,keystring:session.keystring,
-          sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-        if(String(checked.description||'')!==expectedDescription)
-          throw Error('The original description and shop-section URL were not restored.');
-      }
+      // Taxonomy property updates can also change listing fields.
+      await ensureConverterListingSeo(session,listingId,expectedDescription,originalShopSectionId);
 
       manifest.etsyConfiguredAt = new Date().toISOString();
       manifest.etsyConfiguration = {
