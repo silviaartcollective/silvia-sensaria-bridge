@@ -15,7 +15,7 @@ function timestampSeconds(value){
 }
 
 export function originalEtsyCreationTimestamp(listing){
-  for(const field of ['original_creation_timestamp','original_creation_tsz',
+  for(const field of ['originalCreationTimestamp','original_creation_timestamp','original_creation_tsz',
     'creation_timestamp','created_timestamp','creation_tsz','created_tsz']){
     const value=timestampSeconds(listing?.[field]);
     if(value!==null)return value;

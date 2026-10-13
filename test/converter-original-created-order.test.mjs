@@ -27,6 +27,7 @@ test('sorts all listings oldest to newest, including drafts, with stable fallbac
  assert.equal(originalEtsyCreationTimestamp({created_timestamp:1520000000}),1520000000);
  assert.equal(originalEtsyCreationTimestamp({original_creation_timestamp:1510000000000}),1510000000);
  assert.equal(originalEtsyCreationTimestamp({}),null);
+ assert.deepEqual(sortConverterListingsOldestFirst([{listingId:800,originalCreationTimestamp:1700000000},{listingId:900,originalCreationTimestamp:1600000000}]).map(x=>x.listingId),[900,800]);
  assert.deepEqual(records.map(x=>x.listingId),[600,610,20,12,605],'source array unchanged');
 });
 
