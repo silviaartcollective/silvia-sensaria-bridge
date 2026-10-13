@@ -183,10 +183,15 @@ function showQueueState(item,card){
    ' · '+String(job.result?.enabledVariants||0)+' variants checked.';
   progress.style.width='100%';item.converted=true;item.artworkId=job.request.artworkId;
  }else if(job.status==='failed'){
-  button.textContent=item.converted?'Reconvert listing':'Retry conversion';
+  const canRetrySaved=!item.converted&&item.conversionStatus==='reserved'&&Boolean(item.artworkId);
+  button.textContent=item.converted?'Reconvert listing':(canRetrySaved?'Retry Etsy conversion':'Retry conversion');
   status.className='cardstatus bad';
-  status.textContent='Conversion needs attention: '+String(job.error||'Unknown error')+
-   ' · Existing artwork remains available. Retry safely.';
+  const previousError=String(job.error||'Unknown error');
+  const oldError=previousError.includes('Etsy did not preserve the original description and section link.');
+  status.textContent=(oldError?'Earlier conversion attempt failed before the updated verification. ':'' )+
+   'Last attempt: '+previousError+
+   (canRetrySaved?' Retry Etsy settings with saved artwork '+item.artworkId+
+    ' (no artwork re-upload or re-cropping needed).':' Existing artwork remains available.');
  }else if(job.status==='canceled'){
   button.textContent=item.converted?'Reconvert listing':'Upload artwork & convert';
   status.className='cardstatus';
@@ -427,7 +432,32 @@ async function reconvertListing(item,card){
   }
 }
 
+async function retrySavedEtsyConversion(item,card){
+ const job=queueForListing(item.listingId);
+ if(!job||job.status!=='failed'||item.conversionStatus!=='reserved'||!item.artworkId)return false;
+ if(!confirm('Retry Etsy conversion for listing #'+item.listingId+' with saved artwork '+item.artworkId+
+  '?\\n\\nThe master artwork and completed crop files will be reused from Cloudflare R2. '+
+  'Etsy settings, SKUs and pricing will be verified again. No artwork re-upload is required.'))return true;
+ const button=card.querySelector('.convert'),input=card.querySelector('.master');
+ const status=card.querySelector('.cardstatus');
+ button.disabled=true;
+ status.className='cardstatus';
+ status.textContent='Retrying Etsy conversion using saved '+item.artworkId+'…';
+ try{
+  await queuedConversion(item,card,{listingId:item.listingId,artworkId:item.artworkId});
+ }catch(error){
+  status.className='cardstatus bad';
+  status.textContent='Etsy retry could not be queued: '+String(error?.message||error);
+  button.disabled=false;
+  input.disabled=false;
+ }
+ return true;
+}
+
 async function convertListing(item,card){
+  // Failed Etsy configuration is resumable using the verified R2 artwork ID.
+  // Keep the original file-upload workflow for new, not-yet-uploaded listings.
+  if(await retrySavedEtsyConversion(item,card))return;
   const input=card.querySelector('.master');
   const button=card.querySelector('.convert');
   const status=card.querySelector('.cardstatus');
