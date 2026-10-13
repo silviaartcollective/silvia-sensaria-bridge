@@ -30,6 +30,7 @@ import {starterDraftMedia} from './draft-starter-media.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
+import {originalEtsyCreationTimestamp,sortConverterListingsOldestFirst} from './converter-listing-order.mjs';
 import { hasAuthorizedConverterLink } from './listing-converter-link.mjs';
 import {
  enqueueConversion,getConversionJob,getConversionQueueSummary,claimNextConversion,
@@ -430,6 +431,9 @@ async function converterListingRows(session) {
     const mapping = converterMap.listings?.[String(listing.listing_id)] || null;
     return {
       listingId: Number(listing.listing_id),
+      originalCreationTimestamp: originalEtsyCreationTimestamp(listing),
+      originalListedAt: originalEtsyCreationTimestamp(listing)!==null
+        ?new Date(originalEtsyCreationTimestamp(listing)*1000).toISOString():null,
       title: String(listing.title || ''),
       state: String(listing.state || ''),
       firstImageUrl,
@@ -444,7 +448,7 @@ async function converterListingRows(session) {
     };
   });
 
-  return { listings: rows, converterMap };
+  return { listings: sortConverterListingsOldestFirst(rows), converterMap };
 }
 
 function sendJson(res, status, value) {

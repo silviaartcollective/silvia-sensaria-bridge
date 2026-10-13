@@ -65,6 +65,7 @@ export function renderListingConverterPage() {
   <div class="statusbar">
     <input class="search" id="search" placeholder="Search listing title or Etsy listing ID">
     <div class="status" id="list-status">Loading Etsy listings…</div>
+    <p class="sub">Oldest originally listed first. Etsy renewals and recent edits do not change this order.</p>
     <button class="btn" id="refresh" type="button">Refresh listings</button>
   </div>
 
@@ -244,7 +245,7 @@ function renderCards(){
       '<div class="preview">'+image+'</div>'+
       '<div class="body">'+
         '<div class="title">'+esc(item.title||'Untitled listing')+'</div>'+
-        '<div class="meta">'+state+mapped+'<span class="pill">#'+esc(item.listingId)+'</span></div>'+
+        '<div class="meta">'+state+mapped+'<span class="pill">#'+esc(item.listingId)+'</span></div>'+          (item.originalListedAt?'<div class="meta">Originally listed: '+esc(new Date(item.originalListedAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric',timeZone:'UTC'}))+'</div>':'')+
         '<div class="upload">'+
           (item.converted
            ?'<div class="status reconvert-note">Upload the master artwork again (required). Fresh production crops will replace the old ones only after verification. Artwork ID '+esc(item.artworkId)+' is preserved.</div>'
