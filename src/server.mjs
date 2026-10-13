@@ -408,48 +408,55 @@ function enabledInventoryProducts(inventory) {
   );
 }
 
+// Etsy listing metadata is independent of image previews. Never delay rendering
+// hundreds of converter rows while fetching the first image of every listing.
+const CONVERTER_PREVIEW_TTL_MS=10*60*1000;
+const converterPreviewCache=new Map();
+async function cachedConverterListingPreview(session,listingId){
+ const key=String(session.shop.shop_id)+':'+String(listingId);
+ const existing=converterPreviewCache.get(key);
+ if(existing&&existing.expiresAt>Date.now())return existing.value||existing.pending;
+ const pending=getEtsyListingImages({
+  listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
+  accessToken:session.accessToken
+ }).then(images=>{
+  const value={firstImageUrl:firstListingImageUrl(images[0]),imageCount:images.length,imageError:null};
+  converterPreviewCache.set(key,{value,expiresAt:Date.now()+CONVERTER_PREVIEW_TTL_MS});
+  return value;
+ }).catch(error=>{
+  converterPreviewCache.delete(key);
+  throw error;
+ });
+ converterPreviewCache.set(key,{pending,expiresAt:Date.now()+60*1000});
+ // Bound memory even when an Etsy shop contains many listings.
+ if(converterPreviewCache.size>1200)converterPreviewCache.delete(converterPreviewCache.keys().next().value);
+ return pending;
+}
+
 async function converterListingRows(session) {
-  const listings = await allShopListingsForPriceSync(session);
-  const converterMap = await loadListingConverterMap();
-
-  const rows = await mapWithConcurrency(listings, 2, async listing => {
-    let firstImageUrl = null;
-    let imageCount = 0;
-    let imageError = null;
-    try {
-      const images = await getEtsyListingImages({
-        listingId: listing.listing_id,
-        keystring: session.keystring,
-        sharedSecret: session.sharedSecret,
-        accessToken: session.accessToken
-      });
-      imageCount = images.length;
-      firstImageUrl = firstListingImageUrl(images[0]);
-    } catch (error) {
-      imageError = error?.message || String(error);
-    }
-
-    const mapping = converterMap.listings?.[String(listing.listing_id)] || null;
-    return {
-      listingId: Number(listing.listing_id),
-      originalCreationTimestamp: originalEtsyCreationTimestamp(listing),
-      originalListedAt: originalEtsyCreationTimestamp(listing)!==null
-        ?new Date(originalEtsyCreationTimestamp(listing)*1000).toISOString():null,
-      title: String(listing.title || ''),
-      state: String(listing.state || ''),
-      firstImageUrl,
-      imageCount,
-      imageError,
-      artworkId: mapping?.artworkId || null,
-      converted: mapping?.status === 'converted',
-      conversionStatus: mapping?.status || 'not-linked',
-      convertedAt: mapping?.convertedAt || null,
-      lastReconvertedAt: mapping?.lastReconvertedAt || null,
-      reconversionCount: Math.max(0, Number(mapping?.reconversionCount) || 0)
-    };
-  });
-
-  return { listings: sortConverterListingsOldestFirst(rows), converterMap };
+ const [listings, converterMap]=await Promise.all([
+  allShopListingsForPriceSync(session),loadListingConverterMap()
+ ]);
+ const rows=listings.map(listing=>{
+  const mapping=converterMap.listings?.[String(listing.listing_id)]||null;
+  const originalCreationTimestamp=originalEtsyCreationTimestamp(listing);
+  return {
+   listingId:Number(listing.listing_id),
+   originalCreationTimestamp,
+   originalListedAt:originalCreationTimestamp!==null?
+    new Date(originalCreationTimestamp*1000).toISOString():null,
+   title:String(listing.title||''),
+   state:String(listing.state||''),
+   firstImageUrl:null,imageCount:0,imageError:null,
+   artworkId:mapping?.artworkId||null,
+   converted:mapping?.status==='converted',
+   conversionStatus:mapping?.status||'not-linked',
+   convertedAt:mapping?.convertedAt||null,
+   lastReconvertedAt:mapping?.lastReconvertedAt||null,
+   reconversionCount:Math.max(0,Number(mapping?.reconversionCount)||0)
+  };
+ });
+ return { listings: sortConverterListingsOldestFirst(rows), converterMap };
 }
 
 function sendJson(res, status, value) {
@@ -3200,6 +3207,22 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/listing-converter') {
     if (!requireAdminPage(req, res, '/listing-converter')) return;
     return sendHtml(res, 200, renderListingConverterPage());
+  }
+
+  // Preview images are fetched only when a card scrolls into view.
+  if (req.method==='GET' && url.pathname==='/api/listing-converter/listing-image'){
+    if(!requireAdminApi(req,res))return;
+    const listingId=Number(url.searchParams.get('listingId'));
+    if(!Number.isSafeInteger(listingId)||listingId<=0)
+      return sendJson(res,400,{ok:false,error:'A valid Etsy listing ID is required.'});
+    try{
+      const session=await getEtsySession();
+      const result=await cachedConverterListingPreview(session,listingId);
+      return sendJson(res,200,{ok:true,listingId,...result});
+    }catch(error){
+      return sendJson(res,502,{ok:false,error:'Etsy preview unavailable: '+
+        String(error?.message||error).slice(0,180)});
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/listing-converter/listings') {
