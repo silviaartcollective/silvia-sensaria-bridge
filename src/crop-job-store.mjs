@@ -165,6 +165,22 @@ export async function createCropJob(input) {
   });
 }
 
+// A single R2 queue read serves the status of every visible conversion.
+// Unlike /api/crop-jobs/:id, this does not presign every output thumbnail.
+export async function getCropJobSummaries(ids){
+ const wanted=new Set(ids.map(String));
+ const store=await readStore();
+ const jobs={};
+ for(const job of store.jobs){
+  if(!wanted.has(job.id))continue;
+  jobs[job.id]={
+   id:job.id,status:job.status,progress:Number(job.progress||0),
+   currentRatio:job.currentRatio||'',message:job.message||'',error:job.error||''
+  };
+ }
+ return jobs;
+}
+
 export async function getCropJob(jobId) {
   const id = String(jobId || '').trim();
   if (!id) return null;
