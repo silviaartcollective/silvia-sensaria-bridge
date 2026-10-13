@@ -20,7 +20,7 @@ test('reconvert requires a newly uploaded master and new production crops',()=>{
  assert.ok(html.includes('if(!file){'));
  assert.ok(html.includes("'/api/listing-converter/reconvert/reserve'"));
  assert.ok(html.includes("'/api/listing-converter/reconvert/crop'"));
- assert.ok(html.includes("await waitForCrop(result.job.id"));
+ assert.ok(html.includes("await waitForCrop(setup.jobId"));
  assert.ok(html.includes('await queuedConversion(item,card,'));
  assert.ok(html.includes('reconvert:true'));
  assert.ok(html.includes('async function refreshConversionQueue()'));
