@@ -116,7 +116,7 @@ test('reconverter UI submits work to persistent Etsy queue after crop verificati
  assert.ok(script.includes("await artworkFingerprint(file)"));
  assert.ok(script.includes("'/api/listing-converter/reconvert/reserve'"));
  assert.ok(script.includes("'/api/listing-converter/reconvert/crop'"));
- assert.ok(script.includes("await waitForCrop(result.job.id"));
+ assert.ok(script.includes("await waitForCrop(setup.jobId"));
  assert.ok(script.includes('await queuedConversion(item,card,'));
  assert.ok(script.includes('async function refreshConversionQueue()'));
  assert.ok(script.includes("setInterval(()=>{void refreshConversionQueue()},5000)"));
