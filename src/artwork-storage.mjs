@@ -77,7 +77,15 @@ function mockupSortOrder(filename, fallbackIndex) {
   return 1000 + fallbackIndex;
 }
 
-export async function reserveArtworkUpload({
+// Serializes ID allocation + manifest creation across simultaneous tabs/listings.
+ // All consumers (converter and product creator) share this lock on one server instance.
+let artworkReservationTail=Promise.resolve();
+export async function reserveArtworkUpload(input){
+ const task=artworkReservationTail.then(()=>reserveArtworkUploadUnlocked(input));
+ artworkReservationTail=task.catch(()=>{});
+ return task;
+}
+async function reserveArtworkUploadUnlocked({
   title = '',
   orientation = 'portrait',
   master,
