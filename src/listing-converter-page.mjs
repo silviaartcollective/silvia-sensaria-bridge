@@ -107,20 +107,68 @@ async function putFile(url,file,onProgress,contentType){
   onProgress(65);
 }
 
-async function waitForCrop(jobId,setStatus,setProgress){
-  for(let attempt=0;attempt<240;attempt+=1){
-    const r=await fetch('/api/crop-jobs/'+encodeURIComponent(jobId),{cache:'no-store'});
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Could not read crop job');
-    const job=d.job||{};
-    const progress=Number(job.progressPercent||job.progress||0);
-    setProgress(Math.max(68,Math.min(94,progress||72)));
-    if(job.status==='completed')return d;
-    if(job.status==='failed')throw new Error(job.error||'Crop worker failed');
-    setStatus('Cropping '+String(job.currentRatio||'production ratios')+'… '+(progress?String(progress)+'%':''));
-    await sleep(1500);
+// One batched request monitors ALL waiting artworks rather than a separate
+// request every 1.5 seconds for each listing. Network timeouts never discard jobs.
+const cropWaiters=new Map();
+let cropPollActive=false,cropPollFailures=0;
+async function pollAllCrops(){
+ try{
+  const ids=[...cropWaiters.keys()];
+  if(!ids.length)return;
+  const jobs={};
+  for(let index=0;index<ids.length;index+=50){
+   const part=ids.slice(index,index+50);
+   const response=await fetch('/api/listing-converter/crop-status?ids='+encodeURIComponent(part.join(',')),
+    {cache:'no-store'});
+   if(!response.ok)throw Error('Crop status temporarily unavailable ('+response.status+')');
+   const data=await response.json();
+   if(!data.ok)throw Error(data.error||'Crop status unavailable');
+   Object.assign(jobs,data.jobs||{});
   }
-  throw new Error('Crop job is still running. Leave the worker open and try again.');
+  cropPollFailures=0;
+  for(const [id,listeners] of cropWaiters){
+   const job=jobs[id];
+   if(!job)continue;
+   const progress=Number(job.progress||0);
+   for(const watcher of listeners){
+    watcher.setProgress(Math.max(68,Math.min(94,progress||72)));
+    if(job.status==='completed')watcher.resolve({ok:true,job});
+    else if(job.status==='failed')watcher.reject(Error(job.error||'Crop worker failed'));
+    else watcher.setStatus('Crop '+String(job.currentRatio||job.message||'queued')+
+      (progress?' · '+progress+'%':'')+' — other listings remain queued');
+   }
+   if(job.status==='completed'||job.status==='failed')cropWaiters.delete(id);
+  }
+ }catch(error){
+  cropPollFailures++;
+  for(const listeners of cropWaiters.values())
+   for(const watcher of listeners)
+    watcher.setStatus('Crop still queued or processing; reconnecting after a temporary network issue ('+
+      String(error?.name||'network timeout')+'). No artwork was discarded.');
+ }finally{
+  if(cropWaiters.size){
+   setTimeout(pollAllCrops,cropPollFailures?Math.min(30000,4000*(2**Math.min(cropPollFailures,3))):6000);
+  }else{
+   cropPollActive=false;
+  }
+ }
+}
+function waitForCrop(jobId,setStatus,setProgress){
+ return new Promise((resolve,reject)=>{
+  const id=String(jobId||'');
+  if(!/^crop_[0-9a-f-]{36}$/i.test(id)){
+   reject(Error('Missing production crop job ID'));return;
+  }
+  const entries=cropWaiters.get(id)||[];
+  entries.push({resolve,reject,setStatus,setProgress});
+  cropWaiters.set(id,entries);
+  setProgress(70);
+  setStatus('Production crop queued; waiting for shared workstation…');
+  if(!cropPollActive){
+   cropPollActive=true;
+   void pollAllCrops();
+  }
+ });
 }
 
 async function refreshWorker(){
