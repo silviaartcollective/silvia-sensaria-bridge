@@ -31,7 +31,7 @@ import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
 import {originalEtsyCreationTimestamp,sortConverterListingsOldestFirst} from './converter-listing-order.mjs';
-import { listingSeoPreservation } from './converter-description.mjs';
+import { listingSeoPreservation, describeEtsyDescriptionDifference } from './converter-description.mjs';
 import { hasAuthorizedConverterLink } from './listing-converter-link.mjs';
 import {
  enqueueConversion,getConversionJob,getConversionQueueSummary,claimNextConversion,
@@ -1395,7 +1395,8 @@ async function ensureConverterListingSeo(session,listingId,expectedDescription,o
  throw Error('Etsy could not verify preserved listing content: '+
   [!report.descriptionPreserved?'description text or shop-section URL differs':null,
    !report.sectionPreserved?'shop section assignment differs':null].filter(Boolean).join('; ')+
-   '. The original description remains saved in the converter recovery record.');
+   (!report.descriptionPreserved?' '+describeEtsyDescriptionDifference(latest.description,expectedDescription):'')+
+   ' The original description remains saved in the converter recovery record.');
 }
 
 async function performListingConversion(body){
@@ -1453,7 +1454,8 @@ async function performListingConversion(body){
           listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
           accessToken:session.accessToken
         });
-        const recoveryDescription=reviseCanvasThickness(String(recoveryListing.description||''));
+        const recoveryDescription=reviseCanvasThickness(
+          String(prior.originalDescription||recoveryListing.description||''));
         await ensureConverterListingSeo(session,listingId,recoveryDescription,
           Number(recoveryListing.shop_section_id)||null);
         if(reconvert){
@@ -1580,7 +1582,8 @@ async function performListingConversion(body){
         listingId,
         listing: {
           taxonomy_id: listingDefaults.taxonomyId,
-          description: expectedDescription,
+          // Description is updated once, after all structural and taxonomy changes,
+          // only when Etsy truly differs. Avoid an unnecessary initial rewrite.
           ...(originalShopSectionId?{shop_section_id:originalShopSectionId}:{}),
           shipping_profile_id: managedShippingProfile?.shipping_profile_id || undefined,
           readiness_state_id: readinessStateId,
@@ -1628,8 +1631,8 @@ async function performListingConversion(body){
         throw new Error(`Etsy conversion verification found ${badSkus.length} enabled variant(s) without ${artworkId} SKUs.`);
       }
 
-      // Compare safely after taxonomy/inventory updates and restore if necessary.
-      await ensureConverterListingSeo(session,listingId,expectedDescription,originalShopSectionId);
+      // Do not patch the description between inventory and taxonomy writes.
+      // One final verification avoids multiple sanitization round trips.
       const properties = await getCachedTaxonomyProperties(session, listingDefaults.taxonomyId);
       const attributes = await applyAllListingAttributes({
         session,
