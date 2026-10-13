@@ -564,101 +564,90 @@ async function retrySavedEtsyConversion(item,card){
 }
 
 async function convertListing(item,card){
-  // Failed Etsy configuration is resumable using the verified R2 artwork ID.
-  // Keep the original file-upload workflow for new, not-yet-uploaded listings.
-  if(await retrySavedEtsyConversion(item,card))return;
-  const input=card.querySelector('.master');
-  const button=card.querySelector('.convert');
-  const status=card.querySelector('.cardstatus');
-  const bar=card.querySelector('.progress span');
-  const file=input.files?.[0];
-
-  if(!file){
-    status.className='cardstatus bad';
-    status.textContent='Choose the matching master artwork first.';
-    return;
+ // A completed crop retry must not ask for the artwork twice.
+ if(await retrySavedEtsyConversion(item,card))return;
+ const input=card.querySelector('.master'),button=card.querySelector('.convert');
+ const status=card.querySelector('.cardstatus'),bar=card.querySelector('.progress span');
+ const file=input.files?.[0];
+ if(!file){
+  status.className='cardstatus bad';
+  status.textContent='Choose the matching master artwork first.';return;
+ }
+ const confirmed=confirm(
+  'Convert this Etsy listing to the Silvia system?\n\n'+item.title+
+  '\n\nThe listing stays live/draft. The master will be uploaded to R2 and its production crops queued. '+
+  'The conversion queue verifies Etsy settings, SKUs and pricing after crops finish. '+
+  'Existing photos, video, title, description and tags stay in place.'
+ );
+ if(!confirmed)return;
+ try{window.location.href='pod-crop-worker://start'}catch{}
+ button.disabled=true;input.disabled=true;bar.style.width='5%';
+ status.className='cardstatus';
+ try{
+  const orientation=await detectOrientation(file);
+  const setup=await withSetupSlot(async()=>{
+   status.textContent='Reserving the artwork ID safely…';
+   const d=await requestJsonRetry('/api/listing-converter/reserve',{
+    method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({listingId:item.listingId,orientation,
+     master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size}})
+   });
+   const artworkId=d.artworkId,previouslyQueuedCropJobId=d.cropJobId||null;
+   if(d.resumed)status.textContent='Resuming '+artworkId+' with the existing ID…';
+   if(d.uploadAlreadyPresent){
+    status.textContent='Artwork '+artworkId+' already in R2; reusing the uploaded source…';
+    bar.style.width='65%';
+   }else{
+    status.textContent='Uploading '+artworkId+' master to Cloudflare R2…';
+    await putFile(d.upload.uploadUrl,file,p=>{bar.style.width=p+'%'},d.upload.contentType);
+   }
+   status.textContent='Verifying uploaded artwork…';
+   await requestJsonRetry('/api/artworks/'+encodeURIComponent(artworkId)+'/complete',{method:'POST'});
+   bar.style.width='68%';
+   let completedCrop=null;
+   if(previouslyQueuedCropJobId){
+    const previous=await requestJsonRetry('/api/crop-jobs/'+encodeURIComponent(previouslyQueuedCropJobId));
+    if(previous.job?.status==='completed')completedCrop=previous.job;
+    if(previous.job?.status==='failed')
+     throw Error(previous.job.error||'Existing crop job failed');
+   }
+   if(completedCrop)return {artworkId,cropsReady:true};
+   status.textContent='Adding production crops to the shared worker queue…';
+   const started=await requestJsonRetry('/api/crop-jobs',{
+    method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({artworkId,orientation})
+   });
+   return {artworkId,cropsReady:started.job?.status==='completed',
+    cropJobId:started.job?.id,workerOnline:started.worker?.online};
+  },position=>{
+   status.textContent='Waiting for a free artwork upload slot (#'+position+
+    '). Other conversions will continue in order.';
+   bar.style.width='5%';
+  });
+  if(!setup.cropsReady&&!setup.workerOnline){
+   status.className='cardstatus warn';
+   status.textContent='Artwork '+setup.artworkId+' safely uploaded; crops are queued. '+
+    'Start the shared PC worker and retry with the same file to resume. No Etsy changes were made.';
+   return;
   }
-
-  const confirmed=confirm(
-    'Convert this Etsy listing to the Silvia system?\\n\\n'+
-    item.title+'\\n\\n'+
-    'The listing stays live/draft as it is. Its existing photos, video, title, description and tags stay in place. Its variants, SKUs, pricing and Silvia structural settings will be replaced after the artwork crop finishes.'
-  );
-  if(!confirmed)return;
-  // The universal protocol starts one shared worker for all 3 shops.
-  try{window.location.href='pod-crop-worker://start';}catch{}
-
-  button.disabled=true;
-  input.disabled=true;
-  bar.style.width='5%';
-
-  try{
-    const orientation=await detectOrientation(file);
-    status.className='cardstatus';
-    status.textContent='Reserving the next SAC artwork ID…';
-
-    let r=await fetch('/api/listing-converter/reserve',{
-      method:'POST',
-      headers:{'content-type':'application/json'},
-      body:JSON.stringify({listingId:item.listingId,orientation,master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size}})
-    });
-    let d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Could not reserve artwork');
-    const artworkId=d.artworkId;
-    const previouslyQueuedCropJobId=d.cropJobId||null;
-    if(d.resumed)status.textContent='Resuming artwork '+artworkId+' with the existing ID…';
-    if(d.uploadAlreadyPresent){
-      status.textContent='Artwork '+artworkId+' already in R2; reusing the uploaded source…';
-      bar.style.width='65%';
-    }else{
-      status.textContent='Uploading '+artworkId+' master to Cloudflare R2…';
-      await putFile(d.upload.uploadUrl,file,p=>{bar.style.width=p+'%'});
-    }
-
-    r=await fetch('/api/artworks/'+encodeURIComponent(artworkId)+'/complete',{method:'POST'});
-    d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Could not finalize artwork upload');
-    bar.style.width='68%';
-
-    status.textContent='Queueing production crops for '+artworkId+'…';
-    let completedCrop=null;
-    if(previouslyQueuedCropJobId){
-      const previous=await fetch('/api/crop-jobs/'+encodeURIComponent(previouslyQueuedCropJobId),{cache:'no-store'});
-      if(previous.ok){
-        const result=await previous.json();
-        if(result.job?.status==='completed')completedCrop=result.job;
-      }
-    }
-    if(!completedCrop){
-      r=await fetch('/api/crop-jobs',{
-        method:'POST',
-        headers:{'content-type':'application/json'},
-        body:JSON.stringify({artworkId,orientation})
-      });
-      d=await r.json();
-      if(!r.ok)throw new Error(d.error||'Could not queue crop job');
-      if(!d.worker?.online){
-        status.className='cardstatus warn';
-        status.textContent='Artwork '+artworkId+' is uploaded and its crop job queued. Silvia PC worker is offline. Start worker/start-worker.cmd, then click Upload artwork & convert again to resume the SAME artwork ID. Etsy was not changed.';
-        button.disabled=false;input.disabled=false;
-        return;
-      }
-      await waitForCrop(d.job.id,text=>{status.textContent=text},p=>{bar.style.width=p+'%'});
-    }else{
-      bar.style.width='94%';
-      status.textContent='Reusing already completed crops for '+artworkId+'…';
-    }
-
-    status.className='cardstatus';
-    status.textContent='Crops ready. Waiting for Etsy conversion queue…';
-    await queuedConversion(item,card,{listingId:item.listingId,artworkId});
-    bar.style.width='96%';
-  }catch(error){
-    status.className='cardstatus bad';
-    status.textContent=String(error.message||error);
-    button.disabled=false;
-    input.disabled=false;
+  if(!setup.cropsReady){
+   await waitForCrop(setup.cropJobId,message=>{status.textContent=message},
+    percentage=>{bar.style.width=percentage+'%'});
   }
+  bar.style.width='95%';
+  status.textContent='Crops complete. Adding '+setup.artworkId+' to the Etsy conversion queue…';
+  await queuedConversion(item,card,{listingId:item.listingId,artworkId:setup.artworkId});
+  bar.style.width='96%';
+ }catch(error){
+  status.className='cardstatus bad';
+  status.textContent=String(error?.message||error)+
+   (temporaryNetworkFailure(error)
+    ?' — Temporary network timeout. Reuse the same master and retry; saved uploads and crops are preserved.':'');
+ }finally{
+  if(!['queued','running'].includes(queueForListing(item.listingId)?.status)){
+   button.disabled=false;input.disabled=false;
+  }
+ }
 }
 
 async function loadListings(){
