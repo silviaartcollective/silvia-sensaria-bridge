@@ -93,6 +93,7 @@ import {
 import {
   createCropJob,
   getCropJob,
+  getCropJobSummaries,
   claimNextCropJob,
   updateCropJobProgress,
   completeCropJob,
@@ -2096,6 +2097,16 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/crop-worker/status') {
     if (!requireAdminApi(req, res)) return;
     return sendJson(res, 200, { ok: true, worker: cropWorkerStatus() });
+  }
+
+  // Batch status polling replaces one R2 read per browser listing every 1.5s.
+  if(req.method==='GET'&&url.pathname==='/api/listing-converter/crop-status'){
+   if(!requireAdminApi(req,res))return;
+   const ids=String(url.searchParams.get('ids')||'').split(',').filter(Boolean);
+   if(!ids.length||ids.length>60||ids.some(id=>!/^crop_[0-9a-f-]{36}$/i.test(id)))
+    return sendJson(res,400,{ok:false,error:'Provide 1 to 60 valid crop job IDs.'});
+   try{return sendJson(res,200,{ok:true,jobs:await getCropJobSummaries(ids)})}
+   catch(error){return sendJson(res,503,{ok:false,error:'Crop queue temporarily unavailable. Please retry.'})}
   }
 
   if (req.method === 'POST' && url.pathname === '/api/crop-jobs') {
