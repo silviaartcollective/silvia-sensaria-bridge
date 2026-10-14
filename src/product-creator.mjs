@@ -1,4 +1,4 @@
-import {renderMockupGeneratorSection} from './mockup-generator-ui.mjs';
+import {renderMockupGeneratorSection,renderMockupPreviewPanel} from './mockup-generator-ui.mjs';
 function esc(value) {
   return String(value ?? '')
     .replaceAll('&','&amp;')
@@ -19,12 +19,20 @@ export function renderProductCreator() {
 <style>
 :root{--bg:#f4f1eb;--panel:#fffdfa;--ink:#20221e;--muted:#74776f;--line:#dfdcd4;--green:#536454;--green2:#e8eee7;--amber:#946b35;--amber2:#f5ead9}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
-a{color:inherit;text-decoration:none}.shell{min-height:100vh;display:grid;grid-template-columns:238px 1fr}
+a{color:inherit;text-decoration:none}.shell{height:100dvh;min-height:0;overflow:hidden;display:grid;grid-template-columns:238px minmax(0,1fr)}.shell>aside{height:100dvh;overflow-y:auto}
 aside{background:#252820;color:#f8f5ee;padding:28px 20px;display:flex;flex-direction:column}.brand{font-family:Georgia,serif;font-size:24px;line-height:1.08;margin-bottom:30px}.brand small{display:block;font-size:12px;color:#b9beb3;margin-top:8px}
 nav{display:grid;gap:7px}.nav{padding:11px 12px;border-radius:9px;color:#cdd1c7;font-size:14px}.nav.active,.nav:hover{background:#373b33;color:#fff}.foot{margin-top:auto;color:#aeb3a8;font-size:12px;line-height:1.5}
-main{padding:34px 38px 48px;max-width:1200px;width:100%;margin:auto}h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 8px}.sub{margin:0;color:var(--muted);font-size:14px}
+main{padding:26px 30px 28px;max-width:1850px;width:100%;height:100dvh;margin:0 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 8px}.sub{margin:0;color:var(--muted);font-size:14px}
 .top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:24px}.badge{border:1px solid var(--line);background:var(--panel);padding:8px 12px;border-radius:999px;font-size:12px}
-.grid{display:grid;grid-template-columns:1fr 340px;gap:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:22px;box-shadow:0 10px 28px rgba(40,40,30,.05)}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(410px,1.02fr);gap:18px;flex:1;min-height:0;min-width:0}
+.top{flex:none}
+.creator-editor-scroll,.creator-preview-scroll{height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;min-width:0}
+.creator-preview-scroll{display:block}
+.creator-preview-scroll .mg-preview{border:0;padding:0;background:transparent;color:var(--ink);min-width:0}
+.creator-planned-details{margin-top:22px;padding:13px;border:1px solid var(--line);border-radius:11px;background:#faf8f4}
+.creator-planned-details>summary{cursor:pointer;font-size:13px;font-weight:650}
+.creator-planned-details>.creator-planned-inner{padding-top:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:22px;box-shadow:0 10px 28px rgba(40,40,30,.05)}
 h2{font-size:23px;margin:0 0 5px}.section-sub{color:var(--muted);font-size:13px;margin:0 0 18px}.form{display:grid;gap:15px}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 label{display:grid;gap:7px;font-size:12px;font-weight:650}.hint{font-weight:400;color:var(--muted)}
 input,textarea,select{width:100%;border:1px solid var(--line);border-radius:10px;background:#fff;padding:11px 12px;font:inherit;color:var(--ink)}textarea{min-height:160px;resize:vertical}
@@ -33,7 +41,8 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
 .chips{display:flex;flex-wrap:wrap;gap:7px}.chip{font-size:11px;padding:6px 8px;border-radius:8px;background:var(--green2);color:var(--green)}
 .result{display:none;margin-top:14px;padding:14px;border-radius:10px;border:1px solid var(--line);background:#f7f4ee;font-size:13px;line-height:1.5}.result.show{display:block}
 .uploadbox{border:1px dashed #cfc9be;border-radius:12px;padding:16px;background:#faf8f3;display:grid;gap:12px}.uploadrow{display:grid;grid-template-columns:1fr 1fr;gap:12px}.uploadmeta{font-size:11px;color:var(--muted);line-height:1.45}.progress{height:7px;background:#e8e3d9;border-radius:999px;overflow:hidden}.progress>span{display:block;height:100%;width:0;background:#697969;transition:width .2s ease}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-@media(max-width:900px){.grid{grid-template-columns:1fr}.twocol{grid-template-columns:1fr}}@media(max-width:720px){.shell{grid-template-columns:1fr}aside{display:none}main{padding:24px 18px}.top{flex-direction:column}h1{font-size:32px}}
+@media(max-width:1100px){.shell{height:auto;min-height:100vh;overflow:visible}.shell>aside{height:auto;overflow:visible}main{height:auto;min-height:100vh;display:block;overflow:visible}.grid{grid-template-columns:1fr;min-height:auto}.creator-editor-scroll,.creator-preview-scroll{height:auto;min-height:0;overflow:visible;scrollbar-gutter:auto}.twocol{grid-template-columns:1fr}}
+@media(max-width:720px){.shell{grid-template-columns:1fr}.shell>aside{display:none}main{padding:24px 18px}.top{flex-direction:column}h1{font-size:32px}.mg-preview-list{grid-template-columns:repeat(3,minmax(0,1fr));}}
 </style>
 </head>
 <body>
@@ -67,7 +76,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
   </div>
 
 <div class="grid">
-    <section class="card">
+    <section class="card creator-editor-scroll" aria-label="Scrollable product editor">
       <h2>Listing details</h2>
       <p class="section-sub">Your structural Etsy settings are preloaded automatically. Title, SEO description and tags stay unique to each artwork.</p>
       <form class="form" id="creator-form">
@@ -199,7 +208,11 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
       <div class="result" id="result"></div>
     </section>
 
-    <aside-card class="card">
+    <aside-card class="card creator-preview-scroll" aria-label="Scrollable mockup preview panel">
+      ${renderMockupPreviewPanel()}
+      <details class="creator-planned-details">
+      <summary>Planned products and listing defaults</summary>
+      <div class="creator-planned-inner">
       <h2>Planned products</h2>
       <p class="section-sub">The creator will use the Sensaria-connected catalog.</p>
       <div class="chips"><span class="chip">Matte Paper Poster</span><span class="chip">Canvas</span><span class="chip">Framed Canvas</span><span class="chip">40×60 Canvas</span></div>
@@ -213,6 +226,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
         Etsy needs the new listing permissions. <a href="/etsy/connect"><strong>Reconnect Etsy</strong></a>, then save the new refresh token in Render.
       </div>
       <button class="btn secondary" type="button" style="margin-top:14px;width:100%" onclick="location.href='/etsy/connect'">Reconnect Etsy</button>
+      </div></details>
     </aside-card>
   </div>
 </main>
