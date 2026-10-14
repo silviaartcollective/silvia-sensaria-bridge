@@ -57,14 +57,14 @@ return `
 .mg-preview-head .hint{font-size:12px;white-space:nowrap}
 .mg-preview-actions{display:flex;gap:8px;flex-wrap:wrap}
 .mg-preview-actions button{font-size:12px;padding:9px 11px}
-.mg-preview-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(0,auto);gap:11px;min-height:455px;max-height:min(66dvh,700px);overflow-y:auto;overscroll-behavior:contain;align-content:start;scrollbar-gutter:stable;padding:3px 7px 7px 3px}
+.mg-preview-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));--preview-row-height:clamp(172px,20dvh,230px);grid-auto-rows:var(--preview-row-height);gap:11px;min-height:455px;height:calc(3 * var(--preview-row-height) + 32px);max-height:74dvh;overflow-y:auto;overscroll-behavior:contain;align-content:start;scrollbar-gutter:stable;padding:3px 7px 7px 3px}
 .mg-preview-empty{grid-column:1/-1;font-size:13px;color:#74776f;line-height:1.6;padding:26px 14px;text-align:center;align-self:start}
 .mg-preview-item{display:flex;flex-direction:column;position:relative;gap:8px;border:2px solid #e4e0d7;border-radius:11px;padding:8px;background:white;cursor:pointer;min-width:0;transition:border-color .15s,background .15s}
 .mg-preview-item:hover{border-color:#adb9aa}
 .mg-preview-item:has(input:checked){border-color:#546f59;background:#eff5ed;box-shadow:0 0 0 1px #546f59}
 .mg-preview-item:focus-within{outline:2px solid #6c866f;outline-offset:2px}
 .mg-preview-item input{position:absolute;top:12px;right:12px;z-index:2;width:21px;height:21px;margin:0;accent-color:#425d47;cursor:pointer;box-shadow:0 1px 7px #fff;border-radius:4px}
-.mg-preview-item img{display:block;width:100%;aspect-ratio:4 / 5;object-fit:contain;background:#f0efeb;border-radius:7px}
+.mg-preview-item img{display:block;width:100%;height:calc(var(--preview-row-height) - 72px);object-fit:contain;background:#f0efeb;border-radius:7px}
 .mg-preview-item span{display:block;width:100%;font-size:12px;line-height:1.35;font-weight:600;overflow-wrap:anywhere}
 .mg-preview-item small{display:block;font-size:10px;font-weight:400;color:#74776f;margin-top:3px}
 .mg-preview #mg-selection-status{font-size:12px}
