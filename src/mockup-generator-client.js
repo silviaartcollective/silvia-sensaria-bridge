@@ -87,7 +87,7 @@ function renderPreviews(){
  // Do not continuously tear down and re-download thumbnails on each 6-second poll.
  if(signature===previewRenderKey)return;
  previewRenderKey=signature;
- const list=$('mg-preview-list');list.replaceChildren();
+ const list=$('mg-preview-list');const savedScrollTop=list.scrollTop;list.replaceChildren();
  const selected=job?completed.filter(t=>isSelected(job.id,t.id)).length:0;
  $('mg-preview-count').textContent=completed.length+' ready';
  $('mg-selection-status').textContent=!job
@@ -120,6 +120,7 @@ function renderPreviews(){
    ?template.dimensions.width+' × '+template.dimensions.height:'Ready JPG'));
   row.append(checkbox,image,description);list.append(row);
  }
+ list.scrollTop=savedScrollTop; // Keep review position while new JPGs finish generating.
 }
 function selectionChanged(){
  // Selection is a review step: changing a checkbox must not silently upload JPGs.
