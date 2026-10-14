@@ -43,38 +43,33 @@ return `
    <button id="mg-save-map" class="btn secondary" type="button">Save mapping & retry</button></div>
  </div>
  </div>
- <aside class="mg-preview" aria-label="Generated mockup previews">
-  <div class="mg-preview-head"><strong>Generated mockups</strong><span id="mg-preview-count" class="hint">0 ready</span></div>
-  <div class="mg-preview-actions">
-   <button class="btn secondary" type="button" id="mg-select-all">Select all</button>
-   <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
-  </div>
-  <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
-   <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
-  </div>
-  <div id="mg-selection-status" class="uploadmeta">A starter draft contains 1 master photo and 3 preset photos, leaving 16 slots for generated JPGs (20 Etsy photos total). Older batches remain in troubleshooting.</div>
-  <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
- </aside></div>
+</div>
  <div id="mg-worker-status" class="uploadmeta" role="status">Checking shared PC Crop + Mockup Worker…</div>
 </section>
 <style>
-#mockup-generator-panel{position:relative;overflow:visible;container-type:inline-size}
-#mockup-generator-panel .mg-workspace{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:16px;align-items:start}
-#mockup-generator-panel .mg-main{display:grid;gap:12px;min-width:0}
-#mockup-generator-panel .mg-preview{background:#fffdfa;border:1px solid #e2ded6;border-radius:11px;padding:12px;display:grid;gap:10px;min-width:0}
-#mockup-generator-panel .mg-preview-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
-#mockup-generator-panel .mg-preview-actions{display:flex;gap:6px;flex-wrap:wrap}
-#mockup-generator-panel .mg-preview-actions button{font-size:11px;padding:7px 9px}
-#mockup-generator-panel .mg-preview-list{max-height:370px;min-height:145px;overflow-y:auto;overscroll-behavior:contain;display:grid;align-content:start;gap:8px;padding-right:4px}
-#mockup-generator-panel .mg-preview-empty{font-size:12px;color:#74776f;line-height:1.5}
-#mockup-generator-panel .mg-preview-item{display:grid;grid-template-columns:20px 76px minmax(0,1fr);gap:7px;align-items:center;border:1px solid #ebe7df;border-radius:9px;padding:6px;background:white;cursor:pointer}
-#mockup-generator-panel .mg-preview-item input{width:17px;height:17px;margin:0}
-#mockup-generator-panel .mg-preview-item img{display:block;width:76px;height:76px;object-fit:contain;background:#f3f0ec;border-radius:5px}
-#mockup-generator-panel .mg-preview-item span{font-size:11px;line-height:1.35;overflow-wrap:anywhere}
-#mockup-generator-panel .mg-preview-item small{display:block;color:#74776f;margin-top:3px}
-#mockup-generator-panel .mg-preview #mg-apply-selected{font-size:12px;padding:10px}
-@container (max-width:690px){.mg-workspace{grid-template-columns:1fr}.mg-preview-list{max-height:300px}}
+#mockup-generator-panel{position:relative;overflow:visible}
 
+/* Large independent, selectable three-by-three generated mockup gallery. */
+#mockup-generator-panel .mg-workspace{display:block;min-width:0}
+#mockup-generator-panel .mg-main{display:grid;gap:12px;min-width:0}
+.mg-preview{background:#fffdfa;border:1px solid #e2ded6;border-radius:13px;padding:16px;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;gap:12px;min-width:0}
+.mg-preview-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:19px}
+.mg-preview-head .hint{font-size:12px;white-space:nowrap}
+.mg-preview-actions{display:flex;gap:8px;flex-wrap:wrap}
+.mg-preview-actions button{font-size:12px;padding:9px 11px}
+.mg-preview-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(0,auto);gap:11px;min-height:455px;max-height:min(66dvh,700px);overflow-y:auto;overscroll-behavior:contain;align-content:start;scrollbar-gutter:stable;padding:3px 7px 7px 3px}
+.mg-preview-empty{grid-column:1/-1;font-size:13px;color:#74776f;line-height:1.6;padding:26px 14px;text-align:center;align-self:start}
+.mg-preview-item{display:flex;flex-direction:column;position:relative;gap:8px;border:2px solid #e4e0d7;border-radius:11px;padding:8px;background:white;cursor:pointer;min-width:0;transition:border-color .15s,background .15s}
+.mg-preview-item:hover{border-color:#adb9aa}
+.mg-preview-item:has(input:checked){border-color:#546f59;background:#eff5ed;box-shadow:0 0 0 1px #546f59}
+.mg-preview-item:focus-within{outline:2px solid #6c866f;outline-offset:2px}
+.mg-preview-item input{position:absolute;top:12px;right:12px;z-index:2;width:21px;height:21px;margin:0;accent-color:#425d47;cursor:pointer;box-shadow:0 1px 7px #fff;border-radius:4px}
+.mg-preview-item img{display:block;width:100%;aspect-ratio:4 / 5;object-fit:contain;background:#f0efeb;border-radius:7px}
+.mg-preview-item span{display:block;width:100%;font-size:12px;line-height:1.35;font-weight:600;overflow-wrap:anywhere}
+.mg-preview-item small{display:block;font-size:10px;font-weight:400;color:#74776f;margin-top:3px}
+.mg-preview #mg-selection-status{font-size:12px}
+.mg-preview #mg-apply-selected{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0}
+@media(max-width:760px){.mg-preview-list{gap:7px;max-height:550px;min-height:260px}.mg-preview-item{padding:5px}.mg-preview-item span{font-size:11px}.mg-preview-item input{width:19px;height:19px;top:7px;right:7px}}
 #mockup-generator-panel .mg-actions{display:flex;flex-wrap:wrap;gap:10px}
 #mockup-generator-panel details{padding:10px;border:1px solid #e2ded6;border-radius:9px;background:#fffdfa}
 #mockup-generator-panel summary{cursor:pointer;font-size:13px;font-weight:600}
@@ -89,3 +84,22 @@ return `
 #mockup-generator-panel .mg-engine{position:fixed!important;left:-20000px!important;top:0!important;width:1100px!important;height:760px!important;opacity:0!important;pointer-events:none!important;border:0!important}
 </style>`;
 }
+
+// Render generated results in Product Creator's independent right-side preview pane.
+export function renderMockupPreviewPanel(){
+return `
+ <aside class="mg-preview" aria-label="Generated mockup previews">
+  <div class="mg-preview-head"><strong>Generated mockups</strong><span id="mg-preview-count" class="hint">0 ready</span></div>
+  <div class="mg-preview-actions">
+   <button class="btn secondary" type="button" id="mg-select-all">Select all</button>
+   <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
+  </div>
+  <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
+   <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
+  </div>
+  <div id="mg-selection-status" class="uploadmeta">A starter draft contains 1 master photo and 3 preset photos, leaving 16 slots for generated JPGs (20 Etsy photos total). Older batches remain in troubleshooting.</div>
+  <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
+ </aside>
+`;
+}
+
