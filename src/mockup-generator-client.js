@@ -106,7 +106,8 @@ function renderPreviews(){
  }
  for(const template of completed){
   const row=create('label','',{class:'mg-preview-item'});
-  const checkbox=create('input','',{type:'checkbox',value:template.id});
+  const checkbox=create('input','',{type:'checkbox',value:template.id,
+   'aria-label':'Select generated mockup '+template.outputName});
   checkbox.checked=isSelected(job.id,template.id);
   checkbox.addEventListener('change',()=>{
    setSelected(job.id,template.id,checkbox.checked);selectionChanged();
@@ -121,12 +122,22 @@ function renderPreviews(){
  }
 }
 function selectionChanged(){
- selectionVersion++;markRequested();renderPreviews();
- if(attachTimer)clearTimeout(attachTimer);
- if(currentBatch()&&job.status==='completed'&&job.templates.some(t=>t.status==='completed'&&isSelected(job.id,t.id))){
-  const id=job.id;
-  attachTimer=setTimeout(()=>{attachTimer=null;if(job?.id===id)act(useResults)},650);
- }
+ // Selection is a review step: changing a checkbox must not silently upload JPGs.
+ selectionVersion++;markRequested();
+ if(attachTimer){clearTimeout(attachTimer);attachTimer=null}
+ lastAppliedBatchId='';appliedCount=0;
+ const completed=job?job.templates.filter(t=>t.status==='completed'):[];
+ const selected=job?completed.filter(t=>isSelected(job.id,t.id)).length:0;
+ // Keep mounted thumbnails and scroll offset while selecting individual images.
+ for(const checkbox of $('mg-preview-list').querySelectorAll('input[type=checkbox]'))
+  checkbox.checked=!!job&&isSelected(job.id,checkbox.value);
+ $('mg-selection-status').textContent=selected+' of '+completed.length+
+  ' JPGs selected. Review the previews, then click Apply selected to listing.';
+ $('mg-apply-selected').disabled=!currentBatch()||!selected||attaching;
+ // Allow a later server update to reconcile selections without stale state.
+ previewRenderKey=(job?.id||'none')+'|'+completed.map(t=>t.id+':'+(t.finishedAt||'')).join(';')+
+  '|'+completed.map(t=>isSelected(job.id,t.id)?'1':'0').join('')+'|'+attaching+
+  '|'+currentBatch()+'|'+lastAppliedBatchId+'|'+appliedCount;
 }
 async function syncGeneratedJpgs(batchId,templateIds){
  const artworkId=$('artwork_id').value.trim();
@@ -330,8 +341,7 @@ async function showJob(id,{quiet=false}={}){
  $('mg-generate').disabled=preparing;
  $('mg-pause').disabled=!job||job.status==='completed'||job.paused;
  if(!quiet||failed.some(t=>t.status==='needs_mapping'))await mappingPrompt();
- if(currentBatch()&&job.status==='completed'&&previous!=='completed'&&requested&&!ready&&
-   job.templates.some(t=>t.status==='completed'&&isSelected(job.id,t.id)))act(useResults);
+ // Keep finished JPGs visible for review; only the Apply button attaches them.
  return job;
 }
 async function createJob({artworkId='',automatic=false}={}){
