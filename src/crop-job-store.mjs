@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { getJsonObject, putJsonObject, isMissingR2Object } from './r2.mjs';
 import { FULFILLMENT_RATIOS } from './artwork-ratios.mjs';
+import {normalizeCropSize,sizeCropRatioKey} from './size-crops.mjs';
 
 const DEFAULT_STORE_KEY = 'state/crop-jobs.json';
 const ACTIVE_STATUSES = new Set(['pending', 'claimed', 'processing', 'uploading']);
@@ -27,10 +28,11 @@ function normalizeArtworkId(raw) {
   throw new Error('Artwork ID must look like SAC0001');
 }
 
-function normalizeOrientation(raw) {
+function normalizeOrientation(raw, allowSquare = false) {
   const value = String(raw || '').trim().toLowerCase();
   if (value === 'landscape' || value === 'horizontal') return 'landscape';
   if (value === 'portrait' || value === 'vertical' || !value) return 'portrait';
+  if (value === 'square' && allowSquare) return 'square';
   if (value === 'square') {
     throw new Error('Silvia square fulfillment ratios are not configured yet.');
   }
@@ -71,7 +73,8 @@ function withMutation(fn) {
 export function createCropJobRecord({
   artworkId,
   masterKey,
-  orientation = 'portrait'
+  orientation = 'portrait',
+  size = null
 }, now = new Date()) {
   const id = normalizeArtworkId(artworkId);
   const key = String(masterKey || '').trim();
@@ -80,7 +83,8 @@ export function createCropJobRecord({
     throw new Error('Stored master artwork does not match the selected Artwork ID');
   }
 
-  const safeOrientation = normalizeOrientation(orientation);
+  const normalizedSize = size ? normalizeCropSize(size) : null;
+  const safeOrientation = normalizeOrientation(orientation, Boolean(normalizedSize));
   const timestamp = nowIso(now);
 
   return {
@@ -88,7 +92,8 @@ export function createCropJobRecord({
     artworkId: id,
     orientation: safeOrientation,
     masterKey: key,
-    ratios: [...FULFILLMENT_RATIOS],
+    size: normalizedSize,
+    ratios: normalizedSize ? [sizeCropRatioKey(normalizedSize)] : [...FULFILLMENT_RATIOS],
     status: 'pending',
     workerId: '',
     currentRatio: '',
@@ -141,14 +146,16 @@ export function claimPendingJob(store, workerId, now = new Date()) {
 
 export function findReusableCropJob(store, input = {}) {
   const artworkId = normalizeArtworkId(input.artworkId);
-  const orientation = normalizeOrientation(input.orientation);
+  const size = input.size ? normalizeCropSize(input.size) : null;
+  const orientation = normalizeOrientation(input.orientation,Boolean(size));
   const masterKey = String(input.masterKey || '').trim();
 
   return (store?.jobs || []).find(job =>
     job.artworkId === artworkId &&
     ACTIVE_STATUSES.has(job.status) &&
     normalizeOrientation(job.orientation) === orientation &&
-    String(job.masterKey || '') === masterKey
+    String(job.masterKey || '') === masterKey &&
+    (job.size ? normalizeCropSize(job.size) : null) === size
   ) || null;
 }
 
@@ -211,12 +218,12 @@ export async function updateCropJobProgress(jobId, workerId, patch = {}) {
 
     const allowedStatus = ['claimed', 'processing', 'uploading'];
     if (allowedStatus.includes(String(patch.status || ''))) job.status = patch.status;
-    if (patch.currentRatio && FULFILLMENT_RATIOS.includes(patch.currentRatio)) {
+    if (patch.currentRatio && (job.ratios || FULFILLMENT_RATIOS).includes(patch.currentRatio)) {
       job.currentRatio = patch.currentRatio;
     }
     if (Array.isArray(patch.completedRatios)) {
       job.completedRatios = [...new Set(
-        patch.completedRatios.filter(ratio => FULFILLMENT_RATIOS.includes(ratio))
+        patch.completedRatios.filter(ratio => (job.ratios || FULFILLMENT_RATIOS).includes(ratio))
       )];
     }
     if (Number.isFinite(Number(patch.progress))) {
