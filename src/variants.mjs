@@ -2,7 +2,9 @@ const SIZE_PROPERTY_ID = 513;
 const STYLE_PROPERTY_ID = 514;
 
 export const SILVIA_SIZES = [
+  '5x7',
   '8x10',
+  '8x12',
   '11x14',
   '12x16',
   '12x18',
@@ -10,11 +12,15 @@ export const SILVIA_SIZES = [
   '16x24',
   '18x24',
   '24x36',
+  '28x30',
   '30x40',
   '40x60'
 ];
 
 export const SILVIA_SIZE_LABELS = {
+  '5x7': '13x18 cm / 5x7″',
+  '8x12': '20x30 cm / 8x12″',
+  '28x30': '71x76 cm / 28x30″',
   '8x10': '20x25 cm / 8x10″',
   '11x14': '27x35 cm / 11x14″',
   '12x16': '30x40 cm / 12x16″',
@@ -47,6 +53,9 @@ export const SILVIA_POSTER_ETSY_CAD_PER_USD = 1.486;
 export const SILVIA_SALE_DISCOUNT_PERCENT = 25;
 export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
   P: {
+    // New verified Sensaria poster sizes use the existing adjacent price tiers.
+    '5x7': 52.95,
+    '8x12': 57.95,
     '8x10': 52.95,
     '11x14': 57.95,
     '12x16': 62.95,
