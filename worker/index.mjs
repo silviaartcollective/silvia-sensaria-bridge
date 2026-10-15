@@ -191,6 +191,11 @@ async function processJob(app, job) {
         height: crop.height,
         sizeBytes,
         density: crop.density,
+        sourceCropWidth: crop.sourceCropWidth,
+        sourceCropHeight: crop.sourceCropHeight,
+        sourceMasterWidth: crop.sourceMasterWidth,
+        sourceMasterHeight: crop.sourceMasterHeight,
+        recommendedPixelsMet: crop.recommendedPixelsMet,
         upscaled: crop.upscaled === true
       };
 
