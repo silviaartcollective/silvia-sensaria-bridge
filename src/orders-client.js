@@ -58,6 +58,14 @@ function renderOrders(){
       : candidate(o)?' · Custom candidate':' · Auto-checking supplier';
     status.textContent=(o.shipped?'Shipped / completed':'Order received')+progress;
     btn.append(headline,item,status);
+    if(o.status==='awaiting_supplier_approval' || o.status==='approved_for_manual_order'){
+      const supplier=String(o.supplier||'').trim();
+      if(supplier.toLowerCase()==='sensaria'){
+        const name=document.createElement('strong');
+        name.className='supplier-name';name.textContent='SENSARIA';
+        btn.append(name);
+      }
+    }
     btn.addEventListener('click',()=>{
       openOrder(o.receiptId).catch(error=>report('Could not load Etsy order #'+o.receiptId+': '+(error.message||String(error)),true));
     });
@@ -85,6 +93,17 @@ async function openOrder(id){
   const date=created?(typeof created==='number'?new Date(created*1000):new Date(created)).toLocaleString():'Date unavailable';
   set('order-meta',date+' · '+(shipped?'Shipped / completed':'Not yet shipped')+
     ' · '+(review.classification||'Not classified'));
+  const plan=review.regularPlan||{};
+  const sensaria=String(plan.supplier||'').toLowerCase()==='sensaria' &&
+    review.classification==='regular' &&
+    ['awaiting_supplier_approval','approved_for_manual_order'].includes(review.status) &&
+    !shipped && !receipt.was_canceled && !receipt.is_canceled;
+  $('supplier-banner').classList.toggle('hidden',!sensaria);
+  $('sensaria-csv').classList.toggle('hidden',!sensaria);
+  $('sensaria-csv').disabled=false;
+  $('supplier-name').textContent=sensaria?'SENSARIA':String(plan.supplier||'');
+  $('sensaria-csv-status').className='hidden';
+  $('sensaria-csv-status').textContent='';
   const items=Array.isArray(receipt.transactions)?receipt.transactions:[];
   set('items',items.length?items.map(item=>
     (item.title||'Untitled')+' · Quantity '+(item.quantity||1)+
@@ -112,6 +131,36 @@ async function openOrder(id){
   $('review-regular').href='/fulfillment-review?receipt='+encodeURIComponent(id);
   if(window.innerWidth<1150)$('order-detail').scrollIntoView({behavior:'smooth',block:'start'});
 }
+// CSV generation does not place an order; it prepares a supplier-ready file
+// referencing the actual R2 production image after server-side verification.
+$('sensaria-csv').addEventListener('click',async()=>{
+  const id=selectedId, button=$('sensaria-csv'),notice=$('sensaria-csv-status');
+  if(!/^[1-9]\\d{0,19}$/.test(id))return;
+  button.disabled=true;
+  notice.className='';
+  notice.textContent='Preparing Sensaria production artwork and CSV. Large canvas sizes may take a little longer…';
+  try {
+    const response=await fetch('/api/orders/'+encodeURIComponent(id)+'/sensaria-csv',{
+      method:'POST',headers:{'content-type':'application/json'},body:'{}',cache:'no-store'
+    });
+    if(!response.ok){
+      let error;
+      try{const result=await response.json();error=result.error;}catch{}
+      throw Error(error||'CSV generation failed (HTTP '+response.status+').');
+    }
+    const blob=await response.blob();
+    if(!blob.size)throw Error('Server returned an empty CSV.');
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;link.download='sensaria-etsy-'+id+'.csv';
+    document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    notice.textContent='Sensaria CSV prepared and downloaded. Review details before manually placing the order.';
+  }catch(error){
+    notice.className='error';
+    notice.textContent=String(error.message||error);
+  }finally{button.disabled=false;}
+});
 $('search').addEventListener('input',renderOrders);
 $('filter').addEventListener('change',renderOrders);
 $('refresh').addEventListener('click',async()=>{
