@@ -318,45 +318,7 @@ customCropButton.addEventListener('click',async()=>{
  customCropButton.disabled=true;customCropStatus.className='status';
  customCropStatus.textContent='Queueing artwork crop for '+size+'…';
  try{
-  if(!(new RegExp('^SAC[0-9]+
-libraryButton.addEventListener('click',async()=>{
- const hasConfirmed=window.confirm('Create up to four temporary UNPUBLISHED Printify pricing drafts for this exact size and destination? The app will capture actual production costs, save them to its price library and delete the test drafts if saved. No Etsy or supplier orders will be created.');
- if(!hasConfirmed)return;
- libraryButton.disabled=true;
- libraryStatus.textContent='Creating private price-check drafts and capturing production costs. Please keep this page open…';
- try {
-   const body={
-     countryCode:country.value,productCode:product.value,
-     width:Number(width.value),height:Number(height.value),
-     frame:product.value==='FC'?frame.value:'',
-     maxDrafts:4,
-     confirm:'CREATE_UNPUBLISHED_PRINTIFY_PRICING_DRAFTS'
-   };
-   const response=await fetch('/api/printify/pricing-library/build',{
-     method:'POST',headers:{'content-type':'application/json'},
-     body:JSON.stringify(body)
-   });
-   const data=await response.json();
-   if(!response.ok||!data.ok)throw Error(data.error||'Unable to capture Printify prices');
-   const successes=data.created||[];
-   const failures=data.errors||[];
-   const saved=successes.filter(item=>item.savedInR2).length;
-   const retained=successes.filter(item=>item.retainedDraftId).length;
-   const warning=successes.filter(item=>item.warning).map(item=>item.printProvider+': '+item.warning).slice(0,3);
-   libraryStatus.textContent='Captured '+data.captured+' variant production costs from '+successes.length+' product/provider models. Saved to R2: '+saved+'. Unpublished drafts retained: '+retained+'. Remaining provider models: '+data.pendingProviderPairsEstimate+'.'+(failures.length?' Failures: '+failures.map(item=>item.printProvider+': '+item.error).join(' | '):'')+(warning.length?' Notes: '+warning.join(' | '):'');
-   // Refresh quotes and provider ranking using the newly saved prices.
-   button.click();
- } catch(error) {
-   libraryStatus.textContent='Price capture could not finish: '+String(error?.message||error);
- } finally {
-   libraryButton.disabled=false;
- }
-});
-button.addEventListener('click',async()=>{button.disabled=true;button.innerHTML='<span class="spinner"></span>Checking providers…';status.className='status';status.textContent='Looking up the exact request across connected providers…';try{const body={countryCode:country.value.trim().toUpperCase(),productCode:product.value,width:Number(width.value),height:Number(height.value),frame:product.value==='FC'?frame.value:'',shippingMode:shippingMode.value};const r=await fetch('/api/custom-size/lookup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'Lookup failed');render(d);status.textContent=d.winner?'Lookup complete · '+d.request.size+' '+d.request.product+' to '+d.request.countryCode+' · best option: '+d.winner.provider+'.':'Lookup complete, but no provider returned a fully priced eligible option.';}catch(e){status.className='status bad';status.textContent=String(e.message||e);}finally{button.disabled=false;button.textContent='Find best option';}});
-})();
-</script></body></html>`;
-}
-)).test(artworkId))throw Error('Enter a valid existing SAC artwork ID.');
+  if(!(new RegExp('^SAC[0-9]+$')).test(artworkId))throw Error('Enter a valid existing SAC artwork ID.');
   const response=await fetch('/api/crop-jobs',{method:'POST',headers:{'content-type':'application/json'},
    body:JSON.stringify({artworkId,size})});
   const data=await response.json();
