@@ -64,7 +64,16 @@ export function goRowsToCsv(rows) {
 }
 
 async function sourceForTransaction({ parsed, transaction, productionUrlExpiresIn, renderProduction }) {
-  const orientation = transaction.orientation || 'portrait';
+  // Etsy transaction variations do not include a reliable artwork orientation.
+  // Resolve orientation from the master saved in R2, not a portrait default.
+  const master = await loadArtworkManifest(parsed.artworkId);
+  if (!master?.master?.key || !['portrait','landscape'].includes(master.orientation)) {
+    throw new Error('Artwork ' + parsed.artworkId + ' has no verified master orientation.');
+  }
+  const orientation = master.orientation;
+  if (transaction.orientation && transaction.orientation !== orientation) {
+    throw new Error('Receipt orientation disagrees with the saved artwork master.');
+  }
   const spec = productionSpecFor({
     format: parsed.format,
     size: parsed.size,
@@ -142,7 +151,7 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
       artworkId: parsed.artworkId,
       format: parsed.format,
       size: parsed.size,
-      orientation: transaction.orientation || 'portrait',
+      orientation: source.spec.orientation,
       key: source.key,
       rendered: source.rendered,
       spec: source.spec
