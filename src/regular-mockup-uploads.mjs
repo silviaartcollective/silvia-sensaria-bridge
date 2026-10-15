@@ -37,8 +37,9 @@ export async function reserveRegularMockups(artworkId,input){
   const newPending=[],uploads=[];
   for(const file of files){
    const key=fileKey(file);
-   const old=current.find(row=>fileKey({filename:row.originalFilename,size:row.size,
-     lastModified:row.lastModified})===key);
+   const old=current.find(row=>String(row.originalFilename)===file.filename &&
+    Number(row.size)===file.size &&
+    (!row.lastModified||Number(row.lastModified)===file.lastModified));
    if(old&&await artworkObjectExists(old.key)){
     uploads.push({filename:file.filename,key:old.key,alreadyPresent:true});continue;
    }
