@@ -135,39 +135,75 @@ async function openOrder(id){
   $('review-regular').href='/fulfillment-review?receipt='+encodeURIComponent(id);
   if(window.innerWidth<1150)$('order-detail').scrollIntoView({behavior:'smooth',block:'start'});
 }
-// CSV generation does not place an order; it prepares a supplier-ready file
-// referencing the actual R2 production image after server-side verification.
+// Generate the production image asynchronously; report each stage and
+// provide bounded retries rather than leaving the button spinning indefinitely.
+async function prepareSensariaCsv(receiptId,notify){
+  const id=String(receiptId);
+  async function decoded(response){
+    const result=await response.json().catch(()=>null);
+    if(!result)throw Error('Server returned invalid JSON (HTTP '+response.status+').');
+    if(!response.ok || result.ok===false)
+      throw Error(result.error||'CSV preparation failed (HTTP '+response.status+').');
+    return result;
+  }
+  let response=await fetch('/api/orders/'+encodeURIComponent(id)+'/sensaria-csv',{
+    method:'POST',headers:{'content-type':'application/json'},body:'{}',
+    cache:'no-store',signal:AbortSignal.timeout(20000)
+  });
+  await decoded(response);
+  const started=Date.now(),deadline=started+4*60*1000+15000;
+  while(Date.now()<deadline){
+    await new Promise(resolve=>setTimeout(resolve,2500));
+    response=await fetch('/api/orders/'+encodeURIComponent(id)+'/sensaria-csv',{
+      cache:'no-store',signal:AbortSignal.timeout(15000)
+    });
+    const status=(await decoded(response)).job;
+    if(status?.status==='failed')
+      throw Error(status.error||'Artwork preparation failed. Retry after checking R2.');
+    if(status?.status==='completed'){
+      notify('Canvas prepared. Downloading verified Sensaria GO CSV…');
+      const downloaded=await fetch('/api/orders/'+encodeURIComponent(id)+'/sensaria-csv?download=1',{
+        cache:'no-store',signal:AbortSignal.timeout(30000)
+      });
+      if(!downloaded.ok){
+        let reason;
+        try{reason=(await downloaded.json()).error;}catch{}
+        throw Error(reason||'CSV download failed (HTTP '+downloaded.status+').');
+      }
+      const blob=await downloaded.blob();
+      if(!blob.size||!blob.type.includes('csv'))
+        throw Error('Server returned an empty or invalid CSV.');
+      const url=URL.createObjectURL(blob);
+      const anchor=document.createElement('a');
+      anchor.href=url;anchor.download='sensaria-etsy-'+id+'.csv';
+      document.body.append(anchor);anchor.click();anchor.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      return;
+    }
+    const elapsed=Math.max(0,Math.round((Date.now()-started)/1000));
+    notify((status?.stage||'Preparing artwork')+' · '+elapsed+' seconds elapsed.');
+  }
+  throw Error('CSV preparation exceeded the wait limit. You may retry the same order without placing a supplier order.');
+}
 $('sensaria-csv').addEventListener('click',async()=>{
-  const id=selectedId, button=$('sensaria-csv'),notice=$('sensaria-csv-status');
-  if(!/^[1-9]\d{0,19}$/.test(String(id))){
+  const id=String(selectedId),button=$('sensaria-csv'),notice=$('sensaria-csv-status');
+  notice.className='';
+  if(!/^[1-9]\d{0,19}$/.test(id)){
     notice.className='error';
     notice.textContent='Select a valid Etsy receipt before downloading its CSV.';
     return;
   }
   button.disabled=true;
-  notice.className='';
-  notice.textContent='Preparing Sensaria production artwork and CSV. Large canvas sizes may take a little longer…';
-  try {
-    const response=await fetch('/api/orders/'+encodeURIComponent(id)+'/sensaria-csv',{
-      method:'POST',headers:{'content-type':'application/json'},body:'{}',cache:'no-store'
-    });
-    if(!response.ok){
-      let error;
-      try{const result=await response.json();error=result.error;}catch{}
-      throw Error(error||'CSV generation failed (HTTP '+response.status+').');
-    }
-    const blob=await response.blob();
-    if(!blob.size)throw Error('Server returned an empty CSV.');
-    const url=URL.createObjectURL(blob);
-    const link=document.createElement('a');
-    link.href=url;link.download='sensaria-etsy-'+id+'.csv';
-    document.body.appendChild(link);link.click();link.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),60000);
-    notice.textContent='Sensaria CSV prepared and downloaded. Verify the current Sensaria cost, artwork and shipping details before manually placing the order.';
+  notice.textContent='Starting Sensaria artwork preparation…';
+  try{
+    await prepareSensariaCsv(id,message=>{notice.textContent=message;});
+    notice.textContent='Sensaria CSV downloaded. Verify the current cost, canvas artwork, and address before manually ordering.';
   }catch(error){
     notice.className='error';
     notice.textContent=String(error.message||error);
-  }finally{button.disabled=false;}
+  }finally{
+    button.disabled=false;
+  }
 });
 $('search').addEventListener('input',renderOrders);
 $('filter').addEventListener('change',renderOrders);
