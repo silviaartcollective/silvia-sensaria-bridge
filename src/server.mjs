@@ -2128,9 +2128,9 @@ const server = http.createServer(async (req, res) => {
       // The 4.3 worker still enlarged small artwork to fixed 300-PPI targets.
       // Do not lease any jobs to it: a 4.4 native-resolution crop worker is required.
       const version = String(input.version || '0').split('.').map(Number);
-      if (version[0] < 4 || (version[0] === 4 && (version[1] < 4 || (version[1] === 4 && Number(version[2] || 0) < 1)))) {
+      if (version[0] < 4 || (version[0] === 4 && (version[1] < 4 || (version[1] === 4 && Number(version[2] || 0) < 2)))) {
         return sendJson(res, 426, { ok: false,
-          error: 'Shared PC Crop Worker v4.4.1 is required for proportional master-resolution crops. Update the worker folder and restart it.' });
+          error: 'Shared PC Crop Worker v4.4.2 is required for on-demand artwork crops. Update the worker folder and restart it.' });
       }
 
       const job = await claimNextCropJob(workerId);
