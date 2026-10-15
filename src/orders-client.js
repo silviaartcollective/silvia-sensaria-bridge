@@ -102,8 +102,12 @@ async function openOrder(id){
   $('sensaria-csv').classList.toggle('hidden',!sensaria);
   $('sensaria-csv').disabled=false;
   $('supplier-name').textContent=sensaria?'SENSARIA':String(plan.supplier||'');
-  $('sensaria-csv-status').className='hidden';
-  $('sensaria-csv-status').textContent='';
+  const quoteExpired=Number.isFinite(Date.parse(plan.expiresAt)) &&
+    Date.now()>Date.parse(plan.expiresAt);
+  $('sensaria-csv-status').className= sensaria && quoteExpired ? '' : 'hidden';
+  $('sensaria-csv-status').textContent=sensaria && quoteExpired
+    ? 'The earlier supplier price estimate has expired. You can still download the CSV, but confirm the current Sensaria cost before manually placing the order.'
+    : '';
   const items=Array.isArray(receipt.transactions)?receipt.transactions:[];
   set('items',items.length?items.map(item=>
     (item.title||'Untitled')+' · Quantity '+(item.quantity||1)+
@@ -155,7 +159,7 @@ $('sensaria-csv').addEventListener('click',async()=>{
     link.href=url;link.download='sensaria-etsy-'+id+'.csv';
     document.body.appendChild(link);link.click();link.remove();
     setTimeout(()=>URL.revokeObjectURL(url),60000);
-    notice.textContent='Sensaria CSV prepared and downloaded. Review details before manually placing the order.';
+    notice.textContent='Sensaria CSV prepared and downloaded. Verify the current Sensaria cost, artwork and shipping details before manually placing the order.';
   }catch(error){
     notice.className='error';
     notice.textContent=String(error.message||error);
