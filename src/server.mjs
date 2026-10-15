@@ -1295,9 +1295,30 @@ async function syncRegularMockupsToEtsy(artworkId){
   listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
   accessToken:session.accessToken
  });
- const remote=await readImages();
+ let remote=await readImages();
+ // Recover older drafts whose setup failed before uploading even the cover
+ // artwork. The first image should always be the actual master, not an
+ // arbitrary regular mockup. Only add a cover when Etsy has ZERO images.
+ if(remote.length===0&&manifest.master?.key){
+  const source=await optimizeEtsyImageObject(await getArtworkObject(manifest.master.key));
+  const filename=String(manifest.master.originalFilename||'master.jpg');
+  const cover=await withEtsyListingRetry(()=>uploadListingImage({
+   shopId:session.shop.shop_id,listingId,imageBuffer:source.body,filename,
+   contentType:source.contentType||'image/jpeg',rank:1,altText:manifest.title||'',
+   keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
+  }),{attempts:8,baseDelayMs:180});
+  const listingImageId=cover?.listing_image_id||cover?.listingImageId||null;
+  if(!listingImageId)throw Error('Etsy did not confirm the recovered master artwork image.');
+  const receipt={key:manifest.master.key,filename,rank:1,listingImageId};
+  const updated=await loadArtworkManifest(artworkId);
+  updated.etsyMedia||={images:[],video:null};
+  updated.etsyMedia.images=[...(updated.etsyMedia.images||[]).filter(r=>r.key!==receipt.key),receipt];
+  await saveArtworkManifest(updated);
+  await verifyEtsyImageReceipts({receipts:[receipt],readImages});
+  remote=await readImages();
+ }
  const existingIds=receivedEtsyImageIds(remote);
- const recorded=new Map((manifest.etsyMedia?.images||[]).map(row=>[row.key,row]));
+ const recorded=new Map((await loadArtworkManifest(artworkId)).etsyMedia?.images?.map(row=>[row.key,row])||[]);
  // Include new uploads and legacy manually uploaded images, but NEVER
  // PSD-generated JPGs that the customer has not explicitly selected.
  const needed=(manifest.mockups||[]).filter(row=>!row.generatedFromKey&&row.key&&
