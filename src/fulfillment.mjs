@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parseSilviaSku, productKey } from './core.mjs';
 import { loadArtworkManifest } from './artwork-storage.mjs';
 import { resolveProviderArtworkAsset } from './fulfillment-assets.mjs';
+import { ensureSensariaUploadAsset, SENSARIA_MAX_UPLOAD_PX } from './sensaria-upload-asset.mjs';
 import { signedArtworkUrl } from './r2.mjs';
 import { productionSpecFor } from './production.mjs';
 
@@ -64,7 +65,7 @@ export function goRowsToCsv(rows) {
   return `${lines.join('\r\n')}\r\n`;
 }
 
-async function sourceForTransaction({ parsed, transaction, productionUrlExpiresIn, useProductionCrop, onProgress }) {
+async function sourceForTransaction({ parsed, transaction, productionUrlExpiresIn, useProductionCrop, sensariaMaxUploadPx, onProgress }) {
   // Etsy transaction variations do not include a reliable artwork orientation.
   // Resolve orientation from the master saved in R2, not a portrait default.
   const master = await loadArtworkManifest(parsed.artworkId);
@@ -94,11 +95,25 @@ async function sourceForTransaction({ parsed, transaction, productionUrlExpiresI
     if (crop.orientation !== orientation) {
       throw new Error('Artwork ' + parsed.artworkId + ' crop orientation disagrees with the saved master.');
     }
+    // Sensaria rejects files over 17,500 px; oversized crops get a cached,
+    // capped copy of the same crop. Smaller crops are linked as they are.
+    const upload = await ensureSensariaUploadAsset({
+      artworkId: parsed.artworkId,
+      size: parsed.size,
+      crop,
+      expiresIn: productionUrlExpiresIn,
+      maxPx: sensariaMaxUploadPx,
+      onProgress
+    });
     return {
-      key: crop.key,
-      url: crop.url,
+      key: upload.key,
+      cropKey: crop.key,
+      url: upload.url,
       spec,
       ratio: crop.ratio,
+      width: upload.width,
+      height: upload.height,
+      capped: upload.capped,
       productionCrop: true
     };
   }
@@ -126,6 +141,7 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
   fallbackPhone = '1111111111',
   productionUrlExpiresIn = 7 * 24 * 60 * 60,
   useProductionCrop = true,
+  sensariaMaxUploadPx = SENSARIA_MAX_UPLOAD_PX,
   onProgress = () => {}
 } = {}) {
   const { first, last } = splitName(receipt.name);
@@ -151,6 +167,7 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
       transaction,
       productionUrlExpiresIn,
       useProductionCrop,
+      sensariaMaxUploadPx,
       onProgress
     });
 
@@ -160,7 +177,11 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
       size: parsed.size,
       orientation: source.spec.orientation,
       key: source.key,
+      cropKey: source.cropKey || null,
       ratio: source.ratio || null,
+      width: source.width || null,
+      height: source.height || null,
+      capped: Boolean(source.capped),
       productionCrop: source.productionCrop,
       spec: source.spec
     });

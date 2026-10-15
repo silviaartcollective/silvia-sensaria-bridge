@@ -2966,13 +2966,14 @@ const server = http.createServer(async (req, res) => {
         const artwork=await resolveProviderArtworkAsset({artworkId:plan.artworkId,size:plan.size});
         if(artwork.key!==plan.assetKey || !(await artworkObjectExists(artwork.key)))
           throw Error('Artwork crop changed or is missing in R2. Refresh the supplier recommendation.');
-        stage('Linking the verified R2 production crop for Sensaria');
+        stage('Preparing the verified R2 production crop for Sensaria');
         const exported=await etsyReceiptToSensariaCsvFromR2(latest,{
           useProductionCrop:true,productionUrlExpiresIn:7*24*60*60,
           onProgress:stage
         });
         if(exported.rows.length!==1 || !exported.sources[0]?.productionCrop ||
-           exported.sources[0]?.key!==plan.assetKey ||
+           exported.sources[0]?.cropKey!==plan.assetKey ||
+           Math.max(exported.sources[0]?.width||0,exported.sources[0]?.height||0)>17500 ||
            !exported.rows[0]?.['Product Code'] || !exported.rows[0]?.URL)
           throw Error('Sensaria GO CSV needs the verified R2 production crop and a valid product code.');
         stage('Finalizing verified CSV download');

@@ -26,7 +26,7 @@ import {inspectStoredMasterGeometry} from './master-geometry.mjs';
 
 let productionRenderTail = Promise.resolve();
 
-async function withProductionRenderSlot(task) {
+export async function withProductionRenderSlot(task) {
   const run = productionRenderTail.then(task, task);
   productionRenderTail = run.catch(() => {});
   return run;
