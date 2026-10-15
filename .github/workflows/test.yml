@@ -1,9 +1,9 @@
 name: test
 
+# Automated runs are paused while GitHub Actions usage is exhausted.
+# Use local Node tests. Manually reenable push/PR triggers after usage resets.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
