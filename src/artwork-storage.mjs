@@ -207,6 +207,7 @@ export async function completeArtworkUpload(artworkId) {
     // Old wrong-orientation assets must not be served as production-ready.
     manifest.fulfillmentRatiosReady=false;
     manifest.fulfillmentRatios={};
+    manifest.fulfillmentSizeCrops={};
     manifest.fulfillmentRatioInsufficient={};
     manifest.cropWorkerJobId=null;
     manifest.fulfillmentRatiosUpdatedAt=null;
