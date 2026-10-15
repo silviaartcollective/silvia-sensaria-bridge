@@ -22,6 +22,7 @@ import { previewDescriptionUpdates, applyDescriptionUpdates, reviseCanvasThickne
 
 import { renderProductCreator } from './product-creator.mjs';
 import {getMockupJob,listMockupJobs} from './mockup-generator.mjs';
+import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verification.mjs';
 import {mockupObjectKey} from './production.mjs';
 import { handleMockupAPI } from './mockup-api.mjs';
 import {canonicalWallArtStyle,styleAttributes} from './etsy-style.mjs';
@@ -1171,43 +1172,48 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     .map((item, index) => ({ item, rank: index + 1 }));
   const videoItem = plan.mediaItems.find((item) => String(item.contentType || '').startsWith('video/')) || null;
 
-  // Two upload workers are materially faster than fully serial uploads while
-  // still respecting Etsy's short listing lock. Any 409 is retried with backoff.
-  const uploadStartedAt = Date.now();
-  let originalImageBytes = 0;
-  let uploadImageBytes = 0;
-  const uploadedImages = new Array(imageItems.length);
-  await mapWithConcurrency(imageItems, 2, async ({ item, rank }, index) => {
-    const existing = existingImages.get(item.key);
-    if (existing?.listingImageId) {
-      uploadedImages[index] = { ...existing, rank };
-      return;
-    }
-
-    const object = plan.objectByKey.get(item.key) || await getArtworkObject(item.key);
-    originalImageBytes += Number(object.originalBytes || object.body?.length || 0);
-    uploadImageBytes += Number(object.uploadBytes || object.body?.length || 0);
-    const filename = String(item.originalFilename || item.key.split('/').pop() || 'listing-image.jpg');
-    const uploaded = await withEtsyListingRetry(() => uploadListingImage({
-      shopId: session.shop.shop_id,
-      listingId,
-      imageBuffer: object.body,
-      filename,
-      contentType: object.contentType || item.contentType || 'image/jpeg',
-      rank,
-      altText: manifest.title || '',
-      keystring: session.keystring,
-      sharedSecret: session.sharedSecret,
-      accessToken: session.accessToken
-    }), { attempts: 8, baseDelayMs: 180 });
-
-    uploadedImages[index] = {
-      listingImageId: uploaded.listing_image_id || null,
-      key: item.key,
-      filename,
-      rank
-    };
+  // Etsy locks an individual listing for image writes. Serial uploads avoid
+  // competing rank updates and let each confirmed receipt survive a restart.
+  const uploadStartedAt=Date.now();
+  let originalImageBytes=0,uploadImageBytes=0;
+  const uploadedImages=new Array(imageItems.length);
+  const readRemoteImages=()=>getEtsyListingImages({
+    listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
+    accessToken:session.accessToken
   });
+  const initialRemoteIds=receivedEtsyImageIds(await readRemoteImages());
+  for(let index=0;index<imageItems.length;index++){
+    const {item,rank}=imageItems[index];
+    const previous=existingImages.get(item.key);
+    if(previous?.listingImageId&&initialRemoteIds.has(String(previous.listingImageId))){
+      uploadedImages[index]={...previous,rank};continue;
+    }
+    const object=plan.objectByKey.get(item.key)||await getArtworkObject(item.key);
+    originalImageBytes+=Number(object.originalBytes||object.body?.length||0);
+    uploadImageBytes+=Number(object.uploadBytes||object.body?.length||0);
+    const filename=String(item.originalFilename||item.key.split('/').pop()||'listing-image.jpg');
+    const uploaded=await withEtsyListingRetry(()=>uploadListingImage({
+      shopId:session.shop.shop_id,listingId,imageBuffer:object.body,
+      filename,contentType:object.contentType||item.contentType||'image/jpeg',
+      rank,altText:manifest.title||'',keystring:session.keystring,
+      sharedSecret:session.sharedSecret,accessToken:session.accessToken
+    }),{attempts:8,baseDelayMs:180});
+    const listingImageId=uploaded?.listing_image_id||uploaded?.listingImageId||null;
+    if(!listingImageId)throw Error('Etsy returned no image ID for '+filename+
+      '. Do not consider the mockup uploaded; inspect the Etsy listing before retrying.');
+    const receipt={listingImageId,key:item.key,filename,rank};
+    uploadedImages[index]=receipt;
+    // Do not lose successful uploads if a later image or preset video fails.
+    // Always merge against the latest R2 manifest (not the stale draft snapshot).
+    const latest=await loadArtworkManifest(manifest.artworkId);
+    latest.etsyMedia||={images:[],video:null};
+    latest.etsyMedia.images=[
+      ...(latest.etsyMedia.images||[]).filter(row=>row.key!==item.key),
+      receipt
+    ];
+    await saveArtworkManifest(latest);
+    manifest.etsyMedia=latest.etsyMedia;
+  }
 
   let video = manifest.etsyMedia.video || null;
   if (
@@ -1235,13 +1241,28 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
 
   // Persist media state once instead of doing an R2 manifest write after every
   // image. This removes a large number of network round-trips during drafts.
-  manifest.etsyMedia.images = uploadedImages.filter(Boolean).sort((a, b) => a.rank - b.rank);
-  manifest.etsyMedia.video = video;
-  manifest.mockupSort = plan.sort;
-  await saveArtworkManifest(manifest);
+  // Read Etsy again after upload processing to verify every requested image.
+  const confirmed=await verifyEtsyImageReceipts({
+    receipts:uploadedImages.filter(Boolean),readImages:readRemoteImages
+  });
+  const latestManifest=await loadArtworkManifest(manifest.artworkId);
+  latestManifest.etsyMedia||={images:[],video:null};
+  latestManifest.etsyMedia.images=[
+    ...(latestManifest.etsyMedia.images||[]).filter(row=>
+      !uploadedImages.some(item=>item?.key===row.key)),
+    ...uploadedImages.filter(Boolean)
+  ].sort((a,b)=>a.rank-b.rank);
+  latestManifest.etsyMedia.video=video;
+  latestManifest.mockupSort=plan.sort;
+  latestManifest.etsyMediaVerifiedAt=new Date().toISOString();
+  await saveArtworkManifest(latestManifest);
+  manifest.etsyMedia=latestManifest.etsyMedia;
 
   return {
-    imageCount: manifest.etsyMedia.images.length,
+    imageCount: confirmed.verified,
+    verifiedImageCount: confirmed.verified,
+    verificationRemoteCount: confirmed.remoteCount,
+    missingPresetRoles:plan.missingPresetRoles||[],
     videoUploaded: Boolean(video?.videoId),
     uploadMs: Date.now() - uploadStartedAt,
     originalImageBytes,
