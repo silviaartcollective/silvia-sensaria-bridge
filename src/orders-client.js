@@ -139,7 +139,11 @@ async function openOrder(id){
 // referencing the actual R2 production image after server-side verification.
 $('sensaria-csv').addEventListener('click',async()=>{
   const id=selectedId, button=$('sensaria-csv'),notice=$('sensaria-csv-status');
-  if(!/^[1-9]\\d{0,19}$/.test(id))return;
+  if(!/^[1-9]\d{0,19}$/.test(String(id))){
+    notice.className='error';
+    notice.textContent='Select a valid Etsy receipt before downloading its CSV.';
+    return;
+  }
   button.disabled=true;
   notice.className='';
   notice.textContent='Preparing Sensaria production artwork and CSV. Large canvas sizes may take a little longer…';
