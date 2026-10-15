@@ -224,6 +224,9 @@ function serialWrites(){
 }
 async function processPSDJob(app,claim){
  const startedAt=Date.now();
+ const timings={};
+ let checkpoint=startedAt;
+ const measure=key=>{const now=Date.now();timings[key]=now-checkpoint;checkpoint=now;};
  let completionRecorded=false;
  const api=clientFor(app),id=claim.job.id,itemId=claim.item.id;
  let psdPath='',artworkPath='',outputPath='';
@@ -243,10 +246,12 @@ async function processPSDJob(app,claim){
   psdPath=(await downloadCached(claim.templateUrl,{
    shop:app.appUrl,id:claim.template.id,key:claim.template.key,
    size:claim.template.size,ext:extension},stage)).path;
+  measure('templateReadMs');
   await stage('Preparing master artwork on PC');
   artworkPath=(await downloadCached(claim.artworkUrl,{
    shop:app.appUrl,id:claim.job.id,key:claim.job.artworkKey,
    size:claim.job.artworkSize,ext:path.extname(claim.job.filename)||'.jpg'},stage)).path;
+  measure('artworkReadMs');
   outputPath=path.join(os.tmpdir(),'pod-mockup-'+id+'-'+crypto.randomUUID()+'.jpg');
   tempPaths.add(outputPath);
   const render=await renderMockupOnPC({
@@ -256,8 +261,10 @@ async function processPSDJob(app,claim){
    artworkOrientation:claim.job.artworkOrientation||'',
    onStage:stage
   });
+  measure('photopeaRenderMs');
   const inspected=await queue(()=>api.inspectMockupTemplate(itemId,render.objects));
   const classification=inspected.classification||{};
+  measure('smartObjectVerificationMs');
   if(render.needsMapping||classification.status!=='mapped'||
       classification.path!==render.usedMapping){
    const why=String(render.reason||classification.reason||'Select the visible artwork Smart Object.');
@@ -267,8 +274,14 @@ async function processPSDJob(app,claim){
   }
   await stage('Uploading and verifying '+claim.item.outputName);
   await uploadFile(claim.output.uploadUrl,outputPath);
+  measure('generatedJpgR2UploadMs');
   await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping));
+  measure('serverVerificationMs');
   completionRecorded=true;
+  console.log('['+app.name+'] PSD_TIMINGS '+JSON.stringify({
+   template:claim.item.name,artworkId:claim.job.artworkId||null,
+   ...timings,totalMs:Date.now()-startedAt,engine:render.engine||'photopea'
+  }));
   console.log('['+app.name+'] PSD completed '+claim.item.outputName+
    ' ('+render.dimensions.width+'x'+render.dimensions.height+', '+(render.engine||'unknown')+
    ', '+((Date.now()-startedAt)/1000).toFixed(1)+'s total)');
