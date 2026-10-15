@@ -1,11 +1,14 @@
 import crypto from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {readOrder,saveReview,paidReceipt,validReceiptId} from './custom-order-store.mjs';
 import {lookupCustomSize} from './custom-size-lookup.mjs';
 import {resolveProviderArtworkAsset} from './fulfillment-assets.mjs';
 import {artworkObjectExists} from './r2.mjs';
 
 const PREFIX='SAC';
-const SIZES=['8x10','11x14','12x16','12x18','16x20','16x24','18x24','24x36','30x40','40x60'];
+// Catalog is authoritative, including newly mapped sizes outside the old SKU list.
+const PRODUCTS=JSON.parse(readFileSync(new URL('../config/products.json',import.meta.url),'utf8'));
+const SIZES=[...new Set(Object.keys(PRODUCTS).map(key=>key.split('|')[1]))];
 const FRAME={NAT:'Natural',BRN:'Brown',BLK:'Black',WHT:'White'};
 const money=n=>Math.round((n+Number.EPSILON)*100)/100;
 const words=v=>String(v??'').trim();
@@ -19,13 +22,16 @@ export function shippingAddressDigest(receipt) {
 }
 export function parseFulfillmentSku(sku){
   const value=words(sku).toUpperCase();
-  const match=new RegExp('^('+PREFIX+'[0-9]{4,})-(FC|P|C)-([0-9]{3,4})(?:-(NAT|BRN|BLK|WHT))?$').exec(value);
+  const match=new RegExp('^('+PREFIX+'[0-9]{4,})-(FC|P|C)-([0-9]{2,4})(?:-(NAT|BRN|BLK|WHT))?$').exec(value);
   if(!match)throw new Error('This item does not have a converted '+PREFIX+' variant SKU. Review fulfillment manually.');
   const [,artworkId,productCode,encoded,finishCode]=match;
   const size=SIZES.find(s=>s.replace('x','')===encoded);
   if(!size)throw new Error('Size in converted SKU is not in the approved product catalog.');
   if((productCode==='FC'&&!finishCode)||(productCode!=='FC'&&finishCode))
     throw new Error('Framed canvas SKU must include a known frame colour; non-framed products must not include one.');
+  const key=productCode+'|'+size+'|'+(finishCode||'NONE');
+  if(!PRODUCTS[key]?.friendlySku)
+    throw new Error('Purchased format, size and finish are not mapped to a verified supplier product. Review manually.');
   const [width,height]=size.split('x').map(Number);
   return {sku:value,artworkId,productCode,size,width,height,frame:finishCode?FRAME[finishCode]:'',finishCode:finishCode||'NONE'};
 }
