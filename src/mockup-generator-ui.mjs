@@ -5,14 +5,19 @@ return `
  <div class="uploadmeta">Optional: choose only the PSD templates you need, then queue them on your PC. You can create the Etsy draft immediately without waiting for rendering. Keep the draft unpublished until its final mockups are ready.</div></div>
  <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically queue the first 16 selected mockups after each master artwork uploads. The master artwork plus 3 preset photos leave 16 additional Etsy photo slots. Use “Select first 7” for a smaller, faster batch.</span></label></div>
  <div class="uploadrow">
-  <label>Add PSD / PSB mockups <span class="hint">optional if templates are saved</span>
+  <label>Vertical PSD / PSB templates <span class="hint">portrait artwork</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
   </label>
-  <label>Template collection
-   <input id="mg-collection" type="text" value="Default Collection" maxlength="100">
+  <label>Horizontal PSD / PSB templates <span class="hint">landscape artwork</span>
+   <input id="mg-psds-horizontal" type="file" accept=".psd,.psb" multiple>
   </label>
  </div>
- <details id="mg-saved-details"><summary>Saved PSD templates <span id="mg-saved-count"></span> · select which to use</summary>
+ <label>Template collection
+  <input id="mg-collection" type="text" value="Default Collection" maxlength="100">
+ </label>
+ <div id="mg-orientation-status" class="status" aria-live="polite">Select a master artwork to detect its aspect ratio. Previously saved templates can be categorized below. Square artworks require square-compatible templates.</div>
+ <details id="mg-saved-details"><summary>Permanent saved PSD templates <span id="mg-saved-count"></span> · choose compatible templates</summary>
+  <div class="uploadmeta">Assign an orientation to older templates. Mark square-compatible only when the artwork Smart Object fits a square image without stretching.</div>
   <div class="mg-actions"><button class="btn secondary" type="button" id="mg-select-seven">Select first 7</button><button class="btn secondary" type="button" id="mg-select-seventeen">Select first 17 (Etsy max)</button><button class="btn secondary" type="button" id="mg-clear-templates">Clear selection</button></div>
   <div id="mg-templates" class="mg-template-list"></div>
  </details>
