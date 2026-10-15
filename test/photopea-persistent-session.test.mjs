@@ -10,7 +10,7 @@ const mainWorker=readFileSync(new URL('index.mjs',root),'utf8');
 const workerAPI=readFileSync(new URL('api.mjs',root),'utf8');
 const routes=readFileSync(new URL('../src/mockup-api.mjs',import.meta.url),'utf8');
 
-test('PC renderer scripts parse and require v4.2 for the persistent Photopea session',()=>{
+test('PC renderer scripts parse and require v4.3 for the persistent Photopea session',()=>{
  assert.doesNotThrow(()=>new vm.Script(pageScript));
  const js=renderer.replace(/^import .*?;\s*$/gm,'')
   .replaceAll('export async function ','async function ')
