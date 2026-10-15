@@ -19,14 +19,15 @@ function simpleLayer(layer){
  const blend=String(layer.blendMode||'normal').toLowerCase();
  return blend==='normal' &&
   (layer.opacity===undefined||Number(layer.opacity)>=0.999) &&
-  !layer.mask&&!layer.vectorMask&&!layer.effects&&!layer.adjustment&&!layer.filterMask;
+  !layer.mask&&!layer.vectorMask&&!layer.effects&&!layer.adjustment&&!layer.filterMask&&
+  layer.clipping!==true&&layer.fillOpacity!==0;
 }
 function flatVisible(psd){
  if(!Array.isArray(psd.children)||!psd.children.length)
   unsupported('PSD has no accessible layers.');
  if(psd.children.some(layer=>Array.isArray(layer.children)))
   unsupported('Grouped Photoshop layers require a more complete native compositor.');
- const ordered=psd.children.filter(layer=>layer.visible!==false);
+ const ordered=psd.children.filter(layer=>layer.visible!==false&&layer.hidden!==true);
  if(ordered.some(layer=>!simpleLayer(layer)))
   unsupported('Layer masks, blending and adjustment effects are not supported by the native fidelity profile.');
  return ordered.reverse(); // PSD child order is topmost first
@@ -36,7 +37,7 @@ export function nativeSmartObjects(psd){
  const visit=(layers,prefix='',visible=true)=>{
   (layers||[]).forEach((layer,index)=>{
    const id=prefix?prefix+'.'+index:String(index);
-   const shown=visible&&layer.visible!==false;
+   const shown=visible&&layer.visible!==false&&layer.hidden!==true;
    if(layer.placedLayer)
     objects.push({path:id,name:String(layer.name||'Smart Object'),kind:'smart',visible:shown});
    if(Array.isArray(layer.children))visit(layer.children,id,shown);
