@@ -1080,12 +1080,16 @@ async function prepareMediaPlan({ session, manifest }) {
   const canonicalCustomItems = starterOnly ? [] :
     (sortResult.applied ? canonicalCustomMockupOrder(sortResult.items) : sortResult.items);
 
-  const orderedImages = starterOnly ? [
-    { ...manifest.master, starterArtwork:true },
-    ...installedPresets.filter(item=>item.role!=='video').map(item=>({
-      key:item.key,contentType:item.contentType,originalFilename:item.filename,presetRole:item.role
-    }))
-  ] : [];
+  const orderedImages = starterOnly ? (
+    presetStatus.configured
+      ? starterDraftMedia(manifest.master,PRESET_MEDIA).filter(item=>item.presetRole!=='video')
+      : [
+          { ...manifest.master, starterArtwork:true },
+          ...installedPresets.filter(item=>item.role!=='video').map(item=>({
+            key:item.key,contentType:item.contentType,originalFilename:item.filename,presetRole:item.role
+          }))
+        ]
+  ) : [];
   let customIndex = 0;
   const totalImageCount = canonicalCustomItems.length + installedPresets.filter(item=>item.role!=='video').length;
   for (let rank = 1; !starterOnly && rank <= totalImageCount; rank += 1) {
