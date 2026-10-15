@@ -1,15 +1,9 @@
 // Regular JPG/PNG mockups may arrive AFTER the master has been stored.
 // Reserve them independently of the master, without changing the R2 artwork ID.
-import {loadArtworkManifest,saveArtworkManifest} from './artwork-storage.mjs';
+import {updateArtworkManifest} from './artwork-storage.mjs';
 import {artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl} from './r2.mjs';
 import {mockupObjectKey} from './production.mjs';
 
-let mutationTail=Promise.resolve();
-const lock=fn=>{
- const work=mutationTail.then(fn,fn);
- mutationTail=work.catch(()=>{});
- return work;
-};
 const fileKey=file=>[
  String(file.filename||''),Number(file.size||0),Number(file.lastModified||0)
 ].join('|');
@@ -29,8 +23,8 @@ function validate(files){
  });
 }
 export async function reserveRegularMockups(artworkId,input){
- return lock(async()=>{
-  const files=validate(input),manifest=await loadArtworkManifest(artworkId);
+ return updateArtworkManifest(artworkId,async(manifest)=>{
+  const files=validate(input);
   if(manifest?.status!=='ready')throw Error('Upload the master artwork to R2 first.');
   const current=Array.isArray(manifest.mockups)?manifest.mockups:[];
   const pending=Array.isArray(manifest.pendingRegularMockups)?manifest.pendingRegularMockups:[];
@@ -60,14 +54,12 @@ export async function reserveRegularMockups(artworkId,input){
   }
   if(newPending.length){
    manifest.pendingRegularMockups=[...pending,...newPending];
-   await saveArtworkManifest(manifest);
   }
   return {artworkId,uploads,totalSaved:current.length};
  });
 }
 export async function confirmRegularMockups(artworkId){
- return lock(async()=>{
-  const manifest=await loadArtworkManifest(artworkId);
+ return updateArtworkManifest(artworkId,async(manifest)=>{
   if(manifest?.status!=='ready')throw Error('Master artwork is not ready.');
   const pending=Array.isArray(manifest.pendingRegularMockups)?manifest.pendingRegularMockups:[];
   const current=Array.isArray(manifest.mockups)?manifest.mockups:[];
@@ -85,7 +77,6 @@ export async function confirmRegularMockups(artworkId){
   }
   manifest.mockups=current.sort((a,b)=>Number(a.index)-Number(b.index));
   manifest.pendingRegularMockups=incomplete;
-  if(successful.length)await saveArtworkManifest(manifest);
   return {artworkId,confirmed:successful.length,pending:incomplete.length,
     totalSaved:current.length,items:successful};
  });
