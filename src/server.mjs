@@ -2966,9 +2966,10 @@ const server = http.createServer(async (req, res) => {
         const artwork=await resolveProviderArtworkAsset({artworkId:plan.artworkId,size:plan.size});
         if(artwork.key!==plan.assetKey || !(await artworkObjectExists(artwork.key)))
           throw Error('Artwork crop changed or is missing in R2. Refresh the supplier recommendation.');
-        stage('Generating production canvas artwork; downloading original from R2');
+        stage('Preparing verified production image for Sensaria');
         const exported=await etsyReceiptToSensariaCsvFromR2(latest,{
-          renderProduction:true,productionUrlExpiresIn:7*24*60*60
+          renderProduction:true,productionUrlExpiresIn:7*24*60*60,
+          onProgress:stage
         });
         if(exported.rows.length!==1 || !exported.sources[0]?.rendered ||
            !exported.rows[0]?.['Product Code'] || !exported.rows[0]?.URL)
