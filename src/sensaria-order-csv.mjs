@@ -36,8 +36,11 @@ export function validateSensariaCsvOrder(order,receipt,shopId) {
      String(plan.countryCode)!==String(receipt.country_iso||'').toUpperCase() ||
      plan.addressDigest!==shippingAddressDigest(receipt))
     throw new Error('Etsy purchase details changed. Refresh supplier recommendation before CSV download.');
-  if(review.status==='awaiting_supplier_approval' &&
-     Number.isFinite(Date.parse(plan.expiresAt)) && Date.now()>Date.parse(plan.expiresAt))
-    throw new Error('Supplier quote expired. Refresh the live recommendation before downloading a CSV.');
-  return {plan,parsed};
+  // A quote's short-lived price estimate is not a production-file expiry:
+  // the CSV is downloaded for manual submission, never an automatic purchase.
+  // Payment, address, SKU, provider, plan signature and duplicate-order safety
+  // remain validated above even when the estimated supplier price is stale.
+  const quoteExpired=Number.isFinite(Date.parse(plan.expiresAt)) &&
+    Date.now()>Date.parse(plan.expiresAt);
+  return {plan,parsed,quoteExpired};
 }
