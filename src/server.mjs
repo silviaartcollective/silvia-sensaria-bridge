@@ -32,8 +32,13 @@ import {starterDraftMedia} from './draft-starter-media.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
+import {renderListingsPage} from './listings-page.mjs';
+import {
+  listingEditorFields,listingEditorFingerprint,validateMasterListingEdit,
+  inventoryEditorRows,inventoryEditorFingerprint,applyInventoryEditorChanges
+} from './master-listings.mjs';
 import {originalEtsyCreationTimestamp,sortConverterListingsOldestFirst} from './converter-listing-order.mjs';
-import { listingSeoPreservation, describeEtsyDescriptionDifference } from './converter-description.mjs';
+import { listingSeoPreservation, describeEtsyDescriptionDifference, sameEtsyDescription } from './converter-description.mjs';
 import { hasAuthorizedConverterLink } from './listing-converter-link.mjs';
 import {
  enqueueConversion,getConversionJob,getConversionQueueSummary,claimNextConversion,
@@ -3551,6 +3556,117 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res,200,{ok:true,...result});
       }
     }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
+  }
+
+  // Silvia-only master listings: read existing Etsy records, never bulk-edit
+  // automatically. The conversion queue is unchanged and remains embedded.
+  if(req.method==='GET' && url.pathname==='/listings'){
+    if(!requireAdminPage(req,res,'/listings'))return;
+    return sendHtml(res,200,renderListingsPage());
+  }
+  if(req.method==='GET' && url.pathname==='/listings-client.js'){
+    if(!requireAdminApi(req,res))return;
+    const js=readFileSync(new URL('./listings-client.js',import.meta.url),'utf8');
+    res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
+      'cache-control':'private, no-store','x-content-type-options':'nosniff'});
+    return res.end(js);
+  }
+  if(req.method==='GET'&&url.pathname==='/api/master-listings'){
+    if(!requireAdminApi(req,res))return;
+    try{
+      const session=await getEtsySession({forceRefresh:true});
+      if(!String(session.scope||'').split(/\s+/).includes('listings_r'))
+        return sendJson(res,403,{ok:false,error:'Etsy listings_r permission is required.'});
+      const data=await converterListingRows(session);
+      return sendJson(res,200,{ok:true,listings:data.listings,count:data.listings.length});
+    }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
+  }
+  const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory))?$/);
+  if(masterRoute&&(req.method==='GET'||req.method==='POST')){
+    if(!requireAdminApi(req,res))return;
+    const id=Number(masterRoute[1]),action=masterRoute[2]||'';
+    if(!Number.isSafeInteger(id))return sendJson(res,400,{ok:false,error:'Invalid Etsy listing ID.'});
+    if(req.method==='POST'){
+      const origin=String(req.headers.origin||''),host=String(req.headers.host||'');
+      if(!host||(origin&&origin!==String(req.headers['x-forwarded-proto']||'https')+'://'+host)||
+         req.headers['sec-fetch-site']==='cross-site')
+        return sendJson(res,403,{ok:false,error:'Cross-site listing update blocked.'});
+      if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+        return sendJson(res,415,{ok:false,error:'JSON is required.'});
+    }
+    try{
+      const session=await getEtsySession({forceRefresh:req.method==='POST'});
+      const scopes=new Set(String(session.scope||'').split(/\s+/));
+      if(!scopes.has('listings_r')||(req.method==='POST'&&!scopes.has('listings_w')))
+        return sendJson(res,403,{ok:false,error:'Etsy listings_r and listings_w permissions are required for editing.'});
+      const credentials={keystring:session.keystring,sharedSecret:session.sharedSecret,
+        accessToken:session.accessToken};
+      const fresh=await getListing({listingId:id,...credentials});
+      if(Number(fresh?.shop_id)!==Number(session.shop.shop_id))
+        return sendJson(res,403,{ok:false,error:'Listing does not belong to the connected Silvia Etsy shop.'});
+      if(req.method==='GET'&&!action){
+        const map=await loadListingConverterMap();
+        const entry=map.listings?.[String(id)]||null;
+        const result=await Promise.allSettled([
+          getListingInventory({listingId:id,...credentials}),
+          getShopSections({shopId:session.shop.shop_id,...credentials}),
+          cachedConverterListingPreview(session,id)
+        ]);
+        const inventory=result[0].status==='fulfilled'?result[0].value:null;
+        const sections=result[1].status==='fulfilled'
+          ?(result[1].value?.results||result[1].value||[]):[];
+        const preview=result[2].status==='fulfilled'?result[2].value:{};
+        return sendJson(res,200,{ok:true,listingId:id,state:String(fresh.state||''),
+          artworkId:entry?.artworkId||null,converted:entry?.status==='converted',
+          fields:listingEditorFields(fresh),metadataHash:listingEditorFingerprint(fresh),
+          inventoryRows:inventory?inventoryEditorRows(inventory):[],
+          inventoryHash:inventory?inventoryEditorFingerprint(inventory):null,
+          inventoryError:result[0].status==='rejected'?String(result[0].reason?.message||result[0].reason):null,
+          sections:Array.isArray(sections)?sections:[],previewUrl:preview.firstImageUrl||null});
+      }
+      if(req.method==='POST' && action){
+        const input=await readJsonBody(req);
+        if(action==='details'){
+          if(input.confirm!=='SAVE SILVIA LISTING')
+            return sendJson(res,400,{ok:false,error:'Explicit save confirmation is required.'});
+          if(input.fingerprint!==listingEditorFingerprint(fresh))
+            return sendJson(res,409,{ok:false,error:'The Etsy listing changed since you opened it. Refresh before saving.'});
+          const edit=validateMasterListingEdit(input,fresh);
+          if(!edit.changed)return sendJson(res,200,{ok:true,changed:false,listingId:id});
+          await withEtsyListingRetry(()=>updateListing({shopId:session.shop.shop_id,listingId:id,
+            listing:edit.patch,...credentials}));
+          const confirmed=await getListing({listingId:id,...credentials});
+          const actual=listingEditorFields(confirmed);
+          // Etsy sometimes normalizes line endings and HTML entities.
+          if(actual.title!==edit.next.title ||
+             !sameEtsyDescription(actual.description,edit.next.description) ||
+             JSON.stringify([...actual.tags].sort())!==JSON.stringify([...edit.next.tags].sort()) ||
+             actual.shopSectionId!==edit.next.shopSectionId)
+            throw Error('Etsy accepted the save but returned different details. Refresh to review what was saved.');
+          return sendJson(res,200,{ok:true,changed:true,verified:true,listingId:id});
+        }
+        if(action==='inventory'){
+          if(input.confirm!=='SAVE SILVIA VARIANTS')
+            return sendJson(res,400,{ok:false,error:'Explicit variation save confirmation is required.'});
+          const existing=await getListingInventory({listingId:id,...credentials});
+          if(input.fingerprint!==inventoryEditorFingerprint(existing))
+            return sendJson(res,409,{ok:false,error:'Etsy variation data has changed. Refresh before saving.'});
+          const updated=applyInventoryEditorChanges(existing,input.updates);
+          if(!input.updates.length)return sendJson(res,200,{ok:true,updated:0});
+          await withEtsyListingRetry(()=>updateListingInventory({
+            listingId:id,inventory:updated,...credentials
+          }));
+          const verified=await getListingInventory({listingId:id,...credentials});
+          if(inventoryEditorFingerprint(verified)!==inventoryEditorFingerprint(updated))
+            throw Error('Etsy returned different variation prices or quantities. Refresh to inspect them.');
+          return sendJson(res,200,{ok:true,updated:input.updates.length,verified:true});
+        }
+      }
+      return sendJson(res,405,{ok:false,error:'Unsupported listing editor action.'});
+    }catch(error){
+      return sendJson(res,/changed|Refresh/i.test(String(error.message||error))?409:400,
+        {ok:false,error:String(error.message||error)});
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/listing-converter') {
