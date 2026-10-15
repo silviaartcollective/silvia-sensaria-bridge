@@ -59,12 +59,24 @@
   if(!readyPromise){
    readyPromise=new Promise((resolve,reject)=>{
     readyResolve=resolve;readyReject=reject;
-    readyTimer=setTimeout(()=>{if(readyReject){readyResolve=null;readyReject=null;reject(Error('Photopea did not connect in 90 seconds. Check PC browser access to photopea.com.'));}},90000);
+    readyTimer=setTimeout(()=>{
+     if(readyReject){
+      readyResolve=null;readyReject=null;readyPromise=null;readyTimer=null;
+      reject(Error('Photopea did not connect in 45 seconds. The PC background Chrome/Edge window could not initialize photopea.com. Check Photopea access in a normal PC browser, then retry.'));
+     }
+    },45000);
    });
    frame.src=photopeaOrigin+'/#'+encodeURIComponent(JSON.stringify({environment:{intro:false,vmode:2}}));
   }
   return readyPromise;
  }
+ // Invoked on the first browser page only. Subsequent PSDs reuse this same
+ // initialized Photopea editor instead of loading the website for each file.
+ window.initializePhotopeaWorker=async function(){
+  await stage('Waiting for photopea.com to initialize in background Chromium');
+  await init();
+  return true;
+ };
  async function send(data,timeout=420000,token=null,expectBinary=false){
   await init();
   if(pending)throw Error('Photopea still has an active command.');
@@ -100,6 +112,21 @@
   const buffer=await response.arrayBuffer();
   await stage('Importing '+(buffer.byteLength/1024/1024).toFixed(1)+' MB '+(kind==='psd'?'PSD':'artwork')+' into PC Photopea');
   await send(buffer,timeout);
+ }
+ function resetDocuments(){
+  try{
+   // All work stays isolated despite sharing an editor. Close prior template,
+   // replacement art and Smart Object documents without saving them.
+   var attempts=0;
+   while(app.documents.length>0&&attempts<40){
+    attempts++;
+    var d=app.documents[0];
+    app.activeDocument=d;
+    d.close();
+   }
+   if(app.documents.length>0)throw Error('Photopea did not release the previous PSD documents.');
+   app.echoToOE('MG_RESET_OK');
+  }catch(error){app.echoToOE('MG_ERROR:Could not reset Photopea documents: '+String(error.message||error))}
  }
  function inspect(){
   // Photopea has a limited, nonstandard JS interpreter. Do not use Array.map,
@@ -213,8 +240,11 @@
   return null; // An ambiguous PSD must be mapped explicitly rather than guessing.
  }
  window.renderMockupOnPC=async function(config){
-  await stage('Connecting PC background Photopea processor');
+  await stage('Reusing initialized Photopea editor for '+String(config.templateName||'PSD'));
   await init();
+  const reset=await script(resetDocuments);
+  if(!reset.messages.includes('MG_RESET_OK'))
+   throw Error('Photopea document reset did not complete. Restart the background editor.');
   await loadFile('psd',420000);
   await stage('Inspecting visible PSD Smart Objects');
   const inspected=parse(await script(inspect),'MG_INSPECT:');
