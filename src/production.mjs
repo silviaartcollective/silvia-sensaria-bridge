@@ -53,9 +53,9 @@ export function productionSpecFor({ format, size, orientation = 'portrait' }) {
       output: swapIfLandscape(spec.productionPortraitPx, normalizedOrientation),
       mirrorBleedPx: Math.round(specs.canvasMirrorBleedInches * specs.dpi),
       safeInsetPx: Math.round(specs.safeInsetInches * specs.dpi),
-      template: normalizedFormat === 'FC'
+      template: normalizedFormat === 'FC' && spec.template
         ? String(spec.template).replace('canvas-1.25bar-', 'canvas-1.25bar-framed-')
-        : spec.template
+        : spec.template || null
     };
   }
 
