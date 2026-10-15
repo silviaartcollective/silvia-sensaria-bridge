@@ -3641,7 +3641,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res,200,{ok:true,...page,count:page.listings.length});
     }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
   }
-  const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory))?$/);
+  const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory|options))?$/);
   if(masterRoute&&(req.method==='GET'||req.method==='POST')){
     if(!requireAdminApi(req,res))return;
     const id=Number(masterRoute[1]),action=masterRoute[2]||'';
@@ -3665,24 +3665,30 @@ const server = http.createServer(async (req, res) => {
       if(Number(fresh?.shop_id)!==Number(session.shop.shop_id))
         return sendJson(res,403,{ok:false,error:'Listing does not belong to the connected Silvia Etsy shop.'});
       if(req.method==='GET'&&!action){
+        // Metadata is the fast path: inventory, shop sections, and image
+        // previews load after the editor is visible instead of blocking it.
         const map=await loadListingConverterMap();
         const entry=map.listings?.[String(id)]||null;
-        const result=await Promise.allSettled([
-          getListingInventory({listingId:id,...credentials}),
-          getShopSections({shopId:session.shop.shop_id,...credentials}),
-          cachedConverterListingPreview(session,id)
-        ]);
-        const inventory=result[0].status==='fulfilled'?result[0].value:null;
-        const sections=result[1].status==='fulfilled'
-          ?(result[1].value?.results||result[1].value||[]):[];
-        const preview=result[2].status==='fulfilled'?result[2].value:{};
         return sendJson(res,200,{ok:true,listingId:id,state:String(fresh.state||''),
           artworkId:entry?.artworkId||null,converted:entry?.status==='converted',
           fields:listingEditorFields(fresh),metadataHash:listingEditorFingerprint(fresh),
+          inventoryRows:[],inventoryHash:null,sections:[],previewUrl:null,
+          optionsPending:true});
+      }
+      if(req.method==='GET'&&action==='options'){
+        const [inventoryResult,sectionsResult]=await Promise.allSettled([
+          getListingInventory({listingId:id,...credentials}),
+          getShopSections({shopId:session.shop.shop_id,...credentials})
+        ]);
+        const inventory=inventoryResult.status==='fulfilled'?inventoryResult.value:null;
+        const sections=sectionsResult.status==='fulfilled'
+          ?(sectionsResult.value?.results||sectionsResult.value||[]):[];
+        return sendJson(res,200,{ok:true,listingId:id,
           inventoryRows:inventory?inventoryEditorRows(inventory):[],
           inventoryHash:inventory?inventoryEditorFingerprint(inventory):null,
-          inventoryError:result[0].status==='rejected'?String(result[0].reason?.message||result[0].reason):null,
-          sections:Array.isArray(sections)?sections:[],previewUrl:preview.firstImageUrl||null});
+          inventoryError:inventoryResult.status==='rejected'
+            ?String(inventoryResult.reason?.message||inventoryResult.reason):null,
+          sections:Array.isArray(sections)?sections:[]});
       }
       if(req.method==='POST' && action){
         const input=await readJsonBody(req);
