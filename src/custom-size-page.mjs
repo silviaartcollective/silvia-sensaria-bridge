@@ -128,6 +128,18 @@ table.offer-table th{font-size:9px}
   <div class="status" id="status">Ready. Choose the customer's destination country. Provider availability is checked independently of the shop's normal Etsy shipping profile.</div>
 </section>
 
+<section class="card">
+  <h2>Crop artwork at this exact size</h2>
+  <p class="sub">Uses the width and height above, including non-listing and custom sizes. The artwork must already be uploaded to R2; this does not change Etsy variants or create an order.</p>
+  <div class="shipping-settings">
+    <label>Stored artwork ID
+      <input id="custom-crop-artwork" placeholder="SAC0018" autocomplete="off">
+    </label>
+    <button type="button" class="primary" id="custom-crop-queue">Generate artwork crop</button>
+  </div>
+  <div class="status" id="custom-crop-status">Enter a stored artwork ID, then queue the exact requested size. Generated files are saved in R2 separately from default listing crops.</div>
+</section>
+
 <section class="hero" id="hero">
   <div class="metric"><small>Best provider</small><strong id="winner">—</strong><div class="detail" id="winner-detail"></div></div>
   <div class="metric"><small>Estimated landed cost</small><strong id="winner-cost">—</strong><div class="detail">USD planning estimate</div></div>
@@ -265,6 +277,97 @@ function render(data){
   shippingScenarios.classList.remove('show');
  }
 }
+const customCropButton=document.getElementById('custom-crop-queue');
+const customCropStatus=document.getElementById('custom-crop-status');
+function displayCustomCrop(size,asset,url){
+ customCropStatus.replaceChildren();
+ customCropStatus.className='status';
+ customCropStatus.append(document.createTextNode('Crop ready: '+size+
+   ' · '+String(asset?.width||'?')+' × '+String(asset?.height||'?')+' px. '));
+ if(url){
+  const a=document.createElement('a');a.href=url;a.target='_blank';
+  a.rel='noopener noreferrer';a.textContent='Open R2 crop';a.style.textDecoration='underline';
+  customCropStatus.append(a);
+ }
+}
+async function pollCustomCrop(jobId,size){
+ for(let i=0;i<180;i++){
+  await new Promise(resolve=>setTimeout(resolve,3000));
+  try{
+   const response=await fetch('/api/crop-jobs/'+encodeURIComponent(jobId),{cache:'no-store'});
+   const data=await response.json();
+   if(!response.ok||!data.ok)throw Error(data.error||'Unable to get crop status.');
+   const job=data.job||{};
+   if(job.status==='completed'){
+    const key=job.ratios?.[0];
+    displayCustomCrop(size,job.resultAssets?.[key],data.previews?.[key]);return;
+   }
+   if(job.status==='failed')throw Error(job.error||'Crop worker failed.');
+   customCropStatus.textContent='Crop '+size+': '+(job.message||job.status||'queued')+' · '+(job.progress||0)+'%';
+  }catch(error){
+   customCropStatus.className='status bad';
+   customCropStatus.textContent=String(error.message||error)+'. Use the same artwork ID and size to retry.';
+   return;
+  }
+ }
+ customCropStatus.textContent='Crop is still processing. Re-enter the same artwork ID and dimensions to check again.';
+}
+customCropButton.addEventListener('click',async()=>{
+ const artworkId=document.getElementById('custom-crop-artwork').value.trim().toUpperCase();
+ const size=String(width.value||'')+'x'+String(height.value||'');
+ customCropButton.disabled=true;customCropStatus.className='status';
+ customCropStatus.textContent='Queueing artwork crop for '+size+'…';
+ try{
+  if(!(new RegExp('^SAC[0-9]+
+libraryButton.addEventListener('click',async()=>{
+ const hasConfirmed=window.confirm('Create up to four temporary UNPUBLISHED Printify pricing drafts for this exact size and destination? The app will capture actual production costs, save them to its price library and delete the test drafts if saved. No Etsy or supplier orders will be created.');
+ if(!hasConfirmed)return;
+ libraryButton.disabled=true;
+ libraryStatus.textContent='Creating private price-check drafts and capturing production costs. Please keep this page open…';
+ try {
+   const body={
+     countryCode:country.value,productCode:product.value,
+     width:Number(width.value),height:Number(height.value),
+     frame:product.value==='FC'?frame.value:'',
+     maxDrafts:4,
+     confirm:'CREATE_UNPUBLISHED_PRINTIFY_PRICING_DRAFTS'
+   };
+   const response=await fetch('/api/printify/pricing-library/build',{
+     method:'POST',headers:{'content-type':'application/json'},
+     body:JSON.stringify(body)
+   });
+   const data=await response.json();
+   if(!response.ok||!data.ok)throw Error(data.error||'Unable to capture Printify prices');
+   const successes=data.created||[];
+   const failures=data.errors||[];
+   const saved=successes.filter(item=>item.savedInR2).length;
+   const retained=successes.filter(item=>item.retainedDraftId).length;
+   const warning=successes.filter(item=>item.warning).map(item=>item.printProvider+': '+item.warning).slice(0,3);
+   libraryStatus.textContent='Captured '+data.captured+' variant production costs from '+successes.length+' product/provider models. Saved to R2: '+saved+'. Unpublished drafts retained: '+retained+'. Remaining provider models: '+data.pendingProviderPairsEstimate+'.'+(failures.length?' Failures: '+failures.map(item=>item.printProvider+': '+item.error).join(' | '):'')+(warning.length?' Notes: '+warning.join(' | '):'');
+   // Refresh quotes and provider ranking using the newly saved prices.
+   button.click();
+ } catch(error) {
+   libraryStatus.textContent='Price capture could not finish: '+String(error?.message||error);
+ } finally {
+   libraryButton.disabled=false;
+ }
+});
+button.addEventListener('click',async()=>{button.disabled=true;button.innerHTML='<span class="spinner"></span>Checking providers…';status.className='status';status.textContent='Looking up the exact request across connected providers…';try{const body={countryCode:country.value.trim().toUpperCase(),productCode:product.value,width:Number(width.value),height:Number(height.value),frame:product.value==='FC'?frame.value:'',shippingMode:shippingMode.value};const r=await fetch('/api/custom-size/lookup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'Lookup failed');render(d);status.textContent=d.winner?'Lookup complete · '+d.request.size+' '+d.request.product+' to '+d.request.countryCode+' · best option: '+d.winner.provider+'.':'Lookup complete, but no provider returned a fully priced eligible option.';}catch(e){status.className='status bad';status.textContent=String(e.message||e);}finally{button.disabled=false;button.textContent='Find best option';}});
+})();
+</script></body></html>`;
+}
+)).test(artworkId))throw Error('Enter a valid existing SAC artwork ID.');
+  const response=await fetch('/api/crop-jobs',{method:'POST',headers:{'content-type':'application/json'},
+   body:JSON.stringify({artworkId,size})});
+  const data=await response.json();
+  if(!response.ok||!data.ok)throw Error(data.error||'Could not queue this artwork size.');
+  if(data.cached){displayCustomCrop(data.size,data.asset,data.previewUrl);return;}
+  customCropStatus.textContent='Queued '+data.size+' · '+(data.job?.id||'')+
+   '. The shared workstation will create the crop.';
+  if(data.job?.id)void pollCustomCrop(data.job.id,data.size);
+ }catch(error){customCropStatus.className='status bad';customCropStatus.textContent=String(error.message||error);}
+ finally{customCropButton.disabled=false;}
+});
 shippingMode.addEventListener('change',()=>{if(lastLookupData)render(lastLookupData);});
 libraryButton.addEventListener('click',async()=>{
  const hasConfirmed=window.confirm('Create up to four temporary UNPUBLISHED Printify pricing drafts for this exact size and destination? The app will capture actual production costs, save them to its price library and delete the test drafts if saved. No Etsy or supplier orders will be created.');
