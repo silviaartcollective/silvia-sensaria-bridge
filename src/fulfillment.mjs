@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { parseSilviaSku, productKey } from './core.mjs';
 import { loadArtworkManifest } from './artwork-storage.mjs';
 import { resolveProviderArtworkAsset } from './fulfillment-assets.mjs';
-import { ensureSensariaUploadAsset, SENSARIA_MAX_UPLOAD_PX } from './sensaria-upload-asset.mjs';
+
+// Sensaria GO rejects RGB uploads whose longest side exceeds 17,500 px.
+export const SENSARIA_MAX_UPLOAD_PX = 17500;
 import { signedArtworkUrl } from './r2.mjs';
 import { productionSpecFor } from './production.mjs';
 
@@ -65,7 +67,7 @@ export function goRowsToCsv(rows) {
   return `${lines.join('\r\n')}\r\n`;
 }
 
-async function sourceForTransaction({ parsed, transaction, productionUrlExpiresIn, useProductionCrop, sensariaMaxUploadPx, onProgress }) {
+async function sourceForTransaction({ parsed, transaction, productionUrlExpiresIn, useProductionCrop, onProgress }) {
   // Etsy transaction variations do not include a reliable artwork orientation.
   // Resolve orientation from the master saved in R2, not a portrait default.
   const master = await loadArtworkManifest(parsed.artworkId);
@@ -86,7 +88,7 @@ async function sourceForTransaction({ parsed, transaction, productionUrlExpiresI
     // Sensaria GO receives the stored R2 production crop for this size (the
     // same file the supplier recommendation verified). Canvas edges are made
     // by Sensaria from the "Mirror" Wrap Type, so nothing is rendered here.
-    onProgress('Signing the ' + parsed.size + ' production crop from Cloudflare R2');
+    onProgress('Linking the ' + parsed.size + ' production crop from Cloudflare R2');
     const crop = await resolveProviderArtworkAsset({
       artworkId: parsed.artworkId,
       size: parsed.size,
@@ -95,25 +97,25 @@ async function sourceForTransaction({ parsed, transaction, productionUrlExpiresI
     if (crop.orientation !== orientation) {
       throw new Error('Artwork ' + parsed.artworkId + ' crop orientation disagrees with the saved master.');
     }
-    // Sensaria rejects files over 17,500 px; oversized crops get a cached,
-    // capped copy of the same crop. Smaller crops are linked as they are.
-    const upload = await ensureSensariaUploadAsset({
-      artworkId: parsed.artworkId,
-      size: parsed.size,
-      crop,
-      expiresIn: productionUrlExpiresIn,
-      maxPx: sensariaMaxUploadPx,
-      onProgress
-    });
+    // The CSV only links the stored crop; it never downloads or resizes it.
+    // Crops are generated within Sensaria's limit by the crop worker, so an
+    // older oversized crop must be regenerated rather than resized here.
+    const longest = Math.max(Number(crop.width || 0), Number(crop.height || 0));
+    if (!longest) {
+      throw new Error('Artwork ' + parsed.artworkId + ' ' + crop.ratio + ' crop has no recorded pixel size. Regenerate its crops before ordering from Sensaria.');
+    }
+    if (longest > SENSARIA_MAX_UPLOAD_PX) {
+      throw new Error('Artwork ' + parsed.artworkId + ' ' + crop.ratio + ' crop is ' + crop.width + '×' + crop.height +
+        ' px; Sensaria accepts at most ' + SENSARIA_MAX_UPLOAD_PX + ' px. Regenerate this artwork\'s crops with the crop worker, then download the CSV again.');
+    }
     return {
-      key: upload.key,
+      key: crop.key,
       cropKey: crop.key,
-      url: upload.url,
+      url: crop.url,
       spec,
       ratio: crop.ratio,
-      width: upload.width,
-      height: upload.height,
-      capped: upload.capped,
+      width: crop.width,
+      height: crop.height,
       productionCrop: true
     };
   }
@@ -141,7 +143,6 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
   fallbackPhone = '1111111111',
   productionUrlExpiresIn = 7 * 24 * 60 * 60,
   useProductionCrop = true,
-  sensariaMaxUploadPx = SENSARIA_MAX_UPLOAD_PX,
   onProgress = () => {}
 } = {}) {
   const { first, last } = splitName(receipt.name);
@@ -167,7 +168,6 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
       transaction,
       productionUrlExpiresIn,
       useProductionCrop,
-      sensariaMaxUploadPx,
       onProgress
     });
 
@@ -181,7 +181,6 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
       ratio: source.ratio || null,
       width: source.width || null,
       height: source.height || null,
-      capped: Boolean(source.capped),
       productionCrop: source.productionCrop,
       spec: source.spec
     });

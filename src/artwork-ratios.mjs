@@ -28,7 +28,9 @@ export const FULFILLMENT_RATIO_DIMENSIONS = Object.freeze({
 // Reference dimensions for 300-PPI planning only. Actual crop output uses
 // original master pixels and must never upscale to these reference dimensions.
 export const FULFILLMENT_RATIO_MIN_PIXELS = Object.freeze({
-  '2x3': [12000, 18000], // 40x60
+  // Sensaria GO rejects RGB uploads over 17,500 px, so the 2x3 crop is made at
+  // the largest exact 2:3 size within that limit (about 292 DPI at 40x60).
+  '2x3': [11666, 17499], // 40x60
   '3x4': [9000, 12000],  // 30x40
   '4x5': [4800, 6000],   // 16x20
   '11x14': [3300, 4200], // 11x14
