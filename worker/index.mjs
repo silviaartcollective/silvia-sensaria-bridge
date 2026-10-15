@@ -196,6 +196,7 @@ async function processJob(app, job) {
         sourceMasterWidth: crop.sourceMasterWidth,
         sourceMasterHeight: crop.sourceMasterHeight,
         recommendedPixelsMet: crop.recommendedPixelsMet,
+        downscaled: crop.downscaled === true,
         upscaled: crop.upscaled === true
       };
 
