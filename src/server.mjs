@@ -2113,6 +2113,13 @@ const server = http.createServer(async (req, res) => {
       const workerId = String(input.workerId || '').trim();
       if (!workerId) return sendJson(res, 400, { ok: false, error: 'workerId is required' });
       recordCropWorkerHeartbeat({ workerId, busy: false, version: input.version });
+      // The 4.3 worker still enlarged small artwork to fixed 300-PPI targets.
+      // Do not lease any jobs to it: a 4.4 native-resolution crop worker is required.
+      const version = String(input.version || '0').split('.').map(Number);
+      if (version[0] < 4 || (version[0] === 4 && version[1] < 4)) {
+        return sendJson(res, 426, { ok: false,
+          error: 'Shared PC Crop Worker v4.4.0 is required for master-resolution crops. Update the worker folder and restart it.' });
+      }
 
       const job = await claimNextCropJob(workerId);
       if (!job) return sendJson(res, 200, { ok: true, job: null });
