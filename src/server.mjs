@@ -1284,13 +1284,13 @@ async function syncRegularMockupsToEtsy(artworkId){
  const manifest=await loadArtworkManifest(artworkId);
  if(!manifest?.etsyDraftListingId)
   return {pendingDraft:true,message:'Mockups saved in R2; Etsy draft has not been created.'};
- if(inflightDraftSetups.has(artworkId)||manifest.etsyDraftSetup?.status!=='completed')
-  return {pendingSetup:true,message:'Mockups saved in R2; waiting for Etsy draft setup to finish.'};
+ if(inflightDraftSetups.has(artworkId))
+  return {pendingSetup:true,message:'Mockups saved in R2; Etsy draft setup is currently processing.'};
  const session=await getEtsySession(),listingId=Number(manifest.etsyDraftListingId);
  const listing=await getListing({listingId,keystring:session.keystring,
   sharedSecret:session.sharedSecret,accessToken:session.accessToken});
- if(listing.state!=='draft')
-  throw Error('New mockups are saved in R2. Only unpublished Etsy drafts can be updated automatically.');
+ if(!['draft','active'].includes(String(listing.state)))
+  throw Error('Mockups remain saved in R2. Etsy images can only be added to an editable draft or active listing (current state: '+String(listing.state)+').');
  const readImages=()=>getEtsyListingImages({
   listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
   accessToken:session.accessToken
@@ -1298,7 +1298,9 @@ async function syncRegularMockupsToEtsy(artworkId){
  const remote=await readImages();
  const existingIds=receivedEtsyImageIds(remote);
  const recorded=new Map((manifest.etsyMedia?.images||[]).map(row=>[row.key,row]));
- const needed=(manifest.mockups||[]).filter(row=>row.source==='regular-upload'&&
+ // Include new uploads and legacy manually uploaded images, but NEVER
+ // PSD-generated JPGs that the customer has not explicitly selected.
+ const needed=(manifest.mockups||[]).filter(row=>!row.generatedFromKey&&row.key&&
   !(recorded.get(row.key)?.listingImageId&&existingIds.has(String(recorded.get(row.key).listingImageId))));
  let uploaded=0,count=remote.length;
  const newlyUploaded=[];
@@ -1340,7 +1342,7 @@ async function queueRegularMockupEtsySync(artworkId){
  if(regularMockupSyncActive.has(artworkId))return {processing:true};
  const initial=await loadArtworkManifest(artworkId);
  if(!initial?.etsyDraftListingId)return {pendingDraft:true};
- if(inflightDraftSetups.has(artworkId)||initial.etsyDraftSetup?.status!=='completed')
+ if(inflightDraftSetups.has(artworkId))
   return {pendingSetup:true};
  regularMockupSyncActive.add(artworkId);
  initial.regularMockupSync={status:'running',startedAt:new Date().toISOString()};
@@ -1894,7 +1896,7 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
       manifest.selectedMockupTemplates[job.id]=[...chosen];
       await saveArtworkManifest(manifest);
       if(manifest.etsyDraftListingId&&(
-        inflightDraftSetups.has(artworkId)||manifest.etsyDraftSetup?.status!=='completed')){
+        inflightDraftSetups.has(artworkId))){
         return {ok:true,pendingSetup:true,message:'Selected JPGs saved in R2; they will sync after draft setup.'};
       }
       const current=(manifest.mockups||[]).slice(0,17);
@@ -1917,8 +1919,8 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
       const listingId=Number(manifest.etsyDraftListingId);
       const latestListing=await getListing({listingId,
         keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
-      if(latestListing.state!=='draft')
-        throw Error('Automatic photo updates are limited to unpublished Etsy drafts.');
+      if(!['draft','active'].includes(String(latestListing.state)))
+        throw Error('Selected JPGs remain saved in R2. Etsy photos cannot be updated in listing state '+String(latestListing.state)+'.');
       const existingPhotos=await getEtsyListingImages({listingId,
         keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
       const available=Math.max(0,20-existingPhotos.length);
@@ -3762,8 +3764,10 @@ const server = http.createServer(async (req, res) => {
     }
     if(req.method==='GET'&&action==='status'){
      const manifest=await loadArtworkManifest(artworkId);
-     return sendJson(res,200,{ok:true,artworkId,
-      ...manifest.regularMockupSync,
+     const recorded=manifest.regularMockupSync||{};
+     const state=recorded.status==='running'&&!regularMockupSyncActive.has(artworkId)
+       ?'interrupted':recorded.status||'not_started';
+     return sendJson(res,200,{ok:true,artworkId,...recorded,status:state,
       storedImages:(manifest.mockups||[]).length});
     }
     return sendJson(res,405,{ok:false,error:'Unsupported mockup action'});
@@ -4522,10 +4526,10 @@ async function recoverRecentGeneratedJpgs(){
   for(const job of recent){
     try{
       const manifest=await loadArtworkManifest(job.artworkId);
-      if(!manifest?.etsyDraftListingId||
-         manifest.etsyDraftSetup?.status!=='completed'||
-         manifest.master?.key!==job.sourceMasterKey)continue;
-      await syncGeneratedMockupsForArtwork({artworkId:job.artworkId,jobId:job.id});
+      if(!manifest?.etsyDraftListingId||manifest.master?.key!==job.sourceMasterKey)continue;
+      const selected=manifest.selectedMockupTemplates?.[job.id];
+      if(!Array.isArray(selected)||!selected.length)continue;
+      await syncGeneratedMockupsForArtwork({artworkId:job.artworkId,jobId:job.id,templateIds:selected});
     }catch(error){
       console.error('Recent PSD recovery failed for '+job.artworkId+':',error);
     }
