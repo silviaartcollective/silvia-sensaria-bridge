@@ -113,6 +113,13 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
           <div class="status" id="upload-status">Choose the master artwork to create your draft now. Mockup generation is optional and will never block drafts.</div>
           <div class="actions"><a class="btn secondary" id="launch-crop-worker" href="pod-crop-worker://start">Launch Shared Crop Worker</a></div>
           <div class="status" id="crop-worker-status">Production crops will be queued after the master artwork finishes uploading.</div>
+          <div class="twocol">
+            <label>Additional crop size <span class="hint">inches, any ratio</span>
+              <input id="extra-crop-size" type="text" placeholder="8x12, 3.5x5, 28x30" autocomplete="off">
+            </label>
+            <div style="align-self:end"><button type="button" class="btn secondary" id="queue-extra-crop">Create crop for this size</button></div>
+          </div>
+          <div class="status" id="extra-crop-status">Any supported custom size up to 120 inches per side. Uses the artwork ID above, or Existing artwork ID for a saved master. It does not add Etsy variants or place an order.</div>
         </div>
 
         ${renderMockupGeneratorSection()}
@@ -491,6 +498,64 @@ async function putFile(url,file,contentType){
 launchCropWorkerButton?.addEventListener('click',()=>{
   cropWorkerStatus.className='status';
   cropWorkerStatus.textContent='Crop Worker launch requested. It will claim any queued Silvia crop jobs.';
+});
+
+// Additional sizes are independently queued and do not replace default crops.
+const extraCropStatus=document.getElementById('extra-crop-status');
+const extraCropButton=document.getElementById('queue-extra-crop');
+function extraCropPreview(url,size,asset){
+  extraCropStatus.replaceChildren();
+  extraCropStatus.className='status ok';
+  extraCropStatus.append(document.createTextNode('Crop ready: '+size+' · '+
+    String(asset?.width||'?')+' × '+String(asset?.height||'?')+' pixels. '));
+  if(url){
+    const a=document.createElement('a');
+    a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='Open R2 crop';
+    extraCropStatus.append(a);
+  }
+}
+async function followExtraCrop(jobId,size){
+  for(let attempt=0;attempt<180;attempt++){
+    await new Promise(resolve=>setTimeout(resolve,3000));
+    try{
+      const response=await fetch('/api/crop-jobs/'+encodeURIComponent(jobId),{cache:'no-store'});
+      const payload=await readJsonResponse(response,'Extra crop status');
+      if(!response.ok)throw Error(payload.error||'Could not read crop status');
+      const job=payload.job||{};
+      if(job.status==='completed'){
+        const ratio=job.ratios?.[0],asset=job.resultAssets?.[ratio];
+        extraCropPreview(payload.previews?.[ratio],size,asset);return;
+      }
+      if(job.status==='failed')throw Error(job.error||'Crop worker failed.');
+      extraCropStatus.textContent='Extra crop '+size+' · '+(job.message||job.status||'queued')+' · '+(job.progress||0)+'%';
+    }catch(error){
+      extraCropStatus.className='status warn';
+      extraCropStatus.textContent='Extra crop status: '+String(error.message||error)+'. Retry with the same artwork ID and size.';
+      return;
+    }
+  }
+  extraCropStatus.textContent='Crop is still processing. Re-enter the same artwork ID and size to resume status tracking.';
+}
+extraCropButton.addEventListener('click',async()=>{
+  const artworkId=String(document.getElementById('artwork_id').value||
+    document.getElementById('existing-mockup-artwork-id').value||'').trim().toUpperCase();
+  const size=document.getElementById('extra-crop-size').value.trim();
+  extraCropButton.disabled=true;extraCropStatus.className='status';
+  extraCropStatus.textContent='Queueing additional artwork crop…';
+  try{
+    if(!/^SAC\\d+$/.test(artworkId))throw Error('Upload a master or enter an existing SAC artwork ID first.');
+    if(!size)throw Error('Enter a size such as 3.5x5 or 28x30.');
+    const r=await fetch('/api/crop-jobs',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({artworkId,size})});
+    const data=await readJsonResponse(r,'Additional artwork crop');
+    if(!r.ok)throw Error(data.error||'Could not queue the crop.');
+    if(data.cached){extraCropPreview(data.previewUrl,data.size,data.asset);return;}
+    extraCropStatus.textContent='Queued '+(data.size||size)+' · '+(data.job?.id||'')+'. A shared PC worker will process it.';
+    if(data.job?.id)void followExtraCrop(data.job.id,data.size||size);
+  }catch(error){
+    extraCropStatus.className='status warn';
+    extraCropStatus.textContent=String(error.message||error);
+  }finally{extraCropButton.disabled=false;}
 });
 
 async function readCropJob(jobId){
