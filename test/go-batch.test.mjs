@@ -73,10 +73,10 @@ test('canvas and framed canvas mappings use Mirror wrap and posters do not', () 
   assert.equal(goProducts['FC|24x36|NAT'].wrapType, 'Mirror');
 });
 
-test('dry-run shipping checks explicitly skip production rendering', () => {
-  assert.match(fulfillmentSource, /renderProduction\s*=\s*true/);
-  assert.match(fulfillmentSource, /if \(renderProduction\)/);
-  assert.match(serverSource, /etsyReceiptToSensariaCsvFromR2\(receipt, \{ renderProduction: false \}\)/);
+test('dry-run shipping checks use the master; real CSVs use the stored size crop', () => {
+  assert.match(fulfillmentSource, /useProductionCrop\s*=\s*true/);
+  assert.match(fulfillmentSource, /if \(useProductionCrop\)/);
+  assert.match(serverSource, /etsyReceiptToSensariaCsvFromR2\(receipt, \{ useProductionCrop: false \}\)/);
   assert.match(serverSource, /sourceKey:/);
 });
 

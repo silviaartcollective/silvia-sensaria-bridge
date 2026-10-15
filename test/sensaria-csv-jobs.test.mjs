@@ -41,7 +41,7 @@ test('server sends 202 and offers status and separately authenticated CSV downlo
  assert.match(code,/startCsvJob\(id,async stage=>/);
  assert.match(code,/csvJobStatus\(id\)/);
  assert.match(code,/csvJobResult\(id\)/);
- assert.match(code,/renderProduction:true/);
+ assert.match(code,/useProductionCrop:true/);
  assert.match(code,/validateSensariaCsvOrder\(order,latest,shopId\)/);
  assert.match(ui,/prepareSensariaCsv\(id/);
  assert.match(ui,/status\?\.stage/);
