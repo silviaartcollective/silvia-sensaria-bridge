@@ -23,6 +23,7 @@ import { previewDescriptionUpdates, applyDescriptionUpdates, reviseCanvasThickne
 import { renderProductCreator } from './product-creator.mjs';
 import {getMockupJob,listMockupJobs} from './mockup-generator.mjs';
 import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verification.mjs';
+import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
 import {mockupObjectKey} from './production.mjs';
 import { handleMockupAPI } from './mockup-api.mjs';
 import {canonicalWallArtStyle,styleAttributes} from './etsy-style.mjs';
@@ -1270,6 +1271,94 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     bytesSaved: Math.max(0, originalImageBytes - uploadImageBytes),
     mockupSort: plan.sort
   };
+}
+
+// Follow-up regular JPG uploads can arrive after the draft has been created.
+ // Only update an unpublished draft, and verify each new Etsy image receipt.
+const regularMockupSyncActive=new Set();
+async function syncRegularMockupsToEtsy(artworkId){
+ const manifest=await loadArtworkManifest(artworkId);
+ if(!manifest?.etsyDraftListingId)
+  return {pendingDraft:true,message:'Mockups saved in R2; Etsy draft has not been created.'};
+ if(inflightDraftSetups.has(artworkId)||manifest.etsyDraftSetup?.status!=='completed')
+  return {pendingSetup:true,message:'Mockups saved in R2; waiting for Etsy draft setup to finish.'};
+ const session=await getEtsySession(),listingId=Number(manifest.etsyDraftListingId);
+ const listing=await getListing({listingId,keystring:session.keystring,
+  sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+ if(listing.state!=='draft')
+  throw Error('New mockups are saved in R2. Only unpublished Etsy drafts can be updated automatically.');
+ const readImages=()=>getEtsyListingImages({
+  listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
+  accessToken:session.accessToken
+ });
+ const remote=await readImages();
+ const existingIds=receivedEtsyImageIds(remote);
+ const recorded=new Map((manifest.etsyMedia?.images||[]).map(row=>[row.key,row]));
+ const needed=(manifest.mockups||[]).filter(row=>row.source==='regular-upload'&&
+  !(recorded.get(row.key)?.listingImageId&&existingIds.has(String(recorded.get(row.key).listingImageId))));
+ let uploaded=0,count=remote.length;
+ const newlyUploaded=[];
+ for(const item of needed){
+  if(count>=20)throw Error('Etsy draft reached its 20-photo limit; '+(needed.length-uploaded)+
+   ' regular mockup(s) remain saved in R2.');
+  const optimized=await optimizeEtsyImageObject(await getArtworkObject(item.key));
+  const result=await withEtsyListingRetry(()=>uploadListingImage({
+   shopId:session.shop.shop_id,listingId,imageBuffer:optimized.body,
+   filename:item.originalFilename||item.key.split('/').pop(),
+   contentType:optimized.contentType||item.contentType,
+   rank:count+1,altText:manifest.title||'',keystring:session.keystring,
+   sharedSecret:session.sharedSecret,accessToken:session.accessToken
+  }),{attempts:8,baseDelayMs:180});
+  const listingImageId=result?.listing_image_id||result?.listingImageId||null;
+  if(!listingImageId)throw Error('Etsy returned no image ID for '+item.originalFilename);
+  count++;uploaded++;
+  const receipt={key:item.key,filename:item.originalFilename,rank:count,listingImageId};
+  newlyUploaded.push(receipt);
+  const updated=await loadArtworkManifest(artworkId);
+  updated.etsyMedia||={images:[],video:null};
+  updated.etsyMedia.images=[
+   ...(updated.etsyMedia.images||[]).filter(row=>row.key!==item.key),receipt
+  ];
+  await saveArtworkManifest(updated);
+ }
+ if(newlyUploaded.length){
+  const verified=await verifyEtsyImageReceipts({receipts:newlyUploaded,readImages});
+  const updated=await loadArtworkManifest(artworkId);
+  if(updated.etsyDraftSetup?.media){
+   updated.etsyDraftSetup.media.imageCount=verified.remoteCount;
+   updated.etsyDraftSetup.media.verifiedImageCount=verified.remoteCount;
+  }
+  await saveArtworkManifest(updated);
+ }
+ return {ok:true,uploaded,photoCount:count,verified:true};
+}
+async function queueRegularMockupEtsySync(artworkId){
+ if(regularMockupSyncActive.has(artworkId))return {processing:true};
+ const initial=await loadArtworkManifest(artworkId);
+ if(!initial?.etsyDraftListingId)return {pendingDraft:true};
+ if(inflightDraftSetups.has(artworkId)||initial.etsyDraftSetup?.status!=='completed')
+  return {pendingSetup:true};
+ regularMockupSyncActive.add(artworkId);
+ initial.regularMockupSync={status:'running',startedAt:new Date().toISOString()};
+ await saveArtworkManifest(initial);
+ void (async()=>{
+  try{
+   const result=await syncRegularMockupsToEtsy(artworkId);
+   const updated=await loadArtworkManifest(artworkId);
+   updated.regularMockupSync={status:'completed',...result,
+    completedAt:new Date().toISOString()};
+   await saveArtworkManifest(updated);
+  }catch(error){
+   console.error('[regular mockups Etsy sync] '+artworkId+': '+error.message);
+   const updated=await loadArtworkManifest(artworkId).catch(()=>null);
+   if(updated){
+    updated.regularMockupSync={status:'failed',error:String(error.message||error).slice(0,650),
+     failedAt:new Date().toISOString()};
+    await saveArtworkManifest(updated).catch(()=>{});
+   }
+  }finally{regularMockupSyncActive.delete(artworkId)}
+ })();
+ return {processing:true};
 }
 
 async function applyAllListingAttributes({ session, listingId, body, properties }) {
@@ -3618,6 +3707,33 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
     }
+  }
+
+  const regularMockupRoute=url.pathname.match(/^\\/api\\/artworks\\/(SAC\\d+)\\/regular-mockups(?:\\/(reserve|confirm|sync|status))?$/i);
+  if(regularMockupRoute){
+   if(!requireAdminApi(req,res))return;
+   const artworkId=regularMockupRoute[1].toUpperCase(),action=regularMockupRoute[2];
+   try{
+    if(req.method==='POST'&&action==='reserve'){
+     const body=await readJsonBody(req);
+     return sendJson(res,200,{ok:true,...await reserveRegularMockups(artworkId,body.files)});
+    }
+    if(req.method==='POST'&&action==='confirm'){
+     const saved=await confirmRegularMockups(artworkId);
+     const etsySync=await queueRegularMockupEtsySync(artworkId);
+     return sendJson(res,200,{ok:true,...saved,etsySync});
+    }
+    if(req.method==='POST'&&action==='sync'){
+     return sendJson(res,200,{ok:true,...await queueRegularMockupEtsySync(artworkId)});
+    }
+    if(req.method==='GET'&&action==='status'){
+     const manifest=await loadArtworkManifest(artworkId);
+     return sendJson(res,200,{ok:true,artworkId,
+      ...manifest.regularMockupSync,
+      storedImages:(manifest.mockups||[]).length});
+    }
+    return sendJson(res,405,{ok:false,error:'Unsupported mockup action'});
+   }catch(error){return sendJson(res,409,{ok:false,error:String(error.message||error)})}
   }
 
   if (req.method === 'POST' && url.pathname === '/api/artworks/reserve') {
