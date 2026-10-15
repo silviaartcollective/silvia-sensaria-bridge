@@ -122,7 +122,7 @@ function renderPreviews(){
   :!currentBatch()
    ?'Archived batch: these JPGs cannot be applied to a different artwork.'
    :lastAppliedBatchId===job.id
-    ?appliedCount+' JPGs attached to the current listing form (not yet uploaded to Etsy).'
+    ?appliedCount+' JPGs selected for Etsy syncing. Confirm the result in generation status.'
     :selected+' of '+completed.length+' JPGs selected. Click Apply selected to listing when ready.';
  $('mg-apply-selected').disabled=!currentBatch()||!selected||attaching;
  $('mg-select-all').disabled=!job;
@@ -185,8 +185,13 @@ async function syncGeneratedJpgs(batchId,templateIds){
    }
    if(!response.ok||!data.ok)throw Error(data.error||'PSD mockup sync failed');
    message(data.pendingDraft
-    ?'Generated JPGs saved in '+data.r2Prefix+' for your future Etsy draft.'
-    :'Added '+data.uploaded+' generated mockups to Etsy ('+data.photoCount+'/20 photos).');
+    ?'Selected generated JPGs remain saved in R2 until an Etsy draft exists.'
+    :data.pendingSetup
+     ?'Selected JPGs saved. Etsy draft setup is still running; uploads will resume automatically.'
+     :data.verified===true
+      ?'Etsy confirmed '+data.uploaded+' selected mockup(s) ('+data.photoCount+'/20 photos).'
+      :'Mockups remain saved in R2. Etsy verification has not completed; check the draft before publishing.',
+     data.verified!==true&&!data.pendingDraft&&!data.pendingSetup);
    return;
   }catch(error){failure(error);return}
  }
