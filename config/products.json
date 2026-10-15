@@ -1,8 +1,18 @@
 {
+  "P|5x7|NONE": {
+    "friendlySku": "42010000029",
+    "costUsd": 13.58,
+    "description": "Matte Poster Paper Print - 5x7"
+  },
   "P|8x10|NONE": {
     "friendlySku": "42010000001",
     "costUsd": 14.78,
     "description": "Matte Poster Paper Print - 8x10"
+  },
+  "P|8x12|NONE": {
+    "friendlySku": "42010000035",
+    "costUsd": 14.27,
+    "description": "Matte Poster Paper Print - 8x12"
   },
   "P|11x14|NONE": {
     "friendlySku": "42010000006",
