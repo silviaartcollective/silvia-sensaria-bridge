@@ -34,6 +34,16 @@ test('eligible Sensaria 40x60 black framed canvas can request a manual CSV',()=>
  assert.equal(checked.parsed.productCode,'FC');
  assert.equal(checked.parsed.size,'40x60');
 });
+test('expired price recommendation still permits a validated manual CSV',()=>{
+ const {order,receipt}=orderFor();
+ order.review.regularPlan.expiresAt='2020-01-01T00:00:00Z';
+ order.review.regularPlan.signature=quoteSignature(order.review.regularPlan);
+ const result=validateSensariaCsvOrder(order,receipt,123);
+ assert.equal(result.quoteExpired,true);
+ // A stale price must not override current payment, SKU or shipment safety.
+ assert.throws(()=>validateSensariaCsvOrder(order,{...receipt,is_shipped:true},123),/shipped/);
+});
+
 test('approved but unsubmitted Sensaria order remains downloadable',()=>{
  const {order,receipt}=orderFor();
  order.review.status='approved_for_manual_order';
