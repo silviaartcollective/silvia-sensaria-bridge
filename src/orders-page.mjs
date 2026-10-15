@@ -27,6 +27,14 @@ input,select{font:inherit;padding:10px;border:1px solid var(--line);border-radiu
 .detailrow strong{display:block}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
 pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 .tag{display:inline-block;font-size:11px;background:#e9ede8;padding:3px 9px;border-radius:15px;color:#45624b;margin-top:6px}
+.supplier-name{display:block;margin-top:8px;color:#284332;font-size:19px;font-weight:800;letter-spacing:.04em;line-height:1.35}
+.supplier-banner{background:#e8eee7;border:1px solid #cbd8ca;border-radius:11px;padding:15px 18px;margin:14px 0 10px}
+.supplier-banner .eyebrow{display:block;color:#506353;font-size:12px;font-weight:700;margin-bottom:4px}
+.supplier-banner strong{display:block;color:#263c2d;font-size:26px;font-weight:800;letter-spacing:.035em}
+.supplier-banner .small{display:block;margin-top:4px;font-size:12px}
+#sensaria-csv{background:#303a30;color:#fff;border-color:#303a30}
+#sensaria-csv-status{padding:9px 0;font-size:13px;color:#446148}
+#sensaria-csv-status.error{color:#a14737}
 .hidden{display:none!important}#list{max-height:74vh;overflow:auto}#order-detail{min-height:230px}
 @media(max-width:1150px){.grid{grid-template-columns:1fr}#list{max-height:none}}
 @media(max-width:750px){.shell{grid-template-columns:1fr}aside{display:none}main{padding:20px 14px}h1{font-size:31px}}
@@ -48,13 +56,16 @@ pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 <div id="empty">Select an order to view its details, shipment status, and tracking.</div>
 <div id="details" class="hidden">
 <h2 id="buyer"></h2><div id="order-meta" class="small"></div>
+<div id="supplier-banner" class="supplier-banner hidden"><span class="eyebrow">Recommended fulfillment supplier</span><strong id="supplier-name">SENSARIA</strong><span class="small">Manual supplier order · Check artwork, variant and shipping before submitting</span></div>
 <div class="detailrow"><strong>Artwork / items</strong><pre id="items"></pre></div>
 <div class="detailrow"><strong>Shipping address</strong><pre id="address"></pre></div>
 <div class="detailrow"><strong>Shipping status &amp; tracking</strong><pre id="shipment"></pre></div>
 <div class="detailrow"><strong>Order totals</strong><div id="totals"></div></div>
 <div class="actions"><a class="btn primary" id="review-custom" href="/custom-orders">Review as custom order</a>
 <a class="btn" id="track-order" href="/tracking">Open Order Tracking</a>
-<a class="btn" id="review-regular" href="/fulfillment-review">View Supplier Recommendation</a></div>
+<a class="btn" id="review-regular" href="/fulfillment-review">View Supplier Recommendation</a>
+<button type="button" id="sensaria-csv" class="hidden">Download Sensaria CSV</button></div>
+<div class="hidden" id="sensaria-csv-status" role="status" aria-live="polite"></div>
 </div></section></div>
 </main></div><script src="/orders-client.js" defer></script></body></html>`;
 }
