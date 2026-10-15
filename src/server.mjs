@@ -78,7 +78,8 @@ import {
   cancelArtworkUpload,
   generateArtworkFulfillmentRatios,
   loadArtworkManifest,
-  saveArtworkManifest
+  saveArtworkManifest,
+  updateArtworkManifest
 } from './artwork-storage.mjs';
 import {
   buildOwnSilviaInventory,
@@ -164,6 +165,14 @@ let etsySessionCache = null;
 const taxonomyCache = new Map();
 const mockupReferenceCache = new Map();
 const inflightDraftSetups = new Set();
+
+// Preserve independently uploaded JPG/PNG mockups when the Etsy draft is
+// configuring: never save its earlier, stale snapshot over the R2 manifest.
+async function persistDraftManifestFields(manifest, fields) {
+  return updateArtworkManifest(manifest.artworkId, current => {
+    for (const field of fields) current[field] = manifest[field];
+  });
+}
 
 function moneyAmount(value) {
   if (value && typeof value === 'object' && Number.isFinite(Number(value.amount))) {
@@ -1211,13 +1220,13 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     uploadedImages[index]=receipt;
     // Do not lose successful uploads if a later image or preset video fails.
     // Always merge against the latest R2 manifest (not the stale draft snapshot).
-    const latest=await loadArtworkManifest(manifest.artworkId);
-    latest.etsyMedia||={images:[],video:null};
-    latest.etsyMedia.images=[
-      ...(latest.etsyMedia.images||[]).filter(row=>row.key!==item.key),
-      receipt
-    ];
-    await saveArtworkManifest(latest);
+    const latest=await updateArtworkManifest(manifest.artworkId,current=>{
+      current.etsyMedia||={images:[],video:null};
+      current.etsyMedia.images=[
+        ...(current.etsyMedia.images||[]).filter(row=>row.key!==item.key),
+        receipt
+      ];
+    });
     manifest.etsyMedia=latest.etsyMedia;
   }
 
@@ -1251,17 +1260,17 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
   const confirmed=await verifyEtsyImageReceipts({
     receipts:uploadedImages.filter(Boolean),readImages:readRemoteImages
   });
-  const latestManifest=await loadArtworkManifest(manifest.artworkId);
-  latestManifest.etsyMedia||={images:[],video:null};
-  latestManifest.etsyMedia.images=[
-    ...(latestManifest.etsyMedia.images||[]).filter(row=>
-      !uploadedImages.some(item=>item?.key===row.key)),
-    ...uploadedImages.filter(Boolean)
-  ].sort((a,b)=>a.rank-b.rank);
-  latestManifest.etsyMedia.video=video;
-  latestManifest.mockupSort=plan.sort;
-  latestManifest.etsyMediaVerifiedAt=new Date().toISOString();
-  await saveArtworkManifest(latestManifest);
+  const latestManifest=await updateArtworkManifest(manifest.artworkId,current=>{
+    current.etsyMedia||={images:[],video:null};
+    current.etsyMedia.images=[
+      ...(current.etsyMedia.images||[]).filter(row=>
+        !uploadedImages.some(item=>item?.key===row.key)),
+      ...uploadedImages.filter(Boolean)
+    ].sort((a,b)=>a.rank-b.rank);
+    current.etsyMedia.video=video;
+    current.mockupSort=plan.sort;
+    current.etsyMediaVerifiedAt=new Date().toISOString();
+  });
   manifest.etsyMedia=latestManifest.etsyMedia;
 
   return {
@@ -1311,10 +1320,10 @@ async function syncRegularMockupsToEtsy(artworkId){
   const listingImageId=cover?.listing_image_id||cover?.listingImageId||null;
   if(!listingImageId)throw Error('Etsy did not confirm the recovered master artwork image.');
   const receipt={key:manifest.master.key,filename,rank:1,listingImageId};
-  const updated=await loadArtworkManifest(artworkId);
-  updated.etsyMedia||={images:[],video:null};
-  updated.etsyMedia.images=[...(updated.etsyMedia.images||[]).filter(r=>r.key!==receipt.key),receipt];
-  await saveArtworkManifest(updated);
+  await updateArtworkManifest(artworkId,updated=>{
+    updated.etsyMedia||={images:[],video:null};
+    updated.etsyMedia.images=[...(updated.etsyMedia.images||[]).filter(r=>r.key!==receipt.key),receipt];
+  });
   await verifyEtsyImageReceipts({receipts:[receipt],readImages});
   remote=await readImages();
  }
@@ -1342,21 +1351,21 @@ async function syncRegularMockupsToEtsy(artworkId){
   count++;uploaded++;
   const receipt={key:item.key,filename:item.originalFilename,rank:count,listingImageId};
   newlyUploaded.push(receipt);
-  const updated=await loadArtworkManifest(artworkId);
-  updated.etsyMedia||={images:[],video:null};
-  updated.etsyMedia.images=[
-   ...(updated.etsyMedia.images||[]).filter(row=>row.key!==item.key),receipt
-  ];
-  await saveArtworkManifest(updated);
+  await updateArtworkManifest(artworkId,updated=>{
+    updated.etsyMedia||={images:[],video:null};
+    updated.etsyMedia.images=[
+      ...(updated.etsyMedia.images||[]).filter(row=>row.key!==item.key),receipt
+    ];
+  });
  }
  if(newlyUploaded.length){
   const verified=await verifyEtsyImageReceipts({receipts:newlyUploaded,readImages});
-  const updated=await loadArtworkManifest(artworkId);
-  if(updated.etsyDraftSetup?.media){
-   updated.etsyDraftSetup.media.imageCount=verified.remoteCount;
-   updated.etsyDraftSetup.media.verifiedImageCount=verified.remoteCount;
-  }
-  await saveArtworkManifest(updated);
+  await updateArtworkManifest(artworkId,updated=>{
+    if(updated.etsyDraftSetup?.media){
+      updated.etsyDraftSetup.media.imageCount=verified.remoteCount;
+      updated.etsyDraftSetup.media.verifiedImageCount=verified.remoteCount;
+    }
+  });
  }
  return {ok:true,uploaded,photoCount:count,verified:true};
 }
@@ -1367,23 +1376,22 @@ async function queueRegularMockupEtsySync(artworkId){
  if(inflightDraftSetups.has(artworkId))
   return {pendingSetup:true};
  regularMockupSyncActive.add(artworkId);
- initial.regularMockupSync={status:'running',startedAt:new Date().toISOString()};
- await saveArtworkManifest(initial);
+ await updateArtworkManifest(artworkId,latest=>{
+   latest.regularMockupSync={status:'running',startedAt:new Date().toISOString()};
+ });
  void (async()=>{
   try{
    const result=await syncRegularMockupsToEtsy(artworkId);
-   const updated=await loadArtworkManifest(artworkId);
-   updated.regularMockupSync={status:'completed',...result,
-    completedAt:new Date().toISOString()};
-   await saveArtworkManifest(updated);
+   await updateArtworkManifest(artworkId,latest=>{
+     latest.regularMockupSync={status:'completed',...result,
+       completedAt:new Date().toISOString()};
+   });
   }catch(error){
    console.error('[regular mockups Etsy sync] '+artworkId+': '+error.message);
-   const updated=await loadArtworkManifest(artworkId).catch(()=>null);
-   if(updated){
-    updated.regularMockupSync={status:'failed',error:String(error.message||error).slice(0,650),
-     failedAt:new Date().toISOString()};
-    await saveArtworkManifest(updated).catch(()=>{});
-   }
+   await updateArtworkManifest(artworkId,latest=>{
+     latest.regularMockupSync={status:'failed',error:String(error.message||error).slice(0,650),
+       failedAt:new Date().toISOString()};
+   }).catch(()=>{});
   }finally{regularMockupSyncActive.delete(artworkId)}
  })();
  return {processing:true};
@@ -4067,7 +4075,7 @@ const server = http.createServer(async (req, res) => {
           });
           manifest.cropWorkerJobId = created.job.id;
           manifest.cropWorkerQueuedAt = manifest.cropWorkerQueuedAt || new Date().toISOString();
-          await saveArtworkManifest(manifest);
+          await persistDraftManifestFields(manifest,['cropWorkerJobId','cropWorkerQueuedAt']);
           await writeFulfillmentStatus(body.artwork_id, {
             status: created.job.status || 'pending',
             jobId: created.job.id,
@@ -4131,7 +4139,7 @@ const server = http.createServer(async (req, res) => {
         });
         manifest.etsyDraftListingId = draft.listing_id;
         manifest.etsyDraftCreatedAt = new Date().toISOString();
-        await saveArtworkManifest(manifest);
+        await persistDraftManifestFields(manifest,['etsyDraftListingId','etsyDraftCreatedAt']);
       }
       const draftMs = Date.now() - draftStartedAt;
 
@@ -4140,7 +4148,7 @@ const server = http.createServer(async (req, res) => {
       // A retry reuses manifest.etsyDraftListingId instead of duplicating Etsy listings.
       manifest.etsyDraftSetup={status:'running',listingId:draft.listing_id,
         startedAt:new Date().toISOString(),message:'Applying variants, attributes and listing media'};
-      await saveArtworkManifest(manifest);
+      await persistDraftManifestFields(manifest,['etsyDraftSetup']);
       const setupId=body.artwork_id;
       inflightDraftSetups.add(setupId);
       void (async()=>{
@@ -4207,7 +4215,7 @@ const server = http.createServer(async (req, res) => {
         media,
         attributes: attributes.results
       };
-      await saveArtworkManifest(manifest);
+      await persistDraftManifestFields(manifest,['etsyConfiguredAt','etsyConfiguration']);
 
       const summary = {
         ok: true,
@@ -4255,24 +4263,24 @@ const server = http.createServer(async (req, res) => {
 
           manifest.etsyDraftSetup={...summary,status:'completed',
             completedAt:new Date().toISOString(),r2Prefix:'artworks/'+setupId+'/'};
-          await saveArtworkManifest(manifest);
+          await persistDraftManifestFields(manifest,['etsyDraftSetup']);
         }catch(error){
           console.error('Etsy draft setup failed for '+setupId+':',error);
           try{
-            const updated=await loadArtworkManifest(setupId)||manifest;
-            updated.etsyDraftSetup={status:'failed',listingId:draft.listing_id,
-              error:String(error?.message||error).slice(0,650),
-              failedAt:new Date().toISOString()};
-            await saveArtworkManifest(updated);
+            await updateArtworkManifest(setupId,updated=>{
+              updated.etsyDraftSetup={status:'failed',listingId:draft.listing_id,
+                error:String(error?.message||error).slice(0,650),
+                failedAt:new Date().toISOString()};
+            });
           }catch(saveError){console.error('Could not record draft setup failure:',saveError);}
         }finally{
           inflightDraftSetups.delete(setupId);
+          // Regular JPGs are independent of the draft's other setup steps:
+          // an inventory/video problem must not strand them in Cloudflare R2.
+          void queueRegularMockupEtsySync(setupId).catch(
+            error=>console.error('Regular mockup catch-up after draft setup failed:',error)
+          );
           if(manifest.etsyDraftSetup?.status==='completed'){
-            // Attach regular mockups chosen after master upload while Etsy was
-            // still configuring the initial draft. Never lose those R2 files.
-            void queueRegularMockupEtsySync(setupId).catch(
-              error=>console.error('Regular mockup catch-up after draft setup failed:',error)
-            );
             void reconcileCompletedMockupsForArtwork(setupId).catch(
               error=>console.error('PSD catch-up after Etsy draft setup failed:',error)
             );
