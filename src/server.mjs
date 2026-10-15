@@ -2966,7 +2966,7 @@ const server = http.createServer(async (req, res) => {
         const artwork=await resolveProviderArtworkAsset({artworkId:plan.artworkId,size:plan.size});
         if(artwork.key!==plan.assetKey || !(await artworkObjectExists(artwork.key)))
           throw Error('Artwork crop changed or is missing in R2. Refresh the supplier recommendation.');
-        stage('Preparing the verified R2 production crop for Sensaria');
+        stage('Linking the verified R2 production crop for Sensaria');
         const exported=await etsyReceiptToSensariaCsvFromR2(latest,{
           useProductionCrop:true,productionUrlExpiresIn:7*24*60*60,
           onProgress:stage

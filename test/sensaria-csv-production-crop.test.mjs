@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
-import sharp from 'sharp';
 
 // A minimal S3-compatible stand-in for R2: serves artwork manifests by key and
 // records every request, so the test can prove nothing is downloaded,
@@ -145,43 +144,42 @@ test('the CSV job requires the exact crop the supplier recommendation verified',
   assert.doesNotMatch(fulfillment, /ensureProductionAsset/);
 });
 
-test('crops over Sensaria\'s pixel limit get a capped copy that is cached and reused', async () => {
+test('an oversized older crop is refused with a regenerate message, never resized on the server', async () => {
   storeManifest();
-  // A real (small) 2x3 crop stands in for the 12000×18000 file; the limit is
-  // scaled down the same way (17,500 → 400) so the test stays fast.
-  const crop = await sharp({ create: { width: 300, height: 450, channels: 3, background: '#7a8c5e' } }).jpeg().toBuffer();
   const manifest = JSON.parse(objects.get('artworks/SAC0042/manifest.json'));
-  manifest.fulfillmentRatios['2x3'] = { ...manifest.fulfillmentRatios['2x3'], width: 300, height: 450, updatedAt: '2026-10-15T00:00:00Z' };
+  manifest.fulfillmentRatios['2x3'] = { ...manifest.fulfillmentRatios['2x3'], width: 12000, height: 18000 };
   objects.set('artworks/SAC0042/manifest.json', JSON.stringify(manifest));
-  objects.set('artworks/SAC0042/fulfillment/2x3.jpg', crop);
-
   requests.length = 0;
-  const first = await etsyReceiptToSensariaCsvFromR2(receipt('SAC0042-FC-4060-BLK'), { useProductionCrop: true, sensariaMaxUploadPx: 400 });
-  const source = first.sources[0];
-  assert.equal(source.capped, true);
-  assert.equal(source.cropKey, 'artworks/SAC0042/fulfillment/2x3.jpg');
-  assert.equal(source.key, 'artworks/SAC0042/fulfillment/sensaria/40x60.jpg');
-  assert.match(first.rows[0].URL, /fulfillment\/sensaria\/40x60\.jpg/);
-  const stored = await sharp(objects.get(source.key)).metadata();
-  assert.deepEqual([stored.width, stored.height], [267, 400]);
-  assert.equal(stored.format, 'jpeg');
-  assert.equal(stored.isProgressive, false);
-  assert.ok(requests.some(line => line.startsWith('PUT ') && line.includes('sensaria/40x60.jpg')));
-  assert.ok(!requests.some(line => line.includes('SAC0042.jpg')), 'master must not be downloaded');
-
-  requests.length = 0;
-  const second = await etsyReceiptToSensariaCsvFromR2(receipt('SAC0042-FC-4060-BLK'), { useProductionCrop: true, sensariaMaxUploadPx: 400 });
-  assert.equal(second.sources[0].key, source.key);
-  assert.ok(!requests.some(line => line.startsWith('PUT ') && line.includes('sensaria/')), 'cached copy must be reused');
-  assert.ok(!requests.some(line => line.startsWith('GET ') && line.includes('fulfillment/2x3.jpg')), 'crop must not be downloaded again');
+  await assert.rejects(
+    etsyReceiptToSensariaCsvFromR2(receipt('SAC0042-FC-4060-BLK'), { useProductionCrop: true }),
+    /2x3 crop is 12000×18000 px; Sensaria accepts at most 17500 px\. Regenerate/
+  );
+  // Only the manifest was read: no crop download, no resize, no upload.
+  assert.ok(requests.every(line => line.startsWith('GET ') && /manifest\.json/.test(line)), requests.join('\n'));
 });
 
-test('the real Sensaria cap turns a 12000×18000 crop into 11667×17500 at most', async () => {
-  const { sensariaUploadTarget, SENSARIA_MAX_UPLOAD_PX } = await import('../src/sensaria-upload-asset.mjs');
-  assert.equal(SENSARIA_MAX_UPLOAD_PX, 17500);
-  assert.deepEqual(sensariaUploadTarget({ width: 12000, height: 18000, size: '40x60' }), { width: 11667, height: 17500, density: 291 });
-  assert.deepEqual(sensariaUploadTarget({ width: 18000, height: 12000, size: '40x60' }), { width: 17500, height: 11667, density: 291 });
-  assert.deepEqual(sensariaUploadTarget({ width: 12000, height: 18000, size: '24x36' }), { width: 7200, height: 10800, density: 300 });
-  assert.equal(sensariaUploadTarget({ width: 9000, height: 12000, size: '30x40' }), null);
-  assert.equal(sensariaUploadTarget({ width: 12000, height: 17500, size: '40x60' }), null);
+test('crops within the limit link straight to R2 with nothing downloaded', async () => {
+  storeManifest();
+  const manifest = JSON.parse(objects.get('artworks/SAC0042/manifest.json'));
+  manifest.fulfillmentRatios['2x3'] = { ...manifest.fulfillmentRatios['2x3'], width: 11666, height: 17499 };
+  objects.set('artworks/SAC0042/manifest.json', JSON.stringify(manifest));
+  requests.length = 0;
+  const exported = await etsyReceiptToSensariaCsvFromR2(receipt('SAC0042-FC-4060-BLK'), { useProductionCrop: true });
+  assert.equal(exported.sources[0].key, 'artworks/SAC0042/fulfillment/2x3.jpg');
+  assert.equal(exported.sources[0].height, 17499);
+  assert.ok(requests.every(line => line.startsWith('GET ') && /manifest\.json/.test(line)), requests.join('\n'));
+});
+
+test('crop targets stay within Sensaria\'s 17,500 px limit', async () => {
+  const { FULFILLMENT_RATIO_MIN_PIXELS } = await import('../src/artwork-ratios.mjs');
+  const { sizeCropTarget } = await import('../src/size-crops.mjs');
+  assert.deepEqual(FULFILLMENT_RATIO_MIN_PIXELS['2x3'], [11666, 17499]);
+  assert.equal(11666 / 17499, 2 / 3);
+  for (const [ratio, [w, h]] of Object.entries(FULFILLMENT_RATIO_MIN_PIXELS)) {
+    assert.ok(Math.max(w, h) <= 17500, ratio);
+  }
+  assert.deepEqual(sizeCropTarget('40x60'), { width: 11666, height: 17500 });
+  assert.deepEqual(sizeCropTarget('40x60', 'landscape'), { width: 17500, height: 11666 });
+  assert.deepEqual(sizeCropTarget('24x36'), { width: 7200, height: 10800 });
+  assert.ok(Math.max(...Object.values(sizeCropTarget('120x120', 'square'))) <= 17500);
 });

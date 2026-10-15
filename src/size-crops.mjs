@@ -28,10 +28,16 @@ export function sizeCropRatioKey(size) {
 export function isSizeCropRatioKey(key) {
   return /^size-\d+(?:p\d+)?x\d+(?:p\d+)?$/.test(String(key || ''));
 }
+// Sensaria GO rejects RGB uploads whose longest side exceeds 17,500 px.
+export const MAX_CROP_SIDE_PX = 17500;
 export function sizeCropTarget(size, orientation = 'portrait') {
   const normalized = normalizeCropSize(size);
   const [small, large] = normalized.split('x').map(Number);
-  const w = Math.round(small * 300), h = Math.round(large * 300);
+  let w = Math.round(small * 300), h = Math.round(large * 300);
+  if (h > MAX_CROP_SIDE_PX) {
+    w = Math.floor(w * MAX_CROP_SIDE_PX / h);
+    h = MAX_CROP_SIDE_PX;
+  }
   const direction = String(orientation).toLowerCase();
   if (!['portrait','landscape','square'].includes(direction)) throw Error('Invalid master artwork orientation.');
   return direction === 'landscape'
