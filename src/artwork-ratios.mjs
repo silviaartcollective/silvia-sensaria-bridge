@@ -14,26 +14,32 @@ import { manifestObjectKey } from './production.mjs';
 sharp.cache(false);
 sharp.concurrency(1);
 
-export const FULFILLMENT_RATIOS = Object.freeze(['2x3', '3x4', '4x5', '11x14']);
+export const FULFILLMENT_RATIOS = Object.freeze(['2x3', '3x4', '4x5', '11x14', '5x7', '14x15']);
 
 export const FULFILLMENT_RATIO_DIMENSIONS = Object.freeze({
   '2x3': [2, 3],
   '3x4': [3, 4],
   '4x5': [4, 5],
-  '11x14': [11, 14]
+  '11x14': [11, 14],
+  '5x7': [5, 7],
+  '14x15': [14, 15]
 });
 
-// Silvia production standard: enough pixels for the largest listed product
-// in each aspect-ratio family at 300 PPI.
+// Reference dimensions for 300-PPI planning only. Actual crop output uses
+// original master pixels and must never upscale to these reference dimensions.
 export const FULFILLMENT_RATIO_MIN_PIXELS = Object.freeze({
   '2x3': [12000, 18000], // 40x60
   '3x4': [9000, 12000],  // 30x40
   '4x5': [4800, 6000],   // 16x20
-  '11x14': [3300, 4200]  // 11x14
+  '11x14': [3300, 4200], // 11x14
+  '5x7': [1500, 2100],    // 5x7
+  '14x15': [8400, 9000]   // 28x30
 });
 
 export const SIZE_TO_FULFILLMENT_RATIO = Object.freeze({
+  '5x7': '5x7',
   '8x10': '4x5',
+  '8x12': '2x3',
   '11x14': '11x14',
   '12x16': '3x4',
   '12x18': '2x3',
@@ -41,6 +47,7 @@ export const SIZE_TO_FULFILLMENT_RATIO = Object.freeze({
   '16x24': '2x3',
   '18x24': '3x4',
   '24x36': '2x3',
+  '28x30': '14x15',
   '30x40': '3x4',
   '40x60': '2x3'
 });
@@ -99,12 +106,15 @@ async function generateOne({ artworkId, sourcePath, sourceKey, ratio, orientatio
   const normalizedOrientation = normalizeOrientation(orientation, width, height);
   const crop = cropDimensions(width, height, ratio, normalizedOrientation);
   const required = requiredDimensions(ratio, normalizedOrientation);
-  const ready = crop.width >= required.width && crop.height >= required.height;
+  const recommendedPixelsMet = crop.width >= required.width && crop.height >= required.height;
+  // Native resolution is always allowed; quality cannot improve by upscaling.
 
   const result = {
     ratio,
     orientation: normalizedOrientation,
-    ready,
+    ready: true,
+    upscaled: false,
+    recommendedPixelsMet,
     source: { key: sourceKey, width, height },
     crop: {
       width: crop.width,
@@ -114,7 +124,6 @@ async function generateOne({ artworkId, sourcePath, sourceKey, ratio, orientatio
     }
   };
 
-  if (!ready) return result;
 
   const key = fulfillmentRatioObjectKey(artworkId, ratio);
   const outputPath = join(tmpdir(), `silvia-${artworkId}-${ratio}-${randomUUID()}.jpg`);
@@ -125,23 +134,23 @@ async function generateOne({ artworkId, sourcePath, sourceKey, ratio, orientatio
       sequentialRead: true
     })
       .rotate()
-      .resize(required.width, required.height, {
-        fit: 'cover',
-        position: 'centre',
-        withoutEnlargement: true,
-        kernel: sharp.kernel.lanczos3
+      .extract({
+        left: Math.floor((width - crop.width) / 2),
+        top: Math.floor((height - crop.height) / 2),
+        width: crop.width,
+        height: crop.height
       })
       .flatten({ background: '#ffffff' })
       .withMetadata({ density: 300 })
-      .jpeg({ quality: 95, chromaSubsampling: '4:4:4', progressive: true })
+      .jpeg({ quality: 88, chromaSubsampling: '4:2:0', progressive: true, optimiseCoding: true })
       .toFile(outputPath);
 
     await putArtworkFile({ key, filePath: outputPath, contentType: 'image/jpeg' });
     return {
       ...result,
       key,
-      width: required.width,
-      height: required.height,
+      width: crop.width,
+      height: crop.height,
       productionReady: true,
       url: await signedArtworkUrl(key, 60 * 60)
     };
