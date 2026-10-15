@@ -31,7 +31,7 @@ export function renderListingConverterPage() {
   <nav>
     <a class="nav" href="/">Dashboard</a>
     <a class="nav" href="/product-creator">Product Creator</a>
-    <a class="nav active" href="/listing-converter">Gelato → Silvia Converter</a>
+    <a class="nav active" href="/listings?tab=converter">Listings</a>
     <a class="nav" href="/shipping-profile">Shipping Profile</a>
     <a class="nav" href="/pricing">Pricing & Shipping</a>
     <a class="nav" href="/compare">Supplier Comparison</a>
