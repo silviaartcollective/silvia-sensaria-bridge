@@ -139,6 +139,20 @@ export async function prepareNativePsd({psdPath,mapping=null,onStage=async()=>{}
   unsupported('PSB is not yet supported by the native parser.');
  const stat=await fs.stat(psdPath);
  if(stat.size>MAX_BYTES)unsupported('PSD exceeds the native memory safety limit.');
+ // Inspect PSD dimensions and 8-bit color depth before decompressing layers.
+ const fd=await fs.open(psdPath,'r');
+ let head;
+ try{
+  head=Buffer.alloc(26);
+  const info=await fd.read(head,0,head.length,0);
+  if(info.bytesRead!==26)unsupported('PSD header is truncated.');
+ }finally{await fd.close()}
+ if(head.toString('ascii',0,4)!=='8BPS'||head.readUInt16BE(4)!==1)
+  unsupported('Not a supported Photoshop PSD document.');
+ const h=head.readUInt32BE(14),w=head.readUInt32BE(18);
+ if(head.readUInt16BE(22)!==8||head.readUInt16BE(24)!==3||
+   !w||!h||w*h>MAX_PIXELS)
+  unsupported('Native PSD supports only 8-bit RGB images up to 24 megapixels.');
  const hash=crypto.createHash('sha256').update(JSON.stringify([
   psdPath,stat.size,stat.mtimeMs,mapping?.path||'',1
  ])).digest('hex');
@@ -156,7 +170,8 @@ export async function prepareNativePsd({psdPath,mapping=null,onStage=async()=>{}
  try{({readPsd}=await import('ag-psd'))}
  catch{unsupported('Native PSD parser unavailable; run setup-worker.cmd to install ag-psd.')}
  let psd;
- try{psd=readPsd(await fs.readFile(psdPath),{useImageData:true,skipThumbnail:true})}
+ try{psd=readPsd(await fs.readFile(psdPath),{useImageData:true,skipThumbnail:true,skipLinkedFilesData:true,
+   totalMemoryLimit:512*1024*1024})}
  catch(error){unsupported('PSD parser rejected the template: '+String(error.message||error).slice(0,160))}
  if(psd.colorMode!==3||psd.bitsPerChannel!==8||
    psd.width<1||psd.height<1||psd.width*psd.height>MAX_PIXELS)
