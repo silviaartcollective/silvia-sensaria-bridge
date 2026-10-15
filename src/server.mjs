@@ -4213,10 +4213,16 @@ const server = http.createServer(async (req, res) => {
           }catch(saveError){console.error('Could not record draft setup failure:',saveError);}
         }finally{
           inflightDraftSetups.delete(setupId);
-          if(manifest.etsyDraftSetup?.status==='completed')
+          if(manifest.etsyDraftSetup?.status==='completed'){
+            // Attach regular mockups chosen after master upload while Etsy was
+            // still configuring the initial draft. Never lose those R2 files.
+            void queueRegularMockupEtsySync(setupId).catch(
+              error=>console.error('Regular mockup catch-up after draft setup failed:',error)
+            );
             void reconcileCompletedMockupsForArtwork(setupId).catch(
               error=>console.error('PSD catch-up after Etsy draft setup failed:',error)
             );
+          }
         }
       })();
       return sendJson(res,201,{ok:true,processing:true,
