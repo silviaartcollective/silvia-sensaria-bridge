@@ -455,6 +455,49 @@ async function cachedConverterListingPreview(session,listingId){
  return pending;
 }
 
+// Fast paginated master-list view: make at most two Etsy calls per page,
+// loading active and draft pages concurrently. A short cache avoids an Etsy
+// round-trip every time the user switches tabs or refreshes.
+const masterListingPageCache=new Map();
+const MASTER_PAGE_TTL_MS=2*60*1000;
+async function masterListingPage(session,offset=0){
+ const safeOffset=Number(offset);
+ if(!Number.isInteger(safeOffset)||safeOffset<0||safeOffset>4900||safeOffset%100!==0)
+   throw Error('Listing offset must be a multiple of 100 between 0 and 4900.');
+ const key=String(session.shop.shop_id)+':'+safeOffset;
+ const previous=masterListingPageCache.get(key);
+ if(previous&&previous.expiry>Date.now())return previous.result||previous.pending;
+ const pending=(async()=>{
+   const auth={shopId:session.shop.shop_id,keystring:session.keystring,
+     sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+   const [active,draft,map]=await Promise.all([
+     getShopListings({...auth,state:'active',offset:safeOffset,limit:100}),
+     getShopListings({...auth,state:'draft',offset:safeOffset,limit:100}),
+     loadListingConverterMap()
+   ]);
+   const a=Array.isArray(active?.results)?active.results:[];
+   const d=Array.isArray(draft?.results)?draft.results:[];
+   const seen=new Set();
+   const rows=[...a.map(x=>({...x,state:'active'})),...d.map(x=>({...x,state:'draft'}))]
+     .filter(x=>{const id=Number(x.listing_id);if(!id||seen.has(id))return false;seen.add(id);return true;})
+     .map(x=>{
+       const mapping=map.listings?.[String(x.listing_id)];
+       return {listingId:Number(x.listing_id),title:String(x.title||''),state:x.state,
+         artworkId:mapping?.artworkId||null,converted:mapping?.status==='converted',
+         originalCreationTimestamp:originalEtsyCreationTimestamp(x)};
+     });
+   return {listings:sortConverterListingsOldestFirst(rows),offset:safeOffset,
+     nextOffset:safeOffset+100,hasMore:(a.length===100||d.length===100)&&safeOffset<4900};
+ })();
+ masterListingPageCache.set(key,{pending,expiry:Date.now()+30*1000});
+ if(masterListingPageCache.size>80)masterListingPageCache.delete(masterListingPageCache.keys().next().value);
+ try{
+   const result=await pending;
+   masterListingPageCache.set(key,{result,expiry:Date.now()+MASTER_PAGE_TTL_MS});
+   return result;
+ }catch(error){masterListingPageCache.delete(key);throw error;}
+}
+
 async function converterListingRows(session) {
  const [listings, converterMap]=await Promise.all([
   allShopListingsForPriceSync(session),loadListingConverterMap()
@@ -3591,11 +3634,11 @@ const server = http.createServer(async (req, res) => {
   if(req.method==='GET'&&url.pathname==='/api/master-listings'){
     if(!requireAdminApi(req,res))return;
     try{
-      const session=await getEtsySession({forceRefresh:true});
+      const session=await getEtsySession();
       if(!String(session.scope||'').split(/\s+/).includes('listings_r'))
         return sendJson(res,403,{ok:false,error:'Etsy listings_r permission is required.'});
-      const data=await converterListingRows(session);
-      return sendJson(res,200,{ok:true,listings:data.listings,count:data.listings.length});
+      const page=await masterListingPage(session,Number(url.searchParams.get('offset')||0));
+      return sendJson(res,200,{ok:true,...page,count:page.listings.length});
     }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
   }
   const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory))?$/);
