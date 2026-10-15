@@ -208,6 +208,7 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
  smartObjects=[],fitMode='contain',artworkOrientation='',onStage=()=>{}}){
  const engine=String(process.env.POD_PSD_RENDERER||'auto').toLowerCase();
  const started=Date.now();
+ let nativeFallbackReason='';
  if(!['auto','native','photopea','photoshop'].includes(engine))
   throw Error('POD_PSD_RENDERER must be auto, native, photopea or photoshop.');
  if(engine==='auto'||engine==='native'){
@@ -224,6 +225,7 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
    return native;
   }catch(error){
    if(!(error instanceof NativeMockupUnsupported)||engine==='native')throw error;
+   nativeFallbackReason=String(error.message||error).slice(0,240);
    console.log('[PC PSD renderer] '+templateName+
     ' requires legacy PSD features: '+error.message);
    await onStage('Native PSD not yet compatible: '+error.message+
@@ -275,7 +277,9 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
   console.log('[PC PSD renderer] '+templateName+' completed with Photopea in '+
    ((Date.now()-started)/1000).toFixed(1)+'s.');
   renderSucceeded=true;
-  return {...result,engine:'photopea',dimensions:{width:metadata.width,height:metadata.height},size};
+  return {...result,engine:'photopea',nativeFallbackReason,
+   dimensions:{width:metadata.width,height:metadata.height},size,
+   renderMs:Date.now()-started};
  }finally{
   if(deadlineTimer)clearTimeout(deadlineTimer);
   if(!renderSucceeded&&page){
