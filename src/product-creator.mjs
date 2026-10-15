@@ -99,8 +99,11 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
             </label>
             <label>Artwork mockups <span class="hint">optional</span>
               <input id="mockup_files" type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp">
+              <span class="uploadmeta">You can add regular mockups before or after the master is uploaded.</span>
             </label>
           </div>
+          <button type="button" class="btn secondary" id="upload-regular-mockups">Upload / sync regular mockups to Etsy</button>
+          <div id="regular-mockup-status" class="status" aria-live="polite">Choose JPG, PNG or WebP mockups. They will be saved to R2 and verified on the Etsy draft.</div>
           <div class="uploadmeta">Mockups are optional. Create the draft before mockups finish: the master artwork becomes the first listing image, followed by the 3 saved preset images and video. Finished PSD mockups can be added later in Etsy.</div>
           <div class="progress"><span id="upload-progress"></span></div>
           <div class="status" id="upload-status">Choose the master artwork to create your draft now. Mockup generation is optional and will never block drafts.</div>
@@ -675,6 +678,78 @@ async function uploadArtworkToR2(){
   }
 }
 
+// Regular mockups are independent of the master upload: the master might
+// already be stored before the user chooses their optional JPG/PNG files.
+let pendingRegularMockupUpload=null;
+async function saveSelectedRegularMockups(){
+ const chosen=Array.from(mockupFilesInput.files||[]);
+ if(!chosen.length)throw Error('Select JPG, PNG or WebP mockups first.');
+ const artworkId=await window.startProductArtworkUpload();
+ const endpoint='/api/artworks/'+encodeURIComponent(artworkId)+'/regular-mockups';
+ const status=document.getElementById('regular-mockup-status');
+ status.className='status';
+ status.textContent='Preparing '+chosen.length+' regular mockup(s) for Cloudflare R2…';
+ const reserve=await fetch(endpoint+'/reserve',{
+  method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({files:chosen.map(file=>({
+   filename:file.name,contentType:file.type,size:file.size,lastModified:file.lastModified
+  }))})
+ });
+ const reserved=await readJsonResponse(reserve,'Regular mockup reservation');
+ if(!reserve.ok)throw Error(reserved.error||'Could not reserve regular mockups');
+ const needed=(reserved.uploads||[]).filter(file=>!file.alreadyPresent);
+ let saved=0;
+ await mapLimit(needed,3,async record=>{
+  const file=chosen.find(item=>item.name===record.filename&&
+   item.size===Number(record.size||item.size)&&
+   item.lastModified===Number(record.lastModified||item.lastModified));
+  if(!file)throw Error('Regular mockup file changed during upload: '+record.filename);
+  await putFile(record.uploadUrl,file,record.contentType);
+  saved++;
+  status.textContent='Uploading regular mockups to R2: '+saved+'/'+needed.length+'…';
+ });
+ status.textContent='Regular mockups saved in R2. Confirming files…';
+ const response=await fetch(endpoint+'/confirm',{method:'POST'});
+ const confirmation=await readJsonResponse(response,'Regular mockup confirmation');
+ if(!response.ok)throw Error(confirmation.error||'Could not verify mockups in R2');
+ if(confirmation.pending)throw Error(confirmation.pending+' mockup upload(s) were not verified in R2.');
+ if(confirmation.etsySync?.processing){
+  status.textContent='Uploading regular mockups to Etsy and verifying photo IDs…';
+  for(let attempt=0;attempt<100;attempt++){
+   await new Promise(resolve=>setTimeout(resolve,3000));
+   const r=await fetch(endpoint+'/status',{cache:'no-store'});
+   const update=await readJsonResponse(r,'Regular Etsy image verification');
+   if(!r.ok)continue;
+   if(update.status==='completed'){
+    status.className='status ok';
+    status.textContent='Confirmed on Etsy: '+update.photoCount+' total listing photos. Regular mockups are saved in R2.';
+    return confirmation;
+   }
+   if(update.status==='failed')throw Error(update.error||'Regular Etsy photo verification failed.');
+  }
+  throw Error('Etsy is still processing the photos. They are safely stored in R2; use Sync Regular Mockups to check again.');
+ }
+ status.className='status ok';
+ status.textContent='Regular mockups saved in R2. They will attach when the Etsy draft setup finishes.';
+ return confirmation;
+}
+function startRegularMockupUpload(){
+ if(pendingRegularMockupUpload)return pendingRegularMockupUpload;
+ const status=document.getElementById('regular-mockup-status');
+ pendingRegularMockupUpload=saveSelectedRegularMockups().catch(error=>{
+  status.className='status warn';status.textContent=String(error.message||error);
+  throw error;
+ }).finally(()=>{pendingRegularMockupUpload=null});
+ return pendingRegularMockupUpload;
+}
+document.getElementById('upload-regular-mockups').addEventListener('click',()=>{
+ void startRegularMockupUpload().catch(()=>{});
+});
+mockupFilesInput.addEventListener('change',()=>{
+ if(mockupFilesInput.files?.length&&masterFileInput.files?.[0])
+  void startRegularMockupUpload().catch(()=>{});
+});
+
 function presetRoleForFile(file){
   const name=String(file?.name||'').toLowerCase();
   if(/\.(mov|mp4|m4v)$/.test(name))return 'video';
@@ -854,6 +929,12 @@ form.addEventListener('submit',async(e)=>{
       await window.startProductArtworkUpload();
     }
 
+    // Do not create a draft while selected manual mockups are still uploading.
+    if(mockupFilesInput.files?.length &&
+       document.getElementById('mockup-generator-panel')?.dataset.generationReady!=='true'){
+      if(pendingRegularMockupUpload)await pendingRegularMockupUpload;
+      else await startRegularMockupUpload();
+    }
     button.textContent='Creating Etsy draft…';
     const payload={
     artwork_id:document.getElementById('artwork_id').value.trim(),
