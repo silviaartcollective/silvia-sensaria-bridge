@@ -117,7 +117,7 @@ async function getWarmPhotopeaBrowser(puppeteer,executablePath,onStage){
 }
 
 export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateName='',mapping,
- smartObjects=[],fitMode='contain',onStage=()=>{}}){
+ smartObjects=[],fitMode='contain',artworkOrientation='',onStage=()=>{}}){
  const engine=String(process.env.POD_PSD_RENDERER||'photopea').toLowerCase();
  const started=Date.now();
  if(engine==='photoshop'){
@@ -158,7 +158,9 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
   page.on('crash',()=>console.error('[PC PSD renderer] Chromium crashed during PSD rendering.'));
   await page.goto(local.url,{waitUntil:'domcontentloaded',timeout:45000});
   await page.waitForFunction(()=>typeof window.renderMockupOnPC==='function',{timeout:20000});
-  const rendering=page.evaluate(({templateName,mapping,fitMode})=>window.renderMockupOnPC({templateName,mapping,fitMode}),{templateName,mapping,fitMode});
+  const rendering=page.evaluate(({templateName,mapping,fitMode,artworkOrientation})=>
+    window.renderMockupOnPC({templateName,mapping,fitMode,artworkOrientation}),
+    {templateName,mapping,fitMode,artworkOrientation});
   const deadline=new Promise((_,reject)=>{
    deadlineTimer=setTimeout(()=>reject(Error('PSD processing exceeded 16 minutes on PC. Check RAM and retry.')),16*60*1000);
   });
