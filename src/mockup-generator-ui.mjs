@@ -15,6 +15,10 @@ return `
  <label>Template collection
   <input id="mg-collection" type="text" value="Default Collection" maxlength="100">
  </label>
+ <div class="mg-actions">
+  <button class="btn secondary" type="button" id="mg-save-templates">Save selected PSD templates to permanent library</button>
+ </div>
+ <div id="mg-library-upload-status" class="status" role="status" aria-live="polite">Select vertical or horizontal PSDs to save them to Cloudflare R2. They remain available for future products; saving does not start the PC generator.</div>
  <div id="mg-orientation-status" class="status" aria-live="polite">Select a master artwork to detect its aspect ratio. Previously saved templates can be categorized below. Square artworks require square-compatible templates.</div>
  <details id="mg-saved-details"><summary>Permanent saved PSD templates <span id="mg-saved-count"></span> · choose compatible templates</summary>
   <div class="uploadmeta">Assign an orientation to older templates. Mark square-compatible only when the artwork Smart Object fits a square image without stretching.</div>
@@ -76,6 +80,9 @@ return `
 .mg-preview #mg-apply-selected{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0}
 @media(max-width:760px){.mg-preview-list{gap:7px;max-height:550px;min-height:260px}.mg-preview-item{padding:5px}.mg-preview-item span{font-size:11px}.mg-preview-item input{width:19px;height:19px;top:7px;right:7px}}
 #mockup-generator-panel .mg-actions{display:flex;flex-wrap:wrap;gap:10px}
+#mockup-generator-panel #mg-library-upload-status{font-size:13px;line-height:1.5;min-height:36px;padding:12px;border-radius:9px;background:#f4f6f1;color:#344d38}
+#mockup-generator-panel #mg-library-upload-status.warn{background:#fff0df;color:#945026}
+#mockup-generator-panel #mg-save-templates:disabled{opacity:.6;cursor:progress}
 #mockup-generator-panel details{padding:10px;border:1px solid #e2ded6;border-radius:9px;background:#fffdfa}
 #mockup-generator-panel summary{cursor:pointer;font-size:13px;font-weight:600}
 #mockup-generator-panel .mg-template-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px;margin-top:12px;max-height:210px;overflow:auto}
