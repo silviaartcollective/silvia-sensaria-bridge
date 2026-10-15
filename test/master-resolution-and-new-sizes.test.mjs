@@ -72,7 +72,7 @@ test('crop targets below or above master never enlarge native pixel data',async(
 
 test('server does not accept legacy 300-PPI output or forget new ratios',()=>{
  const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
- assert.match(server,/Shared PC Crop Worker v4\\.4\\.0 is required/);
- assert.match(server,/width !== sourceCropWidth \\|\\| height !== sourceCropHeight/);
- assert.match(server,/FULFILLMENT_RATIOS\\.some\\(/);
+ assert.ok(server.includes('Shared PC Crop Worker v4.4.0 is required'));
+ assert.ok(server.includes('width !== sourceCropWidth || height !== sourceCropHeight'));
+ assert.ok(server.includes('FULFILLMENT_RATIOS.some('));
 });
