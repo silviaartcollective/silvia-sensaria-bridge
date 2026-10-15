@@ -107,13 +107,20 @@ async function generateOne({ artworkId, sourcePath, sourceKey, ratio, orientatio
   const crop = cropDimensions(width, height, ratio, normalizedOrientation);
   const required = requiredDimensions(ratio, normalizedOrientation);
   const recommendedPixelsMet = crop.width >= required.width && crop.height >= required.height;
-  // Native resolution is always allowed; quality cannot improve by upscaling.
+  // Small formats scale down uniformly to their reference resolution. Larger
+  // formats never exceed the pixel dimensions of the original source crop.
+  const scale = Math.min(1, required.width / crop.width, required.height / crop.height);
+  const output = {
+    width: Math.max(1, Math.floor(crop.width * scale)),
+    height: Math.max(1, Math.floor(crop.height * scale))
+  };
 
   const result = {
     ratio,
     orientation: normalizedOrientation,
     ready: true,
     upscaled: false,
+    downscaled: output.width < crop.width || output.height < crop.height,
     recommendedPixelsMet,
     source: { key: sourceKey, width, height },
     crop: {
@@ -128,7 +135,7 @@ async function generateOne({ artworkId, sourcePath, sourceKey, ratio, orientatio
   const key = fulfillmentRatioObjectKey(artworkId, ratio);
   const outputPath = join(tmpdir(), `silvia-${artworkId}-${ratio}-${randomUUID()}.jpg`);
   try {
-    await sharp(sourcePath, {
+    let image = sharp(sourcePath, {
       failOn: 'warning',
       limitInputPixels: false,
       sequentialRead: true
@@ -139,8 +146,13 @@ async function generateOne({ artworkId, sourcePath, sourceKey, ratio, orientatio
         top: Math.floor((height - crop.height) / 2),
         width: crop.width,
         height: crop.height
-      })
-      .flatten({ background: '#ffffff' })
+      });
+    if (output.width !== crop.width || output.height !== crop.height) {
+      image = image.resize(output.width, output.height, {
+        fit: 'fill', withoutEnlargement: true, kernel: sharp.kernel.lanczos3
+      });
+    }
+    await image.flatten({ background: '#ffffff' })
       .withMetadata({ density: 300 })
       .jpeg({ quality: 88, chromaSubsampling: '4:2:0', progressive: true, optimiseCoding: true })
       .toFile(outputPath);
@@ -149,8 +161,8 @@ async function generateOne({ artworkId, sourcePath, sourceKey, ratio, orientatio
     return {
       ...result,
       key,
-      width: crop.width,
-      height: crop.height,
+      width: output.width,
+      height: output.height,
       productionReady: true,
       url: await signedArtworkUrl(key, 60 * 60)
     };
