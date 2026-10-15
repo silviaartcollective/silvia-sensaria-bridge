@@ -274,28 +274,107 @@ async function loadTemplates(){
  if(detectedArtworkOrientation&&!templates.some(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)))
   message('No '+detectedArtworkOrientation+'-compatible templates yet. Upload them or classify saved PSDs before generating.',true);
 }
+// Permanent PSD upload is not dependent on a master artwork or the PC renderer.
+// Browser uploads up to two large PSDs at once; saved R2 templates survive refresh.
+let libraryUploadPromise=null,libraryUploadAgain=false,libraryUploadTimer=null;
+const libraryInputs=['mg-psds','mg-psds-horizontal'];
+const selectedLibraryFiles=()=>[
+ ...[...$('mg-psds').files].map(file=>({file,orientation:'portrait',inputId:'mg-psds'})),
+ ...[...$('mg-psds-horizontal').files].map(file=>({file,orientation:'landscape',inputId:'mg-psds-horizontal'}))
+];
+const libraryFileSignature=files=>files.map(f=>[f.name,f.size,f.lastModified].join(':')).join('|');
+async function uploadTemplateSelection(){
+ const snapshot=selectedLibraryFiles(),status=$('mg-library-upload-status');
+ if(!snapshot.length)return [];
+ const collection=$('mg-collection').value.trim()||'Default Collection';
+ const signatures=new Map(libraryInputs.map(id=>[id,libraryFileSignature([...$(id).files])]));
+ const seen=new Set();
+ const pending=snapshot.filter(({file,orientation})=>{
+  const fingerprint=[orientation,collection,file.name,file.size].join('|');
+  if(seen.has(fingerprint))return false;
+  seen.add(fingerprint);return true;
+ });
+ let index=0,processed=0;
+ const added=[],already=[],errors=[];
+ $('mg-save-templates').disabled=true;
+ const progress=()=>{
+  status.classList.toggle('warn',errors.length>0);
+  status.textContent='Saving permanent PSD templates: '+processed+'/'+pending.length+
+   ' checked, '+added.length+' uploaded, '+already.length+' already saved'+
+   (errors.length?', '+errors.length+' failed':'')+
+   '. Keep this page open until saving finishes.';
+  $('mg-saved-count').textContent='('+templates.filter(t=>t.status==='ready').length+')';
+ };
+ progress();
+ const worker=async()=>{
+  while(index<pending.length){
+   const {file,orientation}=pending[index++];
+   try{
+    const previous=templates.find(t=>t.status==='ready'&&t.name===file.name&&
+     Number(t.size)===file.size&&t.orientation===orientation&&t.collection===collection);
+    if(previous){already.push(previous);continue}
+    const reserved=await api('templates','POST',{name:file.name,size:file.size,
+     orientation,collection});
+    await upload(reserved.uploadUrl,file,'application/octet-stream');
+    const confirmed=await api('templates/'+reserved.template.id+'/confirm','POST');
+    templates.push(confirmed.template);added.push(confirmed.template);
+   }catch(error){errors.push(file.name+': '+String(error?.message||error))}
+   finally{processed++;progress()}
+  }
+ };
+ await Promise.all([worker(),worker()]);
+ const successful=[...added,...already];
+ for(const inputId of libraryInputs){
+  const original=signatures.get(inputId),current=libraryFileSignature([...$(inputId).files]);
+  const grouped=pending.filter(item=>item.inputId===inputId);
+  if(original&&original===current&&grouped.every(item=>
+    successful.some(t=>t.name===item.file.name&&Number(t.size)===item.file.size&&
+      t.orientation===item.orientation)))$(inputId).value='';
+ }
+ await loadTemplates();
+ let count=[...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].length;
+ for(const cb of $('mg-templates').querySelectorAll('input.mg-template-choice')){
+  if(count>=16)break;
+  if(!cb.checked&&!cb.disabled&&successful.some(t=>t.id===cb.value)){
+   cb.checked=true;count++;
+  }
+ }
+ if(added.length)$('mg-saved-details').open=true;
+ status.classList.toggle('warn',!!errors.length);
+ status.textContent=added.length+' new PSDs permanently saved; '+already.length+
+  ' previously saved. Total library: '+templates.filter(t=>t.status==='ready').length+
+  '. '+(errors.length?'Failed: '+errors.slice(0,3).join('; ')+'. Click Save to retry.':
+   'You can now generate mockups for a matching artwork. No reupload is needed later.');
+ if(errors.length)throw Error(errors.length+' template uploads failed; saved templates were preserved.');
+ return added.map(t=>t.id);
+}
 async function uploadTemplates(){
- const files=[
-  ...[...$('mg-psds').files].map(file=>({file,orientation:'portrait'})),
-  ...[...$('mg-psds-horizontal').files].map(file=>({file,orientation:'landscape'}))
- ],ids=[];
- for(let i=0;i<files.length;i++){
-  const {file,orientation}=files[i];
-  message('Uploading '+orientation+' PSD '+(i+1)+'/'+files.length+' to R2: '+file.name);
-  const result=await api('templates','POST',{
-   name:file.name,size:file.size,orientation,collection:$('mg-collection').value
+ if(libraryUploadPromise){libraryUploadAgain=true;return libraryUploadPromise}
+ libraryUploadPromise=(async()=>{
+  let created=[],passes=0;
+  do{
+   libraryUploadAgain=false;
+   created.push(...await uploadTemplateSelection());
+   passes++;
+  }while(libraryUploadAgain&&selectedLibraryFiles().length&&passes<5);
+  return created;
+ })();
+ try{return await libraryUploadPromise}
+ finally{libraryUploadPromise=null;$('mg-save-templates').disabled=false}
+}
+function scheduleTemplateLibraryUpload(){
+ if(libraryUploadTimer)clearTimeout(libraryUploadTimer);
+ const count=selectedLibraryFiles().length;
+ if(!count)return;
+ $('mg-library-upload-status').textContent=count+
+  ' vertical/horizontal PSD files selected; permanent storage starts shortly.';
+ libraryUploadTimer=setTimeout(()=>{
+  libraryUploadTimer=null;
+  void uploadTemplates().catch(error=>{
+   const status=$('mg-library-upload-status');status.classList.add('warn');
+   status.textContent+=' '+String(error?.message||error);
   });
-  await upload(result.uploadUrl,file,'application/octet-stream');
-  await api('templates/'+result.template.id+'/confirm','POST');
-  ids.push(result.template.id);
- }
- $('mg-psds').value='';$('mg-psds-horizontal').value='';
- if(ids.length){
-  await loadTemplates();
-  for(const cb of $('mg-templates').querySelectorAll('input.mg-template-choice'))
-   if(ids.includes(cb.value)&&!cb.disabled)cb.checked=true;
- }
- return ids;
+ },1100);
 }
 async function loadJobs(){
  jobs=(await api('jobs')).jobs;
@@ -526,6 +605,9 @@ window.addEventListener('pod-artwork-uploaded',event=>{
   await createJob({artworkId:currentArtworkId,automatic:true});
  }).catch(failure);
 });
+$('mg-psds').addEventListener('change',scheduleTemplateLibraryUpload);
+$('mg-psds-horizontal').addEventListener('change',scheduleTemplateLibraryUpload);
+$('mg-save-templates').addEventListener('click',()=>act(uploadTemplates));
 $('mg-select-seven').addEventListener('click',selectSeven);
 $('mg-select-seventeen').addEventListener('click',selectSeventeen);
 $('mg-clear-templates').addEventListener('click',clearTemplates);
