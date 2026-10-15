@@ -89,6 +89,7 @@ import {
   SILVIA_REFERENCE_CAD_PER_USD,
   SILVIA_SALE_DISCOUNT_PERCENT
 } from './variants.mjs';
+import { normalizeCropSize,sizeCropRatioKey,sizeCropTarget,sizeCropObjectKey } from './size-crops.mjs';
 import {
   FULFILLMENT_RATIOS,
   FULFILLMENT_RATIO_MIN_PIXELS,
@@ -590,6 +591,17 @@ function cropTarget(ratio, orientation = 'portrait') {
   };
 }
 
+// Each custom size uses its own key, without modifying the default ratio crops.
+function cropJobTarget(job, ratio) {
+  return job.size ? sizeCropTarget(job.size,job.orientation) : cropTarget(ratio,job.orientation);
+}
+function cropJobOutputKey(job, ratio) {
+  if (job.size) {
+    if (String(ratio)!==sizeCropRatioKey(job.size)) throw Error('Wrong on-demand crop identifier.');
+    return sizeCropObjectKey(job.artworkId,job.size);
+  }
+  return cropOutputKeyForJob(job,ratio);
+}
 function fulfillmentStatusKey(artworkId) {
   const id = String(artworkId || '').trim().toUpperCase();
   return `artworks/${id}/fulfillment/status.json`;
@@ -2127,13 +2139,13 @@ const server = http.createServer(async (req, res) => {
       const uploadUrls = {};
       const targets = {};
       for (const ratio of job.ratios || FULFILLMENT_RATIOS) {
-        const key = cropOutputKeyForJob(job, ratio);
-        targets[ratio] = cropTarget(ratio, job.orientation);
+        const key = cropJobOutputKey(job, ratio);
+        targets[ratio] = cropJobTarget(job, ratio);
         uploadUrls[ratio] = await signedArtworkUploadUrl(key, 'image/jpeg', 2 * 60 * 60);
       }
 
       recordCropWorkerHeartbeat({ workerId, busy: true, jobId: job.id });
-      await writeFulfillmentStatus(job.artworkId, {
+      if (!job.size) await writeFulfillmentStatus(job.artworkId, {
         status: 'claimed',
         jobId: job.id,
         workerId,
@@ -2164,7 +2176,7 @@ const server = http.createServer(async (req, res) => {
         const jobId = decodeURIComponent(progressMatch[1]);
         recordCropWorkerHeartbeat({ workerId, busy: true, jobId, version: input.version });
         const job = await updateCropJobProgress(jobId, workerId, input);
-        await writeFulfillmentStatus(job.artworkId, {
+        if (!job.size) await writeFulfillmentStatus(job.artworkId, {
           status: job.status,
           jobId: job.id,
           workerId,
@@ -2203,7 +2215,7 @@ const server = http.createServer(async (req, res) => {
         for (const ratio of currentJob.ratios || FULFILLMENT_RATIOS) {
           const result = input.assets?.[ratio];
           if (!result) throw new Error(`Worker did not return ${ratio} output metadata`);
-          const target = cropTarget(ratio, currentJob.orientation);
+          const target = cropJobTarget(currentJob, ratio);
           const width = Number(result.width || 0);
           const height = Number(result.height || 0);
           // A crop must be extracted directly from the original pixels.
@@ -2242,7 +2254,7 @@ const server = http.createServer(async (req, res) => {
                sourceMasterHeight !== Number(manifest.master.height))) {
             throw new Error(`${ratio} crop source dimensions differ from the R2 master.`);
           }
-          const key = cropOutputKeyForJob(currentJob, ratio);
+          const key = cropJobOutputKey(currentJob, ratio);
           if (!(await artworkObjectExists(key))) {
             throw new Error(`Uploaded ${ratio} crop is missing from R2`);
           }
@@ -2269,19 +2281,29 @@ const server = http.createServer(async (req, res) => {
           };
         }
 
-        if (!isStagedRevisionJob(currentJob)) {
-        manifest.fulfillmentRatios = assets;
-        manifest.fulfillmentRatioInsufficient = {};
-        manifest.fulfillmentRatiosReady = FULFILLMENT_RATIOS.every(
-          ratio => Boolean(assets[ratio]?.productionReady)
-        );
-        manifest.fulfillmentRatiosUpdatedAt = new Date().toISOString();
-        manifest.cropWorkerJobId = currentJob.id;
-        await saveArtworkManifest(manifest);
-
+        if (currentJob.size) {
+          const crop=assets[sizeCropRatioKey(currentJob.size)];
+          if (!crop) throw Error('Size-specific output was not verified.');
+          await updateArtworkManifest(currentJob.artworkId, latest=>{
+            if(latest.master?.key!==currentJob.masterKey)
+              throw Error('Master artwork changed before this custom crop completed.');
+            latest.fulfillmentSizeCrops ||= {};
+            latest.fulfillmentSizeCrops[currentJob.size]={...crop,size:currentJob.size,jobId:currentJob.id};
+          });
+        } else if (!isStagedRevisionJob(currentJob)) {
+          await updateArtworkManifest(currentJob.artworkId, latest=>{
+            if(latest.master?.key!==currentJob.masterKey)
+              throw Error('Master artwork changed before default crops completed.');
+            latest.fulfillmentRatios=assets;
+            latest.fulfillmentRatioInsufficient={};
+            latest.fulfillmentRatiosReady=FULFILLMENT_RATIOS.every(
+              ratio=>Boolean(assets[ratio]?.productionReady));
+            latest.fulfillmentRatiosUpdatedAt=new Date().toISOString();
+            latest.cropWorkerJobId=currentJob.id;
+          });
         }
         const job = await completeCropJob(jobId, workerId, assets);
-        if (!isStagedRevisionJob(currentJob)) await writeFulfillmentStatus(currentJob.artworkId, {
+        if (!currentJob.size && !isStagedRevisionJob(currentJob)) await writeFulfillmentStatus(currentJob.artworkId, {
           status: 'completed',
           jobId: currentJob.id,
           workerId,
@@ -2309,7 +2331,7 @@ const server = http.createServer(async (req, res) => {
           workerId,
           input.error
         );
-        await writeFulfillmentStatus(job.artworkId, {
+        if (!job.size) await writeFulfillmentStatus(job.artworkId, {
           status: 'failed',
           jobId: job.id,
           workerId,
@@ -2353,29 +2375,42 @@ const server = http.createServer(async (req, res) => {
       if(!manifest.master?.orientation)
         throw Error('Master image geometry was not verified. Confirm the R2 artwork upload again.');
       const orientation=manifest.orientation;
-      if(orientation==='square')
-        throw Error('Square artwork requires separate square production ratios.');
-      if(!['landscape','portrait'].includes(orientation))
+      const size=input.size?normalizeCropSize(input.size):null;
+      if(orientation==='square'&&!size)
+        throw Error('Square masters need an explicit on-demand crop size.');
+      if(!['landscape','portrait','square'].includes(orientation))
         throw Error('Unknown master image orientation; complete R2 upload again.');
+      if(size){
+        const previous=manifest.fulfillmentSizeCrops?.[size];
+        if(previous?.sourceMasterKey===manifest.master.key &&
+           previous.productionReady && await artworkObjectExists(previous.key)){
+          return sendJson(res,200,{ok:true,cached:true,size,asset:previous,
+            previewUrl:await signedArtworkUrl(previous.key,3600),worker:cropWorkerStatus()});
+        }
+      }
       const created = await createCropJob({
         artworkId,
         masterKey: manifest.master.key,
-        orientation
+        orientation,
+        ...(size?{size}:{})
       });
-      manifest.cropWorkerJobId = created.job.id;
-      manifest.cropWorkerQueuedAt = new Date().toISOString();
-      await saveArtworkManifest(manifest);
-      await writeFulfillmentStatus(artworkId, {
-        status: created.job.status || 'pending',
-        jobId: created.job.id,
-        progress: created.job.progress || 0,
-        completedRatios: created.job.completedRatios || [],
-        message: created.job.message || 'Waiting for shared crop workstation'
-      }).catch(() => {});
-      return sendJson(res, created.reused ? 200 : 201, {
-        ok: true,
-        ...created,
-        worker: cropWorkerStatus()
+      if (!size) {
+        await updateArtworkManifest(artworkId,latest=>{
+          if(latest.master?.key!==manifest.master.key)
+            throw Error('Artwork changed before crop queue was saved.');
+          latest.cropWorkerJobId=created.job.id;
+          latest.cropWorkerQueuedAt=new Date().toISOString();
+        });
+        await writeFulfillmentStatus(artworkId, {
+          status: created.job.status || 'pending',
+          jobId: created.job.id,
+          progress: created.job.progress || 0,
+          completedRatios: created.job.completedRatios || [],
+          message: created.job.message || 'Waiting for shared crop workstation'
+        }).catch(() => {});
+      }
+      return sendJson(res,created.reused?200:201,{
+        ok:true,...created,...(size?{size}:{}),worker:cropWorkerStatus()
       });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
