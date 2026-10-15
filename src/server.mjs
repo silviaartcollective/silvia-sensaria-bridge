@@ -3709,7 +3709,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  const regularMockupRoute=url.pathname.match(/^\\/api\\/artworks\\/(SAC\\d+)\\/regular-mockups(?:\\/(reserve|confirm|sync|status))?$/i);
+  const regularMockupRoute=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/regular-mockups(?:\/(reserve|confirm|sync|status))?$/i);
   if(regularMockupRoute){
    if(!requireAdminApi(req,res))return;
    const artworkId=regularMockupRoute[1].toUpperCase(),action=regularMockupRoute[2];
