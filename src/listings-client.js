@@ -42,7 +42,8 @@ el('tab-master').addEventListener('click',()=>showTab('master'));
 el('tab-converter').addEventListener('click',()=>showTab('converter'));
 function filteredList(){
  const q=el('listing-search').value.trim().toLowerCase();
- return listings.filter(o=>!q||String(o.listingId).includes(q)||String(o.title||'').toLowerCase().includes(q));
+ return listings.filter(o=>!q||String(o.listingId).includes(q)||
+  String(o.title||'').toLowerCase().includes(q)||String(o.artworkId||'').toLowerCase().includes(q));
 }
 function renderList(){
  const box=el('listing-items');box.replaceChildren();
