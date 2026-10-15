@@ -1,6 +1,6 @@
 (()=>{'use strict';
 const el=id=>document.getElementById(id);
-let listings=[],selectedId=0,current=null,dirty=false,converterLoaded=false;
+let listings=[],selectedId=0,current=null,dirty=false,converterLoaded=false,masterLoaded=false,listLoadGeneration=0;
 const fields=['edit-title','edit-description','edit-tags','edit-section'];
 function notice(id,message,error=false){const node=el(id);node.className='notice'+(error?' error':'');node.textContent=message;}
 function clearNotice(id){el(id).className='notice hidden';el(id).textContent='';}
@@ -25,6 +25,10 @@ function showTab(tab){
   el('converter-frame').src='/listing-converter?embedded=1';
   converterLoaded=true;
  }
+ if(!converter&&!masterLoaded){
+   masterLoaded=true;
+   void loadListings();
+ }
 }
 // Keep the old converter comfortably scrollable inside its Listings tab.
 const converterFrame=el('converter-frame');
@@ -48,8 +52,10 @@ function filteredList(){
 function renderList(){
  const box=el('listing-items');box.replaceChildren();
  const rows=filteredList();
- el('listing-count').textContent=rows.length+' of '+listings.length+' Etsy listings';
- for(const row of rows){
+ const visible=rows.slice(0,120);
+ el('listing-count').textContent=rows.length+' matching · '+listings.length+
+   ' loaded from Etsy'+(rows.length>120?' · Showing first 120; use search to narrow results':'');
+ for(const row of visible){
   const b=document.createElement('button');b.type='button';b.className='listing-choice'+(row.listingId===selectedId?' selected':'');
   const title=document.createElement('b');title.textContent=row.title||'Untitled';
   const sub=document.createElement('span');sub.className='muted';
@@ -61,13 +67,33 @@ function renderList(){
  }
 }
 async function loadListings(){
+ const generation=++listLoadGeneration;
  el('reload-list').disabled=true;
- el('listing-count').textContent='Loading listings from Etsy…';
+ el('listing-count').textContent='Loading the first 100 active and draft Etsy listings…';
+ listings=[];renderList();
+ const byId=new Map();
  try{
-  const r=await request('/api/master-listings');
-  listings=r.listings||[];renderList();
- }catch(error){el('listing-count').textContent=String(error.message||error);}
- finally{el('reload-list').disabled=false;}
+  for(let offset=0;offset<=4900;offset+=100){
+   const data=await request('/api/master-listings?offset='+offset);
+   if(generation!==listLoadGeneration)return;
+   for(const item of data.listings||[])byId.set(Number(item.listingId),item);
+   listings=[...byId.values()].sort((a,b)=>{
+     const ta=Number(a.originalCreationTimestamp)||Number.MAX_SAFE_INTEGER;
+     const tb=Number(b.originalCreationTimestamp)||Number.MAX_SAFE_INTEGER;
+     return ta-tb||Number(a.listingId)-Number(b.listingId);
+   });
+   renderList();
+   if(!data.hasMore)break;
+   el('listing-count').textContent='Loaded '+listings.length+' listings · loading more in the background…';
+   // Yield between pages so input and rendering remain responsive.
+   await new Promise(resolve=>setTimeout(resolve,60));
+  }
+ }catch(error){
+  if(generation===listLoadGeneration)
+   el('listing-count').textContent='Loaded '+listings.length+' listings · '+String(error.message||error);
+ }finally{
+  if(generation===listLoadGeneration)el('reload-list').disabled=false;
+ }
 }
 function renderInventory(data){
  const body=el('variants-body');body.replaceChildren();
@@ -170,5 +196,4 @@ el('save-variants').addEventListener('click',async()=>{
 });
 const tab=new URL(location.href).searchParams.get('tab');
 showTab(tab==='converter'?'converter':'master');
-loadListings();
 })();
