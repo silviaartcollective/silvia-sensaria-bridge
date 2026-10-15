@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import {pipeline} from 'node:stream/promises';
 import sharp from 'sharp';
 import {renderMockupWithPhotoshop,NativePhotoshopUnavailable} from './native-photoshop.mjs';
+import {renderMockupNative,NativeMockupUnsupported} from './native-mockup.mjs';
 
 export function chromiumCandidates(env=process.env){
  const dirs=[env.PROGRAMFILES,env['PROGRAMFILES(X86)'],env.LOCALAPPDATA].filter(Boolean);
@@ -205,8 +206,30 @@ async function getWarmPhotopeaPage(browser,url,onStage){
 
 export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateName='',mapping,
  smartObjects=[],fitMode='contain',artworkOrientation='',onStage=()=>{}}){
- const engine=String(process.env.POD_PSD_RENDERER||'photopea').toLowerCase();
+ const engine=String(process.env.POD_PSD_RENDERER||'auto').toLowerCase();
  const started=Date.now();
+ if(!['auto','native','photopea','photoshop'].includes(engine))
+  throw Error('POD_PSD_RENDERER must be auto, native, photopea or photoshop.');
+ if(engine==='auto'||engine==='native'){
+  try{
+   await onStage('Native PSD rendering first — checking Photoshop layer compatibility');
+   const native=await renderMockupNative({
+    psdPath,artworkPath,outputPath,mapping,fitMode,onStage
+   });
+   if(native.dimensions.width<150||native.dimensions.height<150)
+    throw Error('Native rendered mockup is unexpectedly small.');
+   console.log('[PC PSD renderer] '+templateName+' native output in '+
+    ((Date.now()-started)/1000).toFixed(2)+'s ('+
+    (native.preparedFromCache?'reused prepared scene':'first-time scene analysis')+').');
+   return native;
+  }catch(error){
+   if(!(error instanceof NativeMockupUnsupported)||engine==='native')throw error;
+   console.log('[PC PSD renderer] '+templateName+
+    ' requires legacy PSD features: '+error.message);
+   await onStage('Native PSD not yet compatible: '+error.message+
+     ' — using Photopea without changing template or image');
+  }
+ }
  if(engine==='photoshop'){
   try{
    const result=await renderMockupWithPhotoshop({psdPath,artworkPath,outputPath,
