@@ -14,6 +14,33 @@ let activeJobId=null,currentArtworkId='',activeMasterSignature='',lastAppliedBat
 let defaultSelectionLoaded=false;
 let initialLoad=Promise.resolve(),selectionVersion=0,attachTimer=null,attaching=false;
 let previewRenderKey='';
+let detectedArtworkOrientation=null,lastAutoOrientation=null;
+let orientationDetection=Promise.resolve();
+function templateFitsOrientation(template,orientation){
+ const stored=String(template?.orientation||'unclassified').toLowerCase();
+ return orientation==='square'?stored==='square'||template?.squareCompatible===true:
+  stored===orientation;
+}
+function showOrientation(){
+ const label=detectedArtworkOrientation||'not yet detected';
+ $('mg-orientation-status').textContent='Artwork: '+label+
+  '. Only compatible saved templates are selected automatically. '+
+  'For older PSDs, assign their frame orientation below; square use requires explicit compatibility.';
+}
+async function inspectArtworkOrientation(file){
+ if(!file){detectedArtworkOrientation=null;showOrientation();return}
+ try{
+  const bitmap=await createImageBitmap(file);
+  const width=bitmap.width,height=bitmap.height;
+  bitmap.close();
+  detectedArtworkOrientation=width===height?'square':width>height?'landscape':'portrait';
+  showOrientation();
+  await loadTemplates();
+ }catch{
+  $('mg-orientation-status').textContent='Artwork orientation will be verified from the stored R2 master after upload. Do not use mismatched PSD templates.';
+ }
+}
+
 const selectionByJob=new Map();
 const selectionFor=id=>{
  if(!selectionByJob.has(id))selectionByJob.set(id,{defaultSelected:true,exceptions:new Set()});
@@ -202,39 +229,66 @@ async function useResults(){
 async function loadTemplates(){
  templates=(await api('templates')).templates;
  const selected=new Set([...$('mg-templates').querySelectorAll('input:checked')].map(x=>x.value));
- if(!defaultSelectionLoaded){
-  defaultSelectionLoaded=true;
-  if(!selected.size)for(const t of templates.filter(t=>t.status==='ready').slice(0,16))selected.add(t.id);
+ if(detectedArtworkOrientation&&lastAutoOrientation!==detectedArtworkOrientation){
+  selected.clear();
+  for(const t of templates.filter(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)).slice(0,16))
+   selected.add(t.id);
+  lastAutoOrientation=detectedArtworkOrientation;
  }
+ defaultSelectionLoaded=true;
  const box=$('mg-templates');box.replaceChildren();
  $('mg-saved-count').textContent='('+templates.filter(t=>t.status==='ready').length+')';
  for(const template of templates){
   const row=create('label'),cb=create('input','',{type:'checkbox',value:template.id});
-  cb.disabled=template.status!=='ready';
+  const compatible=!detectedArtworkOrientation||templateFitsOrientation(template,detectedArtworkOrientation);
+  cb.disabled=template.status!=='ready'||!compatible;
   cb.checked=!cb.disabled&&selected.has(template.id);
-  row.append(cb,create('span',template.name+(template.mapping?' · mapped':' · auto-map')));
+  const title=create('span',template.name+(template.mapping?' · mapped':' · map Smart Object'));
+  const orientation=create('select','',{'aria-label':'Template orientation for '+template.name});
+  for(const [id,label] of [['unclassified','Unclassified'],['portrait','Vertical'],['landscape','Horizontal'],['square','Square']]){
+   const opt=create('option',label,{value:id});
+   orientation.append(opt);
+  }
+  orientation.value=template.orientation||'unclassified';
+  orientation.addEventListener('change',()=>act(async()=>{
+   await api('templates/'+template.id+'/update','POST',{orientation:orientation.value});
+   await loadTemplates();
+  }));
+  const square=create('input','',{type:'checkbox',
+   'aria-label':'Square-compatible Smart Object for '+template.name});
+  square.checked=template.squareCompatible===true;
+  square.addEventListener('change',()=>act(async()=>{
+   await api('templates/'+template.id+'/update','POST',{squareCompatible:square.checked});
+   await loadTemplates();
+  }));
+  const squareLabel=create('span','Square-safe');
+  row.append(cb,title,orientation,square,squareLabel);
   box.append(row);
  }
- if(!templates.length)box.append(create('p','No PSD templates saved yet.'));
+ if(!templates.length)box.append(create('p','No PSD templates saved yet. Upload vertical or horizontal PSDs above.'));
+ if(detectedArtworkOrientation&&!templates.some(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)))
+  message('No '+detectedArtworkOrientation+'-compatible templates yet. Upload them or classify saved PSDs before generating.',true);
 }
 async function uploadTemplates(){
- const files=[...$('mg-psds').files],ids=[];
+ const files=[
+  ...[...$('mg-psds').files].map(file=>({file,orientation:'portrait'})),
+  ...[...$('mg-psds-horizontal').files].map(file=>({file,orientation:'landscape'}))
+ ],ids=[];
  for(let i=0;i<files.length;i++){
-  const file=files[i];
-  message('Uploading PSD '+(i+1)+'/'+files.length+' to R2: '+file.name);
+  const {file,orientation}=files[i];
+  message('Uploading '+orientation+' PSD '+(i+1)+'/'+files.length+' to R2: '+file.name);
   const result=await api('templates','POST',{
-   name:file.name,size:file.size,collection:$('mg-collection').value
+   name:file.name,size:file.size,orientation,collection:$('mg-collection').value
   });
   await upload(result.uploadUrl,file,'application/octet-stream');
   await api('templates/'+result.template.id+'/confirm','POST');
   ids.push(result.template.id);
  }
- $('mg-psds').value='';
+ $('mg-psds').value='';$('mg-psds-horizontal').value='';
  if(ids.length){
   await loadTemplates();
-  // Newly uploaded templates replace the current check selection.
   for(const cb of $('mg-templates').querySelectorAll('input[type=checkbox]'))
-   cb.checked=ids.includes(cb.value);
+   if(ids.includes(cb.value)&&!cb.disabled)cb.checked=true;
  }
  return ids;
 }
@@ -351,6 +405,7 @@ async function createJob({artworkId='',automatic=false}={}){
  preparing=true;$('mg-generate').disabled=true;
  try{
   await initialLoad;
+  await orientationDetection;
   const art=$('master_file').files?.[0];
   if(!art)throw Error('Choose the master artwork above first.');
   await uploadTemplates();
@@ -436,6 +491,8 @@ $('mockup_files').addEventListener('change',()=>{
 });
 $('master_file').addEventListener('change',()=>{
  clearCurrentBatch();
+ lastAutoOrientation=null;
+ orientationDetection=inspectArtworkOrientation($('master_file').files?.[0]);
  // Master selection, not Create Etsy Draft, starts mockup rendering.
  // This direct job owns a fresh copy of the selected master; if draft upload
  // completes later, the artwork-uploaded event must not create a second job.
@@ -447,6 +504,13 @@ $('master_file').addEventListener('change',()=>{
 });
 window.addEventListener('pod-artwork-uploaded',event=>{
  const info=event.detail||{},file=$('master_file').files?.[0];
+ if(['portrait','landscape','square'].includes(String(info.orientation||'').toLowerCase())){
+  const verified=String(info.orientation).toLowerCase();
+  if(verified!==detectedArtworkOrientation){
+   detectedArtworkOrientation=verified;lastAutoOrientation=null;showOrientation();
+   orientationDetection=loadTemplates();
+  }
+ }
  if(!file||!info.artworkId||file.name!==info.filename||file.size!==Number(info.size)||
    file.lastModified!==Number(info.lastModified))return;
  currentArtworkId=String(info.artworkId);
