@@ -16,6 +16,32 @@ import {streamMockupZip} from './mockup-zip.mjs';
 import {loadArtworkManifest,saveArtworkManifest} from './artwork-storage.mjs';
 import {copyArtworkObject,artworkObjectInfo} from './r2.mjs';
 
+// Generated outputs have immutable UUID keys. Cache their small previews
+// to avoid repeated 24MP R2 downloads on every gallery review or refresh.
+const thumbnailCache=new Map();
+const THUMBNAIL_TTL_MS=15*60*1000,THUMBNAIL_MAX_ENTRIES=45;
+async function generatedMockupThumbnail(key){
+ const entry=thumbnailCache.get(key);
+ if(entry&&entry.expiresAt>Date.now())
+  return entry.pending||entry.bytes;
+ const pending=(async()=>{
+  const source=await getArtworkObject(key);
+  if(!source.body.length||source.body.length>60*1024*1024)
+   throw Error('Generated preview source is too large.');
+  return sharp(source.body,{limitInputPixels:24_000_001})
+   .rotate().resize(320,320,{fit:'inside',withoutEnlargement:true})
+   .jpeg({quality:78}).toBuffer();
+ })();
+ thumbnailCache.set(key,{pending,expiresAt:Date.now()+THUMBNAIL_TTL_MS});
+ if(thumbnailCache.size>THUMBNAIL_MAX_ENTRIES)
+  thumbnailCache.delete(thumbnailCache.keys().next().value);
+ try{
+  const bytes=await pending;
+  thumbnailCache.set(key,{bytes,expiresAt:Date.now()+THUMBNAIL_TTL_MS});
+  return bytes;
+ }catch(error){thumbnailCache.delete(key);throw error}
+}
+
 const ID='[a-f0-9-]{36}';
 const maxLength=200;
 function isId(v){return /^[a-f0-9-]{36}$/.test(v||'')}
@@ -220,12 +246,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    if(req.method==='GET'&&parts[2]==='thumbnail'&&isId(parts[3])){
     // Small previews avoid loading full-resolution 24MP JPGs into a long scrolling list.
     const d=await getMockupItemDownload(id,parts[3]);
-    const original=await getArtworkObject(d.key);
-    if(!original.body.length||original.body.length>60*1024*1024)
-     throw Error('Generated preview source is too large.');
-    const thumbnail=await sharp(original.body,{limitInputPixels:24_000_001})
-     .rotate().resize(280,280,{fit:'inside',withoutEnlargement:true})
-     .jpeg({quality:72}).toBuffer();
+    const thumbnail=await generatedMockupThumbnail(d.key);
     res.writeHead(200,{
      'content-type':'image/jpeg','content-length':thumbnail.length,
      'cache-control':'private, max-age=180','x-content-type-options':'nosniff'
