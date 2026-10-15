@@ -1923,9 +1923,14 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
         keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
       const available=Math.max(0,20-existingPhotos.length);
       const uploadedSource=new Set(manifest.etsyGeneratedSourceKeys||[]);
+      const pendingSelected=current.filter(m=>m.sourceJobId===job.id&&
+        m.generatedFromKey&&!uploadedSource.has(m.generatedFromKey)&&chosen.has(m.sourceJobId?job.templates.find(t=>t.outputKey===m.generatedFromKey)?.id:''));
+      if(pendingSelected.length>available)
+        throw Error('Selected '+pendingSelected.length+' mockups but only '+available+
+          ' Etsy photo slot(s) remain. Deselect images and apply again.');
       let uploaded=0;
-      for(const item of current.filter(m=>m.sourceJobId===job.id&&
-        m.generatedFromKey&&!uploadedSource.has(m.generatedFromKey)).slice(0,available)){
+      const uploadedReceipts=[];
+      for(const item of pendingSelected){
         const original=await getArtworkObject(item.key);
         const optimized=await optimizeEtsyImageObject(original);
         const result=await withEtsyListingRetry(()=>uploadListingImage({
@@ -1934,15 +1939,23 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
           rank:existingPhotos.length+uploaded+1,altText:manifest.title||'',
           keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
         }),{attempts:8,baseDelayMs:180});
+        const listingImageId=result?.listing_image_id||result?.listingImageId||null;
+        if(!listingImageId)throw Error('Etsy did not provide a generated mockup image ID for '+item.originalFilename);
         uploaded++;
+        const receipt={key:item.key,rank:existingPhotos.length+uploaded,
+          listingImageId,filename:item.originalFilename};
+        uploadedReceipts.push(receipt);
         manifest.etsyMedia ||= {images:[],video:null};
-        manifest.etsyMedia.images.push({key:item.key,rank:existingPhotos.length+uploaded,
-          listingImageId:result.listing_image_id||null,filename:item.originalFilename});
+        manifest.etsyMedia.images.push(receipt);
         manifest.etsyGeneratedSourceKeys=[...(manifest.etsyGeneratedSourceKeys||[]),item.generatedFromKey];
         if(manifest.etsyDraftSetup?.status==='completed'&&manifest.etsyDraftSetup.media)
           manifest.etsyDraftSetup.media.imageCount=existingPhotos.length+uploaded;
         await saveArtworkManifest(manifest);
       }
+      if(uploadedReceipts.length)
+        await verifyEtsyImageReceipts({receipts:uploadedReceipts,readImages:()=>
+          getEtsyListingImages({listingId,keystring:session.keystring,
+            sharedSecret:session.sharedSecret,accessToken:session.accessToken})});
       // Image attachment is only complete after the requested subset was handled.
       const finalManifest=await loadArtworkManifest(artworkId);
       finalManifest.selectedMockupTemplates ||= {};
