@@ -213,7 +213,7 @@ function productKeyForExistingInventoryProduct(product) {
   // Older/app-created listings may have a valid SAC SKU even when Etsy's
   // variation property names differ from the current Product Creator labels.
   const sku = String(product?.sku || '').trim().toUpperCase();
-  const match = sku.match(/^SAC\d+-(P|C|FC)-(\d{3,4})(?:-(BLK|WHT|NAT|BRN|DWD))?$/);
+  const match = sku.match(/^SAC\d+-(P|C|FC)-(\d{2,4})(?:-(BLK|WHT|NAT|BRN|DWD))?$/);
   if (!match) return null;
 
   const [, format, digits, frameRaw] = match;
