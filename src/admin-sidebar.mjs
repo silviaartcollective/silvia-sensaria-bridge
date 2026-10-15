@@ -4,7 +4,7 @@ export const ADMIN_LINKS = Object.freeze([
   { href:'/readiness', label:'System Readiness' },
   { href:'/product-creator', label:'Product Creator' },
   { href:'/listing-reposter', label:'Listing Reposter' },
-  { href:'/listing-converter', label:'Gelato → Silvia Converter' },
+  { href:'/listings', label:'Listings' },
   { href:'/shipping-profile', label:'Shipping Profile' },
   { href:'/pricing', label:'Pricing & Shipping' },
   { href:'/compare', label:'Supplier Comparison' },
@@ -33,7 +33,8 @@ export function extractActiveAdminPath(html) {
   return reverse?.[1] || '/';
 }
 export function renderAdminSidebar(activePath='/') {
-  const active=String(activePath);
+  const path=String(activePath).split('?')[0];
+  const active=path==='/listing-converter'?'/listings':path;
   const nav=ADMIN_LINKS.map(({href,label}) => {
     const selected=href===active;
     const diagnostic=href==='/etsy/status'||href==='/r2/status';
