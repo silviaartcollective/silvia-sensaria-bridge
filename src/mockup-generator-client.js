@@ -397,14 +397,16 @@ async function workerStatus(){
   const fixed=worker.online&&worker.mockups===true&&
    (version[0]>4||(version[0]===4&&version[1]>=3));
   const text=fixed
-   ?'Shared PC Crop + Mockup Worker v'+worker.version+' online'+(worker.busy?' · processing':' · idle')
+   ?'Shared PC Crop + Mockup Worker v'+worker.version+' online'+(worker.busy?' · processing':' · idle')+
+     (version[0]===4&&version[1]<4?' · Crop worker update to v4.4.0 required (PSD mockups still supported)':'')
    :worker.online&&worker.mockups===true
     ?'PSD worker v'+(worker.version||'unknown')+' needs the Smart Object fix. Update the local worker and restart (version 4.3.0).'
     :worker.online?'Old crop-only worker online. Update the PC worker folder, run setup-worker.cmd and restart.'
     :worker.configured?'Shared PC worker offline · use Launch Shared Crop Worker above'
     :'Shared PC worker not configured in Render';
   $('mg-worker-status').textContent=text;
-  $('mg-worker-status').style.color=fixed?'#477153':'#a46b3d';
+  $('mg-worker-status').style.color=fixed&&(version[0]>4||(version[0]===4&&version[1]>=4))
+   ?'#477153':'#a46b3d';
   return fixed;
  }catch{
   $('mg-worker-status').textContent='Could not check PC worker connection';
