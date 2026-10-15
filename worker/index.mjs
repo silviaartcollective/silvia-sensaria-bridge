@@ -245,7 +245,11 @@ async function processPSDJob(app,claim){
   if(now-lastStageWriteAt<2500&&!/Uploading and verifying|PSD completed|failed/i.test(value))
    return Promise.resolve();
   lastStageWriteAt=now;
-  return queue(()=>api.mockupProgress(id,itemId,mockupOwner,value));
+  // Progress writes are advisory; R2 latency must not freeze Photopea.
+  // Completion/failure still awaits the same write queue in order.
+  void queue(()=>api.mockupProgress(id,itemId,mockupOwner,value)).catch(error=>
+   console.error('['+app.name+'] Non-fatal PSD progress update error:',error.message));
+  return Promise.resolve();
  };
  try{
   await stage('Preparing PSD template on PC');
