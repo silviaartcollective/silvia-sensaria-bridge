@@ -253,6 +253,7 @@ async function processPSDJob(app,claim){
    psdPath,artworkPath,outputPath,templateName:claim.template.name,mapping:claim.template.mapping||null,
    smartObjects:claim.template.smartObjects||[],
    fitMode:claim.job.fitMode||'contain',
+   artworkOrientation:claim.job.artworkOrientation||'',
    onStage:stage
   });
   const inspected=await queue(()=>api.inspectMockupTemplate(itemId,render.objects));
