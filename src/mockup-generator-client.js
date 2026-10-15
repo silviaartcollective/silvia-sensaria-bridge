@@ -228,7 +228,7 @@ async function useResults(){
 }
 async function loadTemplates(){
  templates=(await api('templates')).templates;
- const selected=new Set([...$('mg-templates').querySelectorAll('input:checked')].map(x=>x.value));
+ const selected=new Set([...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].map(x=>x.value));
  if(detectedArtworkOrientation&&lastAutoOrientation!==detectedArtworkOrientation){
   selected.clear();
   for(const t of templates.filter(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)).slice(0,16))
@@ -239,7 +239,7 @@ async function loadTemplates(){
  const box=$('mg-templates');box.replaceChildren();
  $('mg-saved-count').textContent='('+templates.filter(t=>t.status==='ready').length+')';
  for(const template of templates){
-  const row=create('label'),cb=create('input','',{type:'checkbox',value:template.id});
+  const row=create('label'),cb=create('input','',{type:'checkbox',value:template.id,class:'mg-template-choice'});
   const compatible=!detectedArtworkOrientation||templateFitsOrientation(template,detectedArtworkOrientation);
   cb.disabled=template.status!=='ready'||!compatible;
   cb.checked=!cb.disabled&&selected.has(template.id);
@@ -287,7 +287,7 @@ async function uploadTemplates(){
  $('mg-psds').value='';$('mg-psds-horizontal').value='';
  if(ids.length){
   await loadTemplates();
-  for(const cb of $('mg-templates').querySelectorAll('input[type=checkbox]'))
+  for(const cb of $('mg-templates').querySelectorAll('input.mg-template-choice'))
    if(ids.includes(cb.value)&&!cb.disabled)cb.checked=true;
  }
  return ids;
@@ -409,7 +409,7 @@ async function createJob({artworkId='',automatic=false}={}){
   const art=$('master_file').files?.[0];
   if(!art)throw Error('Choose the master artwork above first.');
   await uploadTemplates();
-  const ids=[...$('mg-templates').querySelectorAll('input:checked')].map(x=>x.value);
+  const ids=[...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].map(x=>x.value);
   if(!ids.length)throw Error('Choose saved PSD templates or upload new ones.');
   markRequested();
   const signature=fileSignature(art);
@@ -469,17 +469,17 @@ async function saveMapping(){
  await retry();
 }
 function selectSeven(){
- const ready=[...$('mg-templates').querySelectorAll('input[type=checkbox]')].filter(cb=>!cb.disabled);
+ const ready=[...$('mg-templates').querySelectorAll('input.mg-template-choice')].filter(cb=>!cb.disabled);
  ready.forEach((cb,index)=>{cb.checked=index<7});
  message('Selected '+Math.min(7,ready.length)+' PSD templates. Queue only when needed; Etsy drafts do not wait.');
 }
 function selectSeventeen(){
- const available=[...$('mg-templates').querySelectorAll('input[type=checkbox]')].filter(cb=>!cb.disabled);
+ const available=[...$('mg-templates').querySelectorAll('input.mg-template-choice')].filter(cb=>!cb.disabled);
  available.forEach((cb,i)=>{cb.checked=i<17});
  message('Selected '+Math.min(17,available.length)+' PSDs for the available artwork photo slots.');
 }
 function clearTemplates(){
- for(const cb of $('mg-templates').querySelectorAll('input[type=checkbox]'))cb.checked=false;
+ for(const cb of $('mg-templates').querySelectorAll('input.mg-template-choice'))cb.checked=false;
  message('No PSD templates selected. You can create the Etsy draft now.');
 }
 $('mockup_files').addEventListener('change',()=>{
@@ -517,7 +517,7 @@ window.addEventListener('pod-artwork-uploaded',event=>{
  if(activeJobId&&activeMasterSignature===fileSignature(file))return;
  if(!$('mg-auto-queue').checked)return;
  void initialLoad.then(async()=>{
-  if(![...$('mg-templates').querySelectorAll('input:checked')].length)return;
+  if(![...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].length)return;
   await createJob({artworkId:currentArtworkId,automatic:true});
  }).catch(failure);
 });
