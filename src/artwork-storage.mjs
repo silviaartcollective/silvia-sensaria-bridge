@@ -228,7 +228,8 @@ export async function ensureProductionAsset({
   format,
   size,
   orientation,
-  urlExpiresIn = 6 * 60 * 60
+  urlExpiresIn = 6 * 60 * 60,
+  onProgress = () => {}
 }) {
   const manifest = await loadArtworkManifest(artworkId);
   if (!manifest?.master?.key) {
@@ -239,6 +240,7 @@ export async function ensureProductionAsset({
   const spec = productionSpecFor({ format, size, orientation });
 
   if (!(await artworkObjectExists(outputKey))) {
+    onProgress('Waiting for the production renderer');
     await withProductionRenderSlot(async () => {
       // Re-check after waiting for the render slot so concurrent requests for the
       // same asset never render the same large production file twice.
@@ -248,11 +250,13 @@ export async function ensureProductionAsset({
       const sourcePath = join(tmpdir(), `jac-source-${token}`);
       const outputPath = join(tmpdir(), `jac-production-${token}.jpg`);
       try {
+        onProgress('Downloading original artwork from Cloudflare R2');
         // Large canvas files can exceed hundreds of megapixels. Stream the R2
         // master to disk, let libvips render directly to a temp JPEG, then stream
         // that file back to R2. This avoids holding both source and rendered
         // production images in Node buffers and prevents Render OOM/502 crashes.
         await downloadArtworkObjectToFile(manifest.master.key, sourcePath);
+        onProgress('Rendering canvas and mirrored 1.25-inch edges');
         await renderProductionArtworkToFile({
           input: sourcePath,
           outputPath,
@@ -260,6 +264,7 @@ export async function ensureProductionAsset({
           size,
           orientation
         });
+        onProgress('Uploading production canvas to Cloudflare R2');
         await putArtworkFile({
           key: outputKey,
           filePath: outputPath,
@@ -272,8 +277,11 @@ export async function ensureProductionAsset({
         ]);
       }
     });
+  } else {
+    onProgress('Reusing a previously generated R2 production file');
   }
 
+  onProgress('Verifying the R2 production-file reference');
   await updateArtworkManifest(artworkId,current=>{
     if(current.master?.key!==manifest.master.key)
       throw Error('Master artwork changed while preparing a production image.');
