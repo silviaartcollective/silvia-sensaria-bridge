@@ -44,6 +44,27 @@ export async function saveArtworkManifest(manifest) {
   return manifest;
 }
 
+// Serialize read/modify/write operations for the same R2 artwork manifest.
+const artworkManifestMutationTails = new Map();
+export async function updateArtworkManifest(artworkId, mutate) {
+  const id = String(artworkId || '').trim().toUpperCase();
+  if (!id || typeof mutate !== 'function') throw Error('Artwork ID and manifest mutation are required.');
+  const prior = artworkManifestMutationTails.get(id) || Promise.resolve();
+  const work = prior.then(async () => {
+    const current = await loadArtworkManifest(id);
+    if (!current) throw Error('Artwork manifest is missing: ' + id);
+    const result = await mutate(current);
+    await saveArtworkManifest(current);
+    return result === undefined ? current : result;
+  });
+  const settled = work.catch(() => {});
+  artworkManifestMutationTails.set(id, settled);
+  void settled.then(() => {
+    if (artworkManifestMutationTails.get(id) === settled) artworkManifestMutationTails.delete(id);
+  });
+  return work;
+}
+
 function extensionFromFilename(filename, fallback = 'jpg') {
   const match = String(filename || '').toLowerCase().match(/\.([a-z0-9]+)$/);
   return match?.[1] || fallback;
