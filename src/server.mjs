@@ -46,6 +46,7 @@ import {
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
 import { pricingCatalogForZone, pricingCatalogForMarket, publicShippingPricingConfig } from './pricing.mjs';
 import { scanSupplierComparison } from './supplier-comparison.mjs';
+import {startSupplierComparisonJob,getSupplierComparisonJob} from './supplier-comparison-jobs.mjs';
 import { renderSupplierComparisonPage } from './supplier-comparison-page.mjs';
 import { renderCustomSizeLookupPage } from './custom-size-page.mjs';
 import { lookupCustomSize } from './custom-size-lookup.mjs';
@@ -3276,6 +3277,29 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
     }
+  }
+
+  // A full supplier catalog scan can exceed Render's synchronous HTTP timeout.
+  // Launch it in the background and return small authenticated JSON status replies.
+  if(req.method==='GET'&&url.pathname==='/api/suppliers/compare/start'){
+    if(!requireAdminApi(req,res))return;
+    try{
+      const countryCode=String(url.searchParams.get('country')||'').toUpperCase().trim();
+      const productCodes=String(url.searchParams.get('products')||'P,C,FC')
+        .split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
+      const job=startSupplierComparisonJob({countryCodes:[countryCode],productCodes,
+        sensariaProducts:products},scanSupplierComparison);
+      return sendJson(res,202,{ok:true,jobId:job.id,status:job.status,reused:job.reused});
+    }catch(error){
+      return sendJson(res,400,{ok:false,error:String(error.message||error)});
+    }
+  }
+  const supplierJobStatus=url.pathname.match(/^\/api\/suppliers\/compare\/jobs\/([a-f0-9-]{36})$/i);
+  if(req.method==='GET'&&supplierJobStatus){
+    if(!requireAdminApi(req,res))return;
+    const job=getSupplierComparisonJob(supplierJobStatus[1]);
+    if(!job)return sendJson(res,404,{ok:false,error:'Supplier scan is no longer available. Start this country again.'});
+    return sendJson(res,200,{ok:true,...job});
   }
 
   if (req.method === 'GET' && url.pathname === '/api/suppliers/compare') {
