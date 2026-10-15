@@ -236,8 +236,15 @@ async function processPSDJob(app,claim){
   if(alive)void queue(()=>api.mockupHeartbeat(id,mockupOwner)).catch(error=>
     console.error('['+app.name+'] PSD lease renewal failed:',error.message));
  },20000);
+ let lastStageWriteAt=0;
  const stage=value=>{
   console.log('['+app.name+'] '+claim.item.name+': '+value);
+  const now=Date.now();
+  // One remote progress write can require a complete R2 JSON round trip.
+  // Avoid pausing each Photopea stage for unnecessary network writes.
+  if(now-lastStageWriteAt<2500&&!/Uploading and verifying|PSD completed|failed/i.test(value))
+   return Promise.resolve();
+  lastStageWriteAt=now;
   return queue(()=>api.mockupProgress(id,itemId,mockupOwner,value));
  };
  try{
