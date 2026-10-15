@@ -3670,7 +3670,18 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/listing-converter') {
-    if (!requireAdminPage(req, res, '/listing-converter')) return;
+    if (!requireAdminPage(req, res, '/listings?tab=converter')) return;
+    if(url.searchParams.get('embedded')==='1'){
+      // Same-origin converter tab reuses the complete, existing queue and UI,
+      // but no nested admin sidebar or duplicate worker bootstrap.
+      const content=renderListingConverterPage().replace('</head>',
+        '<style>.app-shell{display:block!important;grid-template-columns:minmax(0,1fr)!important}'+
+        '.app-sidebar{display:none!important}.shell{max-width:none!important;padding:12px 10px 30px!important}'+
+        '.top h1{font-size:30px!important}</style></head>');
+      res.writeHead(200,{'content-type':'text/html; charset=utf-8',
+        'cache-control':'private, no-store','x-content-type-options':'nosniff'});
+      return res.end(content);
+    }
     return sendHtml(res, 200, renderListingConverterPage());
   }
 
