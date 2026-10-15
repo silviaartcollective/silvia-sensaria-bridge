@@ -151,6 +151,41 @@ async function openListing(id){
   const img=el('listing-preview');img.src=data.previewUrl;img.classList.remove('hidden');
  }
  renderInventory(data);
+ if(data.optionsPending){
+  el('variants-count').textContent='Loading Etsy variations and shop sections…';
+  void request('/api/master-listings/'+encodeURIComponent(id)+'/options').then(options=>{
+    if(selectedId!==Number(id)||current!==data)return;
+    current.inventoryRows=options.inventoryRows||[];
+    current.inventoryHash=options.inventoryHash||null;
+    current.inventoryError=options.inventoryError||null;
+    const currentSection=el('edit-section').value;
+    const section=el('edit-section');section.replaceChildren();
+    const none=document.createElement('option');
+    none.value='0';none.textContent='No shop section';section.append(none);
+    for(const entry of options.sections||[]){
+      const option=document.createElement('option');
+      option.value=String(entry.shop_section_id);
+      option.textContent=entry.title||('Section '+entry.shop_section_id);
+      section.append(option);
+    }
+    if(currentSection&&![...section.options].some(o=>o.value===currentSection)){
+      const existing=document.createElement('option');
+      existing.value=currentSection;existing.textContent='Current section #'+currentSection;
+      section.append(existing);
+    }
+    section.value=currentSection;
+    renderInventory(current);
+  }).catch(error=>{
+    if(selectedId!==Number(id)||current!==data)return;
+    el('variants-count').textContent='Could not load Etsy variations.';
+    notice('variant-status',String(error.message||error),true);
+  });
+  void request('/api/listing-converter/listing-image?listingId='+encodeURIComponent(id)).then(image=>{
+    if(selectedId!==Number(id)||current!==data||!image.firstImageUrl)return;
+    const img=el('listing-preview');img.src=image.firstImageUrl;
+    img.classList.remove('hidden');
+  }).catch(()=>{});
+ }
 }
 fields.forEach(id=>el(id).addEventListener('input',()=>{dirty=true;}));
 el('listing-search').addEventListener('input',renderList);
