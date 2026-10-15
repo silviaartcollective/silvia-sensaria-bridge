@@ -102,6 +102,9 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
               <span class="uploadmeta">You can add regular mockups before or after the master is uploaded.</span>
             </label>
           </div>
+          <label>Existing artwork ID <span class="hint">optional — to add mockups to an already-created draft after reopening Product Creator</span>
+            <input id="existing-mockup-artwork-id" type="text" placeholder="SAC0018" autocomplete="off" maxlength="20">
+          </label>
           <button type="button" class="btn secondary" id="upload-regular-mockups">Upload / sync regular mockups to Etsy</button>
           <div id="regular-mockup-status" class="status" aria-live="polite">Choose JPG, PNG or WebP mockups. They will be saved to R2 and verified on the Etsy draft.</div>
           <div class="uploadmeta">Mockups are optional. Create the draft before mockups finish: the master artwork becomes the first listing image, followed by the 3 saved preset images and video. Finished PSD mockups can be added later in Etsy.</div>
@@ -685,7 +688,10 @@ let pendingRegularMockupUpload=null;
 async function saveSelectedRegularMockups(){
  const chosen=Array.from(mockupFilesInput.files||[]);
  if(!chosen.length)throw Error('Select JPG, PNG or WebP mockups first.');
- const artworkId=await window.startProductArtworkUpload();
+ const existingId=String(document.getElementById('existing-mockup-artwork-id').value||'').trim().toUpperCase();
+ if(existingId&&!/^SAC\d+$/.test(existingId))
+  throw Error('Enter a valid SAC artwork ID to add mockups to an existing Etsy draft.');
+ const artworkId=existingId||await window.startProductArtworkUpload();
  const endpoint='/api/artworks/'+encodeURIComponent(artworkId)+'/regular-mockups';
  const status=document.getElementById('regular-mockup-status');
  status.className='status';
@@ -747,7 +753,8 @@ document.getElementById('upload-regular-mockups').addEventListener('click',()=>{
  void startRegularMockupUpload().catch(()=>{});
 });
 mockupFilesInput.addEventListener('change',()=>{
- if(mockupFilesInput.files?.length&&masterFileInput.files?.[0])
+ if(mockupFilesInput.files?.length&&
+   (masterFileInput.files?.[0]||document.getElementById('existing-mockup-artwork-id').value.trim()))
   void startRegularMockupUpload().catch(()=>{});
 });
 
