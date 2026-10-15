@@ -42,6 +42,7 @@ test('custom sizes and default crop jobs are distinct; same-size requests are re
  assert.equal(special.size,'3.5x5');
  assert.deepEqual(special.ratios,['size-3p5x5']);
  assert.deepEqual(square.ratios,['size-5x5']);
+ assert.equal(findReusableCropJob({jobs:[square]}, {...base,orientation:'square',size:'5x5'}).id,square.id);
  assert.ok(defaultJob.ratios.includes('2x3'));
  assert.equal(findReusableCropJob({jobs:[defaultJob,special]}, {...base,size:'5x3.5'}).id,special.id);
  assert.equal(findReusableCropJob({jobs:[defaultJob,special]},base).id,defaultJob.id);
