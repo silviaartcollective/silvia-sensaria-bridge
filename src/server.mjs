@@ -1877,6 +1877,7 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
   const previous=generatedMockupSyncTail.get(artworkId)||Promise.resolve();
   const work=previous.catch(()=>{}).then(async()=>{
     const chosen=new Set((Array.isArray(templateIds)?templateIds:[]).map(String));
+    if(!chosen.size)throw Error('Select completed mockups before applying them to Etsy.');
       const manifest=await loadArtworkManifest(artworkId);
       if(!manifest?.master?.key||manifest.status!=='ready')
         throw Error('The artwork is not verified in Cloudflare R2.');
@@ -1887,9 +1888,14 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
       const outputs=job.templates.filter(t=>t.status==='completed'&&t.outputKey&&
         (!chosen.size||chosen.has(t.id))).slice(0,17);
       if(!outputs.length)throw Error('No verified JPGs are ready in this batch.');
+      // Persist the user's explicit selection before checking Etsy draft state,
+      // so closing Product Creator will not turn selected mockups into "all".
+      manifest.selectedMockupTemplates ||= {};
+      manifest.selectedMockupTemplates[job.id]=[...chosen];
+      await saveArtworkManifest(manifest);
       if(manifest.etsyDraftListingId&&(
         inflightDraftSetups.has(artworkId)||manifest.etsyDraftSetup?.status!=='completed')){
-        return {ok:true,pendingSetup:true,message:'Draft setup still running; completed PSDs will sync afterward.'};
+        return {ok:true,pendingSetup:true,message:'Selected JPGs saved in R2; they will sync after draft setup.'};
       }
       const current=(manifest.mockups||[]).slice(0,17);
       const existingSource=new Set(current.map(x=>x.generatedFromKey).filter(Boolean));
@@ -1937,6 +1943,11 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
           manifest.etsyDraftSetup.media.imageCount=existingPhotos.length+uploaded;
         await saveArtworkManifest(manifest);
       }
+      // Image attachment is only complete after the requested subset was handled.
+      const finalManifest=await loadArtworkManifest(artworkId);
+      finalManifest.selectedMockupTemplates ||= {};
+      delete finalManifest.selectedMockupTemplates[job.id];
+      await saveArtworkManifest(finalManifest);
       return {ok:true,prepared,uploaded,
         photoCount:existingPhotos.length+uploaded,full:existingPhotos.length+uploaded>=20,
         r2Prefix:'artworks/'+artworkId+'/'};
@@ -1949,13 +1960,12 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
 async function reconcileCompletedMockupsForArtwork(artworkId){
   const manifest=await loadArtworkManifest(artworkId);
   if(!manifest?.master?.key)return;
-  // Also recover PSD batches that predate the manifest job-ID field.
-  const saved=await listMockupJobs();
-  const linked=saved.filter(j=>j.artworkId===artworkId&&j.sourceMasterKey===manifest.master.key &&
-    j.templates?.some(t=>t.status==='completed'&&t.outputKey));
-  for(const item of linked){
-    try{await syncGeneratedMockupsForArtwork({artworkId,jobId:item.id})}
-    catch(error){console.error('Etsy PSD catch-up failed '+artworkId+' '+item.id+':',error)}
+  // Recover ONLY mockups explicitly selected with Apply, never all generated
+  // PSD outputs. Unselected JPGs remain safely stored in R2 for later review.
+  for(const [jobId,templateIds] of Object.entries(manifest.selectedMockupTemplates||{})){
+    if(!Array.isArray(templateIds)||!templateIds.length)continue;
+    try{await syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds})}
+    catch(error){console.error('Selected Etsy PSD catch-up failed '+artworkId+' '+jobId+':',error)}
   }
 }
 
@@ -1984,9 +1994,10 @@ const server = http.createServer(async (req, res) => {
     readJson:readJsonBody,sendJson,
     onMockupCompleted:(verifiedJob)=>{
       if(!verifiedJob?.artworkId||!verifiedJob?.sourceMasterKey)return;
-      void syncGeneratedMockupsForArtwork({
-        artworkId:verifiedJob.artworkId,jobId:verifiedJob.id
-      }).catch(error=>console.error('PSD auto-sync failed:',error));
+      // Generated JPGs already live in R2. Never bypass the user's right-panel
+      // checkboxes; Etsy upload begins only after Apply Selected.
+      console.info('PSD mockup generated for '+verifiedJob.artworkId+
+        '; awaiting explicit preview selection in Product Creator.');
     }
   }))return;
 
