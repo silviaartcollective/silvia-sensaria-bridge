@@ -272,7 +272,7 @@ async function processPSDJob(app,claim){
    artworkOrientation:claim.job.artworkOrientation||'',
    onStage:stage
   });
-  measure('photopeaRenderMs');
+  measure(render.engine==='native'?'nativeRenderMs':'photopeaRenderMs');
   const inspected=await queue(()=>api.inspectMockupTemplate(itemId,render.objects));
   const classification=inspected.classification||{};
   measure('smartObjectVerificationMs');
