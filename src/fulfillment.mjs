@@ -63,7 +63,7 @@ export function goRowsToCsv(rows) {
   return `${lines.join('\r\n')}\r\n`;
 }
 
-async function sourceForTransaction({ parsed, transaction, productionUrlExpiresIn, renderProduction }) {
+async function sourceForTransaction({ parsed, transaction, productionUrlExpiresIn, renderProduction, onProgress }) {
   // Etsy transaction variations do not include a reliable artwork orientation.
   // Resolve orientation from the master saved in R2, not a portrait default.
   const master = await loadArtworkManifest(parsed.artworkId);
@@ -86,7 +86,8 @@ async function sourceForTransaction({ parsed, transaction, productionUrlExpiresI
       format: parsed.format,
       size: parsed.size,
       orientation,
-      urlExpiresIn: productionUrlExpiresIn
+      urlExpiresIn: productionUrlExpiresIn,
+      onProgress
     });
     return {
       key: production.key,
@@ -120,7 +121,8 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
   fallbackEmail = 'support@silviaartcollective.com',
   fallbackPhone = '1111111111',
   productionUrlExpiresIn = 7 * 24 * 60 * 60,
-  renderProduction = true
+  renderProduction = true,
+  onProgress = () => {}
 } = {}) {
   const { first, last } = splitName(receipt.name);
   const reference = String(receipt.receipt_id || receipt.id || '').trim();
@@ -144,7 +146,8 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
       parsed,
       transaction,
       productionUrlExpiresIn,
-      renderProduction
+      renderProduction,
+      onProgress
     });
 
     sources.push({
