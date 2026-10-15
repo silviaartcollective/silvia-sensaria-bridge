@@ -1967,7 +1967,7 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
       finalManifest.selectedMockupTemplates ||= {};
       delete finalManifest.selectedMockupTemplates[job.id];
       await saveArtworkManifest(finalManifest);
-      return {ok:true,prepared,uploaded,
+      return {ok:true,prepared,uploaded,verified:true,
         photoCount:existingPhotos.length+uploaded,full:existingPhotos.length+uploaded>=20,
         r2Prefix:'artworks/'+artworkId+'/'};
 
