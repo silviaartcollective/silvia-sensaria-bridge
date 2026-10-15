@@ -61,26 +61,19 @@ export function calculateCenterCrop(width, height, targetWidth, targetHeight) {
 }
 
 export function validateRatioSource(master, ratio, target) {
+  // Reference dimensions indicate the aspect ratio and the nominal 300-PPI
+  // goal. They are NEVER an instruction to upscale the source image.
   const requiredWidth = Number(target?.width || 0);
   const requiredHeight = Number(target?.height || 0);
   if (!requiredWidth || !requiredHeight) {
     throw new Error(`Missing production target for ${ratio}.`);
   }
-
-  const crop = calculateCenterCrop(
-    master.width,
-    master.height,
-    requiredWidth,
-    requiredHeight
-  );
-
+  const crop = calculateCenterCrop(master.width, master.height, requiredWidth, requiredHeight);
   return {
-    required: {
-      width: requiredWidth,
-      height: requiredHeight
-    },
+    required: { width: requiredWidth, height: requiredHeight },
     crop,
-    upscaled: crop.width < requiredWidth || crop.height < requiredHeight
+    upscaled: false,
+    recommendedPixelsMet: crop.width >= requiredWidth && crop.height >= requiredHeight
   };
 }
 
@@ -91,28 +84,18 @@ export async function generateProductionCrop({
   ratio,
   target
 }) {
-  const { required, crop } = validateRatioSource(master, ratio, target);
-  let image = sharp(masterPath, {
-    limitInputPixels: false,
-    sequentialRead: true
-  });
-
-  if (master.exifOrientation !== 1) image = image.rotate();
-
-  await image
-    .resize({
-      width: required.width,
-      height: required.height,
-      fit: 'cover',
-      position: 'centre',
-      withoutEnlargement: false,
-      kernel: sharp.kernel.lanczos3,
-      fastShrinkOnLoad: true
-    })
+  const { required, crop, recommendedPixelsMet } = validateRatioSource(master, ratio, target);
+  // Extract the full-resolution crop directly from the original pixels. Do not
+  // enlarge tiny masters or shrink larger masters to fixed 300-PPI dimensions.
+  const left = Math.floor((master.width - crop.width) / 2);
+  const top = Math.floor((master.height - crop.height) / 2);
+  await sharp(masterPath, { limitInputPixels: false, sequentialRead: true })
+    .rotate()
+    .extract({ left, top, width: crop.width, height: crop.height })
     .flatten({ background: '#ffffff' })
     .jpeg({
-      quality: 95,
-      chromaSubsampling: '4:4:4',
+      quality: 88,
+      chromaSubsampling: '4:2:0',
       progressive: true,
       optimiseCoding: true
     })
@@ -120,20 +103,22 @@ export async function generateProductionCrop({
     .toFile(outputPath);
 
   const output = await sharp(outputPath).metadata();
-  if (output.width !== required.width || output.height !== required.height) {
+  if (output.width !== crop.width || output.height !== crop.height) {
     throw new Error(
-      `Generated ${ratio} crop is ${output.width}×${output.height}; expected ` +
-      `${required.width}×${required.height}.`
+      `Generated ${ratio} crop is ${output.width}×${output.height}; expected native ` +
+      `${crop.width}×${crop.height}.`
     );
   }
-
   return {
     ratio,
-    width: required.width,
-    height: required.height,
+    width: crop.width,
+    height: crop.height,
     sourceCropWidth: crop.width,
     sourceCropHeight: crop.height,
+    sourceMasterWidth: master.width,
+    sourceMasterHeight: master.height,
     density: Number(output.density || 300),
-    upscaled: crop.width < required.width || crop.height < required.height
+    recommendedPixelsMet,
+    upscaled: false
   };
 }
