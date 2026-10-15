@@ -2116,9 +2116,9 @@ const server = http.createServer(async (req, res) => {
       // The 4.3 worker still enlarged small artwork to fixed 300-PPI targets.
       // Do not lease any jobs to it: a 4.4 native-resolution crop worker is required.
       const version = String(input.version || '0').split('.').map(Number);
-      if (version[0] < 4 || (version[0] === 4 && version[1] < 4)) {
+      if (version[0] < 4 || (version[0] === 4 && (version[1] < 4 || (version[1] === 4 && Number(version[2] || 0) < 1)))) {
         return sendJson(res, 426, { ok: false,
-          error: 'Shared PC Crop Worker v4.4.0 is required for master-resolution crops. Update the worker folder and restart it.' });
+          error: 'Shared PC Crop Worker v4.4.1 is required for proportional master-resolution crops. Update the worker folder and restart it.' });
       }
 
       const job = await claimNextCropJob(workerId);
@@ -2214,12 +2214,22 @@ const server = http.createServer(async (req, res) => {
           const sourceMasterHeight = Number(result.sourceMasterHeight || 0);
           if (!sourceCropWidth || !sourceCropHeight ||
               !sourceMasterWidth || !sourceMasterHeight ||
-              width !== sourceCropWidth || height !== sourceCropHeight ||
-              width > sourceMasterWidth || height > sourceMasterHeight ||
+              sourceCropWidth > sourceMasterWidth || sourceCropHeight > sourceMasterHeight ||
+              width > sourceCropWidth || height > sourceCropHeight ||
               result.upscaled === true) {
             throw new Error(
               `${ratio} crop was resized beyond its source or is missing native-resolution proof. ` +
               'Update and restart the shared PC crop worker before retrying.'
+            );
+          }
+          const scale = Math.min(1, target.width / sourceCropWidth,
+            target.height / sourceCropHeight);
+          const plannedWidth = Math.max(1, Math.floor(sourceCropWidth * scale));
+          const plannedHeight = Math.max(1, Math.floor(sourceCropHeight * scale));
+          if (width !== plannedWidth || height !== plannedHeight) {
+            throw new Error(
+              `${ratio} output ${width}×${height} does not match its proportional ` +
+              `${plannedWidth}×${plannedHeight} master-resolution crop.`
             );
           }
           const expectedRatio = target.width / target.height;
@@ -2251,6 +2261,7 @@ const server = http.createServer(async (req, res) => {
             density: Number(result.density || 300),
             sizeBytes: Number(result.sizeBytes || 0) || null,
             recommendedPixelsMet: result.recommendedPixelsMet === true,
+            downscaled: result.downscaled === true,
             sourceCropWidth,
             sourceCropHeight,
             upscaled: false,
