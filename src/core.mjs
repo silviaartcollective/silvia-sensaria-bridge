@@ -21,7 +21,7 @@ export const SENSARIA_HEADERS = [
 
 export function parseSilviaSku(sku) {
   const normalized = String(sku || '').trim().toUpperCase();
-  const match = normalized.match(/^(SAC\d+)-(P|C|FC)-(\d{3,4})(?:-(BLK|WHT|NAT|BRN|DWD))?$/);
+  const match = normalized.match(/^(SAC\d+)-(P|C|FC)-(\d{2,4})(?:-(BLK|WHT|NAT|BRN|DWD))?$/);
   if (!match) throw new Error(`Unsupported Silvia SKU format: ${sku}`);
 
   const [, artworkId, format, sizeDigits, frameRaw] = match;
