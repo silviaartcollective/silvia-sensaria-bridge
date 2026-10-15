@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {normalizeTemplateOrientation,validateTemplateSelection} from './mockup-orientation.mjs';
 import sharp from 'sharp';
 import {ListObjectsV2Command} from '@aws-sdk/client-s3';
 import {r2Client,r2Config,getJsonObject,putJsonObject,artworkObjectExists,isMissingR2Object,putArtworkFile,signedArtworkUrl,deleteArtworkObject} from './r2.mjs';
@@ -74,11 +75,12 @@ export async function getMockupTemplate(id){
  if(!value||value.status==='deleted')throw Error('Mockup template not found.');
  return value;
 }
-export async function reserveMockupTemplate({name,size,collection='Unsorted'}){
+export async function reserveMockupTemplate({name,size,collection='Unsorted',orientation='unclassified',squareCompatible=false}){
  const filename=safeFilename(name),ext=extFile(filename,['psd','psb']),bytes=Number(size);
  if(!Number.isSafeInteger(bytes)||bytes<100||bytes>350*1024*1024)throw Error('PSD/PSB must be 100 bytes–350 MB.');
  const id=crypto.randomUUID();
  const record={id,name:filename,collection:limitText(collection,100)||'Unsorted',size:bytes,
+  orientation:normalizeTemplateOrientation(orientation),squareCompatible:squareCompatible===true,
   status:'awaiting_upload',key:ROOT+'/templates/'+id+'/original.'+ext,
   mapping:knownMockupArtworkTarget(filename)?{path:'5',verifiedFrom:'known-template'}:null,
   smartObjects:[],previewKey:null,createdAt:iso(),updatedAt:iso()};
@@ -92,6 +94,8 @@ export async function confirmMockupTemplateUpload(id){
 export async function updateMockupTemplate(id,params){
  const record=await getMockupTemplate(id);
  if(own(params,'collection'))record.collection=limitText(params.collection,100)||'Unsorted';
+ if(own(params,'orientation'))record.orientation=normalizeTemplateOrientation(params.orientation);
+ if(own(params,'squareCompatible'))record.squareCompatible=params.squareCompatible===true;
  if(own(params,'mapping')){
   record.mapping=params.mapping?{path:validateMappingPath(params.mapping.path),verifiedFrom:'admin-selected'}:null;
  }
@@ -119,7 +123,7 @@ export async function getMockupJob(id){
  if(!value||value.deleted)throw Error('Mockup batch not found.');
  return value;
 }
-export async function createMockupJob({filename,size,templateIds,fitMode='contain'}){
+export async function createMockupJob({filename,size,templateIds,fitMode='contain',artworkOrientation='unclassified'}){
  const artName=safeFilename(filename),extension=extFile(artName,['jpg','jpeg','png','webp','tif','tiff']);
  if(!Array.isArray(templateIds)||!templateIds.length||templateIds.length>150)
   throw Error('Select between 1 and 150 templates.');
@@ -128,10 +132,13 @@ export async function createMockupJob({filename,size,templateIds,fitMode='contai
   throw Error('Artwork must be 100 bytes–200 MB.');
  const ids=[...new Set(templateIds.map(assertId))];const templates=await Promise.all(ids.map(getMockupTemplate));
  if(templates.some(t=>t.status!=='ready'))throw Error('One or more selected PSD templates have not finished uploading.');
+ const normalizedArtworkOrientation=normalizeTemplateOrientation(artworkOrientation);
+ if(normalizedArtworkOrientation!=='unclassified')
+  validateTemplateSelection(templates,normalizedArtworkOrientation);
  const id=crypto.randomUUID(),created=iso();
  const job={id,createdAt:created,updatedAt:created,filename:artName,
   artworkKey:ROOT+'/jobs/'+id+'/artwork.'+extension,artworkSize:Number(size),artworkUploaded:false,
-  fitMode,status:'awaiting_artwork',paused:false,lease:null,
+  fitMode,artworkOrientation:normalizedArtworkOrientation,status:'awaiting_artwork',paused:false,lease:null,
   templates:templates.map(t=>({id:t.id,name:t.name,outputName:outputFileName(t.name),
     status:'queued',progress:'Waiting for PC worker',attempts:0,outputKey:null,error:null,dimensions:null,usedMapping:null})),
   history:[{at:created,event:'created'}]};
