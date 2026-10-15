@@ -33,14 +33,19 @@ function html(){
   '</head><body><iframe id="photopea" title="Shared PC PSD processor"></iframe>'+
   '<div id="stage"></div><script src="./processor.js"></script></body></html>';
 }
-export async function openPhotopeaPCServer({psdPath,artworkPath,outputPath,onStage=()=>{}}){
+// One localhost origin and one Photopea iframe for the entire PC worker lifetime.
+// Only the active PSD job can access the temporary asset and output endpoints.
+// Keeping this server alive is essential: closing it after every PSD forced the
+// Photopea editor to boot and reload all its resources for the next template.
+let persistentPCServerPromise=null;
+async function createPersistentPCServer(){
  const token=crypto.randomBytes(24).toString('hex');
  const script=fs.readFileSync(new URL('./photopea-worker-page.js',import.meta.url));
- const assets={psd:psdPath,artwork:artworkPath};
+ let active=null;
  const server=createServer(async(req,res)=>{
   const url=new URL(req.url||'/', 'http://127.0.0.1');
   const prefix='/'+token+'/';
-  if(!url.pathname.startsWith(prefix)){res.writeHead(404);res.end();return;}
+  if(!url.pathname.startsWith(prefix)){res.writeHead(404);res.end();return}
   const route=url.pathname.slice(prefix.length)||'index';
   try{
    if(req.method==='GET'&&route==='index'){
@@ -54,6 +59,11 @@ export async function openPhotopeaPCServer({psdPath,artworkPath,outputPath,onSta
      'cache-control':'no-store','x-content-type-options':'nosniff'});
     res.end(script);return;
    }
+   // The app may remain warm between jobs, but asset access is only enabled
+   // while a single active PSD render owns this local server.
+   const current=active;
+   if(!current){res.writeHead(503);res.end('No active PSD render');return}
+   const assets={psd:current.psdPath,artwork:current.artworkPath};
    if(req.method==='GET'&&Object.hasOwn(assets,route)){
     const filename=assets[route];
     const metadata=await stat(filename);
@@ -63,8 +73,11 @@ export async function openPhotopeaPCServer({psdPath,artworkPath,outputPath,onSta
    }
    if(req.method==='POST'&&route==='stage'){
     let line='',length=0;
-    for await(const chunk of req){length+=chunk.length;if(length>1000)throw Error('Status is too long');line+=chunk.toString('utf8')}
-    void Promise.resolve().then(()=>onStage(line.slice(0,220))).catch(()=>{});
+    for await(const chunk of req){
+     length+=chunk.length;if(length>1000)throw Error('Status is too long');
+     line+=chunk.toString('utf8');
+    }
+    void Promise.resolve().then(()=>current.onStage(line.slice(0,220))).catch(()=>{});
     res.writeHead(204);res.end();return;
    }
    if(req.method==='POST'&&route==='output'){
@@ -76,13 +89,14 @@ export async function openPhotopeaPCServer({psdPath,artworkPath,outputPath,onSta
       yield chunk;
      }
     };
-    await pipeline(guarded(),createWriteStream(outputPath,{flags:'w'}));
+    await pipeline(guarded(),createWriteStream(current.outputPath,{flags:'w'}));
     res.writeHead(204);res.end();return;
    }
    res.writeHead(404);res.end();
-  }catch(err){
-   if(!res.headersSent){res.writeHead(500,{'content-type':'text/plain'});res.end(bounded(err))}
-   else res.destroy(err);
+  }catch(error){
+   if(!res.headersSent){
+    res.writeHead(500,{'content-type':'text/plain'});res.end(bounded(error));
+   }else res.destroy(error);
   }
  });
  await new Promise((resolve,reject)=>{
@@ -90,8 +104,22 @@ export async function openPhotopeaPCServer({psdPath,artworkPath,outputPath,onSta
  });
  return {
   url:'http://127.0.0.1:'+server.address().port+'/'+token+'/',
-  async close(){await new Promise(resolve=>server.close(()=>resolve()))}
+  activate(context){
+   if(active)throw Error('Another PSD render is already using the shared Photopea session.');
+   active=context;
+   return async()=>{if(active===context)active=null};
+  }
  };
+}
+export async function openPhotopeaPCServer({psdPath,artworkPath,outputPath,onStage=()=>{}}){
+ if(!persistentPCServerPromise){
+  persistentPCServerPromise=createPersistentPCServer().catch(error=>{
+   persistentPCServerPromise=null;throw error;
+  });
+ }
+ const session=await persistentPCServerPromise;
+ const close=session.activate({psdPath,artworkPath,outputPath,onStage});
+ return {url:session.url,close};
 }
 let nativeUnavailableReason='';
 // One persistent background Chromium process serves all PSDs from the shared PC
