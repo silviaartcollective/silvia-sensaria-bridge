@@ -274,13 +274,14 @@ export async function ensureProductionAsset({
     });
   }
 
-  manifest.production ||= {};
-  manifest.production[`${format}|${size}|${orientation}`] = {
-    key: outputKey,
-    spec,
-    updatedAt: new Date().toISOString()
-  };
-  await saveArtworkManifest(manifest);
+  await updateArtworkManifest(artworkId,current=>{
+    if(current.master?.key!==manifest.master.key)
+      throw Error('Master artwork changed while preparing a production image.');
+    current.production ||= {};
+    current.production[`${format}|${size}|${orientation}`] = {
+      key: outputKey,spec,updatedAt:new Date().toISOString()
+    };
+  });
 
   return {
     key: outputKey,
