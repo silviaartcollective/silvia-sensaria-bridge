@@ -70,9 +70,9 @@ test('vertical landscape and square mockups remain separated',()=>{
  assert.match(read('src/mockup-api.mjs'),/artworkOrientation:manifest\.orientation/);
 });
 
-test('PSD jobs reuse Chromium and default to Photopea',()=>{
+test('PSD jobs use native by default and retain Chromium fallback',()=>{
  const processor=read('worker/mockup-processor.mjs');
- assert.match(processor,/POD_PSD_RENDERER\|\|'photopea'/);
+ assert.match(processor,/POD_PSD_RENDERER\|\|'auto'/);
  assert.match(processor,/getWarmPhotopeaBrowser/);
  assert.match(processor,/sharedPhotopeaBrowser\?\.isConnected/);
  assert.match(processor,/if\(page\)await page\.close/);
