@@ -3,6 +3,18 @@
   "canvasMirrorBleedInches": 1.5,
   "safeInsetInches": 0.5,
   "poster": {
+    "5x7": {
+      "finished": {
+        "widthIn": 5,
+        "heightIn": 7
+      },
+      "portraitPx": {
+        "width": 1500,
+        "height": 2100
+      },
+      "template": null,
+      "note": "Native ratio crop; supplier poster file prepared to 5x7 when ordered."
+    },
     "8x10": {
       "finished": {
         "widthIn": 8,
@@ -13,6 +25,18 @@
         "height": 3000
       },
       "template": "nobleed-8x10-portrait.psd"
+    },
+    "8x12": {
+      "finished": {
+        "widthIn": 8,
+        "heightIn": 12
+      },
+      "portraitPx": {
+        "width": 2400,
+        "height": 3600
+      },
+      "template": null,
+      "note": "Native 2:3 crop; supplier poster file prepared to 8x12 when ordered."
     },
     "11x14": {
       "finished": {
@@ -91,6 +115,18 @@
         "height": 10800
       },
       "template": "nobleed-24x36-portrait.psd"
+    },
+    "28x30": {
+      "finished": {
+        "widthIn": 28,
+        "heightIn": 30
+      },
+      "portraitPx": {
+        "width": 8400,
+        "height": 9000
+      },
+      "template": null,
+      "note": "Production file specification only; supplier SKU must be confirmed before enabling."
     },
     "30x40": {
       "finished": {
@@ -194,6 +230,22 @@
         "height": 11700
       },
       "template": "canvas-1.25bar-24x36-portrait.psd"
+    },
+    "28x30": {
+      "finished": {
+        "widthIn": 28,
+        "heightIn": 30
+      },
+      "facePortraitPx": {
+        "width": 8400,
+        "height": 9000
+      },
+      "productionPortraitPx": {
+        "width": 9300,
+        "height": 9900
+      },
+      "template": null,
+      "note": "1.25in canvas face with mirrored bleed; supplier SKU must be confirmed before enabling."
     },
     "30x40": {
       "finished": {
