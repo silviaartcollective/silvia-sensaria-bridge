@@ -153,7 +153,7 @@ export function findReusableCropJob(store, input = {}) {
   return (store?.jobs || []).find(job =>
     job.artworkId === artworkId &&
     ACTIVE_STATUSES.has(job.status) &&
-    normalizeOrientation(job.orientation) === orientation &&
+    normalizeOrientation(job.orientation,Boolean(job.size)) === orientation &&
     String(job.masterKey || '') === masterKey &&
     (job.size ? normalizeCropSize(job.size) : null) === size
   ) || null;
