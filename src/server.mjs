@@ -2558,7 +2558,7 @@ const server = http.createServer(async (req, res) => {
       // Dry-run is for validating GO mappings and checkout/shipping costs.
       // Do not render the enormous production canvas inside the web request;
       // use the existing master-artwork URL and keep the production spec visible.
-      const result = await etsyReceiptToSensariaCsvFromR2(receipt, { renderProduction: false });
+      const result = await etsyReceiptToSensariaCsvFromR2(receipt, { useProductionCrop: false });
       const source = result.sources?.[0] || {};
       const spec = source.spec || {};
       const output = spec.output || null;
@@ -2573,7 +2573,7 @@ const server = http.createServer(async (req, res) => {
         productCode: row['Product Code'] || null,
         wrapType: row['Wrap Type'] || '',
         shippingType: row['Shipping Type'] || '',
-        productionKey: source.rendered ? (source.key || null) : null,
+        productionKey: source.productionCrop ? (source.key || null) : null,
         sourceKey: source.key || manifest.master.key || null,
         production: {
           kind: spec.kind || null,
@@ -2583,7 +2583,7 @@ const server = http.createServer(async (req, res) => {
           mirrorBleedPx: spec.mirrorBleedPx || 0,
           safeInsetPx: spec.safeInsetPx || 0,
           template: spec.template || null,
-          rendered: Boolean(source.rendered)
+          productionCrop: Boolean(source.productionCrop)
         },
         rows: result.rows,
         csv: result.csv,
@@ -2966,14 +2966,15 @@ const server = http.createServer(async (req, res) => {
         const artwork=await resolveProviderArtworkAsset({artworkId:plan.artworkId,size:plan.size});
         if(artwork.key!==plan.assetKey || !(await artworkObjectExists(artwork.key)))
           throw Error('Artwork crop changed or is missing in R2. Refresh the supplier recommendation.');
-        stage('Preparing verified production image for Sensaria');
+        stage('Linking the verified R2 production crop for Sensaria');
         const exported=await etsyReceiptToSensariaCsvFromR2(latest,{
-          renderProduction:true,productionUrlExpiresIn:7*24*60*60,
+          useProductionCrop:true,productionUrlExpiresIn:7*24*60*60,
           onProgress:stage
         });
-        if(exported.rows.length!==1 || !exported.sources[0]?.rendered ||
+        if(exported.rows.length!==1 || !exported.sources[0]?.productionCrop ||
+           exported.sources[0]?.key!==plan.assetKey ||
            !exported.rows[0]?.['Product Code'] || !exported.rows[0]?.URL)
-          throw Error('Sensaria GO CSV needs a rendered production image and valid product code.');
+          throw Error('Sensaria GO CSV needs the verified R2 production crop and a valid product code.');
         stage('Finalizing verified CSV download');
         return exported.csv;
       });

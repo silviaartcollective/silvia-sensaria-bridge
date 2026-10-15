@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parseSilviaSku, productKey } from './core.mjs';
-import { ensureProductionAsset, loadArtworkManifest } from './artwork-storage.mjs';
+import { loadArtworkManifest } from './artwork-storage.mjs';
+import { resolveProviderArtworkAsset } from './fulfillment-assets.mjs';
 import { signedArtworkUrl } from './r2.mjs';
 import { productionSpecFor } from './production.mjs';
 
@@ -63,7 +64,7 @@ export function goRowsToCsv(rows) {
   return `${lines.join('\r\n')}\r\n`;
 }
 
-async function sourceForTransaction({ parsed, transaction, productionUrlExpiresIn, renderProduction, onProgress }) {
+async function sourceForTransaction({ parsed, transaction, productionUrlExpiresIn, useProductionCrop, onProgress }) {
   // Etsy transaction variations do not include a reliable artwork orientation.
   // Resolve orientation from the master saved in R2, not a portrait default.
   const master = await loadArtworkManifest(parsed.artworkId);
@@ -80,27 +81,30 @@ async function sourceForTransaction({ parsed, transaction, productionUrlExpiresI
     orientation
   });
 
-  if (renderProduction) {
-    const production = await ensureProductionAsset({
+  if (useProductionCrop) {
+    // Sensaria GO receives the stored R2 production crop for this size (the
+    // same file the supplier recommendation verified). Canvas edges are made
+    // by Sensaria from the "Mirror" Wrap Type, so nothing is rendered here.
+    onProgress('Signing the ' + parsed.size + ' production crop from Cloudflare R2');
+    const crop = await resolveProviderArtworkAsset({
       artworkId: parsed.artworkId,
-      format: parsed.format,
       size: parsed.size,
-      orientation,
-      urlExpiresIn: productionUrlExpiresIn,
-      onProgress
+      expiresIn: productionUrlExpiresIn
     });
+    if (crop.orientation !== orientation) {
+      throw new Error('Artwork ' + parsed.artworkId + ' crop orientation disagrees with the saved master.');
+    }
     return {
-      key: production.key,
-      url: production.url,
-      spec: production.spec,
-      rendered: true
+      key: crop.key,
+      url: crop.url,
+      spec,
+      ratio: crop.ratio,
+      productionCrop: true
     };
   }
 
-  // Dry-run / shipping-check mode deliberately avoids rendering the enormous
-  // 300-DPI canvas asset inside the web request. GO still receives a valid R2
-  // image URL, which is enough to validate Product Code, address, Wrap Type,
-  // Shipping Type and checkout/shipping pricing without manufacturing anything.
+  // Dry-run / shipping-check mode only needs a valid R2 image URL to validate
+  // Product Code, address, Wrap Type, Shipping Type and checkout pricing.
   const manifest = await loadArtworkManifest(parsed.artworkId);
   if (!manifest?.master?.key) {
     throw new Error(`Artwork ${parsed.artworkId} has no master file configured`);
@@ -109,7 +113,7 @@ async function sourceForTransaction({ parsed, transaction, productionUrlExpiresI
     key: manifest.master.key,
     url: await signedArtworkUrl(manifest.master.key, productionUrlExpiresIn),
     spec,
-    rendered: false
+    productionCrop: false
   };
 }
 
@@ -121,7 +125,7 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
   fallbackEmail = 'support@silviaartcollective.com',
   fallbackPhone = '1111111111',
   productionUrlExpiresIn = 7 * 24 * 60 * 60,
-  renderProduction = true,
+  useProductionCrop = true,
   onProgress = () => {}
 } = {}) {
   const { first, last } = splitName(receipt.name);
@@ -146,7 +150,7 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
       parsed,
       transaction,
       productionUrlExpiresIn,
-      renderProduction,
+      useProductionCrop,
       onProgress
     });
 
@@ -156,7 +160,8 @@ export async function etsyReceiptToSensariaRowsFromR2(receipt, {
       size: parsed.size,
       orientation: source.spec.orientation,
       key: source.key,
-      rendered: source.rendered,
+      ratio: source.ratio || null,
+      productionCrop: source.productionCrop,
       spec: source.spec
     });
 
