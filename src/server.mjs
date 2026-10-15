@@ -61,6 +61,8 @@ import { recentPaidReceipts, receiptTransactions } from './etsy-orders-read.mjs'
 import { buildPrintifyCostsForRequest } from './printify-cost-builder.mjs';
 import { buildTestReceipt } from './test-order.mjs';
 import { etsyReceiptToSensariaCsvFromR2 } from './fulfillment.mjs';
+import {validateSensariaCsvOrder} from './sensaria-order-csv.mjs';
+import {resolveProviderArtworkAsset} from './fulfillment-assets.mjs';
 import {
   checkR2Connection,
   getArtworkObject,
@@ -2867,6 +2869,53 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res,200,{ok:true,...(await listOrders())});
     }
     catch (error) { return sendJson(res, 500, { ok: false, error: String(error.message || error) }); }
+  }
+  // Manual Sensaria GO CSV export. No supplier purchase or Etsy mutation.
+  const sensariaCsvMatch=url.pathname.match(/^\/api\/orders\/([1-9]\d{0,19})\/sensaria-csv$/);
+  if (req.method==='POST' && sensariaCsvMatch) {
+    if(!requireAdminApi(req,res))return;
+    const origin=String(req.headers.origin||'');
+    const expected=(req.headers['x-forwarded-proto']||'https')+'://'+String(req.headers.host||'');
+    if((origin&&origin!==expected)||req.headers['sec-fetch-site']==='cross-site')
+      return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+      return sendJson(res,415,{ok:false,error:'JSON request required.'});
+    const id=sensariaCsvMatch[1];
+    try {
+      const session=await getEtsySession();
+      const shopId=Number(session.shop?.shop_id||0);
+      if(!shopId)throw Error('Authorized Etsy shop not available.');
+      const latest=await getShopReceipt({
+        shopId,receiptId:id,keystring:session.keystring,
+        sharedSecret:session.sharedSecret,accessToken:session.accessToken
+      });
+      if(!Array.isArray(latest.transactions)||!latest.transactions.length)
+        latest.transactions=await receiptTransactions(session,id);
+      const order=await readOrder(id);
+      const {plan}=validateSensariaCsvOrder(order,latest,shopId);
+      const artwork=await resolveProviderArtworkAsset({artworkId:plan.artworkId,size:plan.size});
+      if(artwork.key!==plan.assetKey || !(await artworkObjectExists(artwork.key)))
+        throw Error('Artwork production crop changed or is missing from R2. Refresh the supplier recommendation.');
+      // This uses the finished 1.25-inch mirror-bleed production image, not
+      // the raw master-image URL used by the diagnostic dry-run path.
+      const exported=await etsyReceiptToSensariaCsvFromR2(latest,{
+        renderProduction:true,productionUrlExpiresIn:7*24*60*60
+      });
+      if(exported.rows.length!==1 || !exported.sources[0]?.rendered ||
+         !exported.rows[0]?.['Product Code'] || !exported.rows[0]?.URL)
+        throw Error('Sensaria CSV needs a valid rendered production image and product code.');
+      res.writeHead(200,{
+        'content-type':'text/csv; charset=utf-8',
+        'content-disposition':'attachment; filename="sensaria-etsy-'+id+'.csv"',
+        'cache-control':'private, no-store',
+        'x-content-type-options':'nosniff'
+      });
+      return res.end(exported.csv);
+    } catch(error) {
+      console.error('[sensaria CSV] '+id+' validation/render failed: '+String(error.message||error));
+      return sendJson(res,409,{ok:false,error:String(error.message||error),
+        supplierOrderSubmitted:false});
+    }
   }
   if (req.method === 'GET' && url.pathname === '/api/custom-orders') {
     if (!requireAdminApi(req, res)) return;
