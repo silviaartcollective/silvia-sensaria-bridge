@@ -139,6 +139,7 @@ export async function activateArtworkRevision(shopId,listingId,artworkId){
  await saveArtworkManifest({...manifest,orientation:record.orientation,master:{key:record.masterKey,originalFilename:record.filename,
   contentType:record.contentType,size:record.size,
   width:record.masterGeometry?.width,height:record.masterGeometry?.height,orientation:record.orientation},
+  fulfillmentSizeCrops:{},
   fulfillmentRatios:assets,fulfillmentRatiosReady:true,fulfillmentRatioInsufficient:{},
   fulfillmentRatiosUpdatedAt:new Date().toISOString(),production:{},cropWorkerJobId:record.jobId,
   activeArtworkRevision:record.revision,previousManifestSnapshotKey:archiveKey,
