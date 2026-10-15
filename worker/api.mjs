@@ -1,5 +1,5 @@
 import { WORKER_ID } from './config.mjs';
-const WORKER_VERSION = '4.1.0';
+const WORKER_VERSION = '4.2.0';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
