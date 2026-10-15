@@ -106,6 +106,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
             <input id="existing-mockup-artwork-id" type="text" placeholder="SAC0018" autocomplete="off" maxlength="20">
           </label>
           <button type="button" class="btn secondary" id="upload-regular-mockups">Upload / sync regular mockups to Etsy</button>
+          <button type="button" class="btn secondary" id="retry-saved-mockups">Retry Etsy sync for already saved mockups</button>
           <div id="regular-mockup-status" class="status" aria-live="polite">Choose JPG, PNG or WebP mockups. They will be saved to R2 and verified on the Etsy draft.</div>
           <div class="uploadmeta">Mockups are optional. Create the draft before mockups finish: the master artwork becomes the first listing image, followed by the 3 saved preset images and video. Finished PSD mockups can be added later in Etsy.</div>
           <div class="progress"><span id="upload-progress"></span></div>
@@ -756,6 +757,52 @@ mockupFilesInput.addEventListener('change',()=>{
  if(mockupFilesInput.files?.length&&
    (masterFileInput.files?.[0]||document.getElementById('existing-mockup-artwork-id').value.trim()))
   void startRegularMockupUpload().catch(()=>{});
+});
+
+// Retry R2 photos without selecting or uploading the originals again.
+async function retryStoredRegularMockups(){
+ const status=document.getElementById('regular-mockup-status');
+ const artworkId=String(
+  document.getElementById('existing-mockup-artwork-id').value||
+  document.getElementById('artwork_id').value||'').trim().toUpperCase();
+ if(!/^SAC\d+$/.test(artworkId))
+  throw Error('Enter an existing SAC artwork ID or upload a master first.');
+ const base='/api/artworks/'+encodeURIComponent(artworkId)+'/regular-mockups';
+ status.className='status';
+ status.textContent='Checking saved R2 mockups and Etsy images for '+artworkId+'…';
+ const result=await fetch(base+'/sync',{method:'POST'});
+ const d=await readJsonResponse(result,'Retry saved mockups');
+ if(!result.ok)throw Error(d.error||'Could not start Etsy media sync');
+ if(d.pendingDraft||d.pendingSetup){
+  status.className='status warn';
+  status.textContent=d.pendingDraft
+   ?'Artwork is saved, but there is no Etsy draft yet.'
+   :'The Etsy draft is processing. Retry after its current setup finishes.';
+  return;
+ }
+ for(let attempt=0;attempt<80;attempt++){
+  await new Promise(resolve=>setTimeout(resolve,2000));
+  const current=await fetch(base+'/status',{cache:'no-store'});
+  const state=await readJsonResponse(current,'Etsy image status');
+  if(!current.ok)throw Error(state.error||'Could not read Etsy image status');
+  if(state.status==='completed'){
+   status.className='status ok';
+   status.textContent='Etsy confirmed '+(state.photoCount||0)+' listing photos; '+
+    (state.uploaded||0)+' newly attached from saved R2 mockups.';
+   return;
+  }
+  if(state.status==='failed'||state.status==='interrupted')
+   throw Error(state.error||'Media sync was interrupted. Retry saved mockups again.');
+ }
+ status.className='status warn';
+ status.textContent='Media sync is taking longer than expected. Files remain in R2; use Retry Etsy sync to check again.';
+}
+document.getElementById('retry-saved-mockups').addEventListener('click',()=>{
+ void retryStoredRegularMockups().catch(error=>{
+  const status=document.getElementById('regular-mockup-status');
+  status.className='status warn';
+  status.textContent=String(error.message||error);
+ });
 });
 
 function presetRoleForFile(file){
