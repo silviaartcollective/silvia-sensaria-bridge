@@ -1922,7 +1922,13 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
       const existingPhotos=await getEtsyListingImages({listingId,
         keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
       const available=Math.max(0,20-existingPhotos.length);
-      const uploadedSource=new Set(manifest.etsyGeneratedSourceKeys||[]);
+      const liveIds=receivedEtsyImageIds(existingPhotos);
+      const savedByKey=new Map((manifest.etsyMedia?.images||[]).map(row=>[row.key,row]));
+      const uploadedSource=new Set((manifest.etsyGeneratedSourceKeys||[]).filter(sourceKey=>{
+        const mockup=current.find(item=>item.generatedFromKey===sourceKey);
+        const receipt=mockup?savedByKey.get(mockup.key):null;
+        return receipt?.listingImageId&&liveIds.has(String(receipt.listingImageId));
+      }));
       const pendingSelected=current.filter(m=>m.sourceJobId===job.id&&
         m.generatedFromKey&&!uploadedSource.has(m.generatedFromKey)&&chosen.has(m.sourceJobId?job.templates.find(t=>t.outputKey===m.generatedFromKey)?.id:''));
       if(pendingSelected.length>available)
