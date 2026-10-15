@@ -537,13 +537,622 @@ async function followExtraCrop(jobId,size){
   extraCropStatus.textContent='Crop is still processing. Re-enter the same artwork ID and size to resume status tracking.';
 }
 extraCropButton.addEventListener('click',async()=>{
-  const artworkId=String(document.getElementById('artwork_id').value||
-    document.getElementById('existing-mockup-artwork-id').value||'').trim().toUpperCase();
+  const artworkId=String(document.getElementById('existing-mockup-artwork-id').value||
+    document.getElementById('artwork_id').value||'').trim().toUpperCase();
   const size=document.getElementById('extra-crop-size').value.trim();
   extraCropButton.disabled=true;extraCropStatus.className='status';
   extraCropStatus.textContent='Queueing additional artwork crop…';
   try{
-    if(!/^SAC\\d+$/.test(artworkId))throw Error('Upload a master or enter an existing SAC artwork ID first.');
+    if(!(new RegExp('^SAC[0-9]+
+    if(!size)throw Error('Enter a size such as 3.5x5 or 28x30.');
+    const r=await fetch('/api/crop-jobs',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({artworkId,size})});
+    const data=await readJsonResponse(r,'Additional artwork crop');
+    if(!r.ok)throw Error(data.error||'Could not queue the crop.');
+    if(data.cached){extraCropPreview(data.previewUrl,data.size,data.asset);return;}
+    extraCropStatus.textContent='Queued '+(data.size||size)+' · '+(data.job?.id||'')+'. A shared PC worker will process it.';
+    if(data.job?.id)void followExtraCrop(data.job.id,data.size||size);
+  }catch(error){
+    extraCropStatus.className='status warn';
+    extraCropStatus.textContent=String(error.message||error);
+  }finally{extraCropButton.disabled=false;}
+});
+
+async function readCropJob(jobId){
+  const r=await fetch('/api/crop-jobs/'+encodeURIComponent(jobId),{cache:'no-store'});
+  return readJsonResponse(r,'Crop job status');
+}
+
+async function watchCropJob(jobId){
+  for(let attempt=0;attempt<80;attempt++){
+    try{
+      const d=await readCropJob(jobId);
+      const job=d.job||{};
+      const worker=d.worker||{};
+      if(job.status==='completed'){
+        cropWorkerStatus.className='status ok';
+        cropWorkerStatus.textContent='POD production crops ready: '+Object.keys(job.resultAssets||{}).join(', ')+'.';
+        return;
+      }
+      if(job.status==='failed'){
+        cropWorkerStatus.className='status warn';
+        cropWorkerStatus.textContent='POD crop job failed: '+String(job.error||job.message||'unknown error');
+        return;
+      }
+      if(job.status==='pending'&&!worker.configured){
+        cropWorkerStatus.className='status warn';
+        cropWorkerStatus.textContent='Crop job queued, but CROP_WORKER_TOKEN is not configured in Render yet.';
+        return;
+      }
+      if(job.status==='pending'&&!worker.online){
+        cropWorkerStatus.className='status warn';
+        cropWorkerStatus.textContent='Crop job queued. Launch the Shared POD Crop Worker on your PC to generate the ratio files.';
+      }else{
+        cropWorkerStatus.className='status';
+        cropWorkerStatus.textContent=String(job.message||'Generating POD production crops…')+' '+String(job.progress||0)+'%';
+      }
+    }catch{}
+    await new Promise(resolve=>setTimeout(resolve,3000));
+  }
+}
+
+async function queueCropJob(artworkId){
+  const r=await fetch('/api/crop-jobs',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({
+      artworkId,
+      orientation:document.getElementById('orientation').value
+    })
+  });
+  const d=await readJsonResponse(r,'Crop job queue');
+  if(!r.ok)throw new Error(d.error||'Could not queue POD production crops');
+  const job=d.job||{};
+  const worker=d.worker||{};
+  if(worker.online){
+    cropWorkerStatus.className='status';
+    cropWorkerStatus.textContent='Shared POD Crop Worker connected. Production crops queued.';
+  }else if(worker.configured){
+    cropWorkerStatus.className='status warn';
+    cropWorkerStatus.textContent='Production crops queued. Launch the Shared POD Crop Worker on your PC.';
+  }else{
+    cropWorkerStatus.className='status warn';
+    cropWorkerStatus.textContent='Production crops queued, but CROP_WORKER_TOKEN still needs to be configured in Render.';
+  }
+  if(job.id) watchCropJob(job.id);
+  return d;
+}
+
+let sharedArtworkUpload=null;
+// One R2 upload is shared by the draft button and automatic PSD generation.
+window.startProductArtworkUpload=()=>{
+ if(sharedArtworkUpload)return sharedArtworkUpload;
+ if(!masterFileInput.files?.[0])return Promise.reject(Error('Choose the master artwork first.'));
+ sharedArtworkUpload=uploadArtworkToR2().finally(()=>{sharedArtworkUpload=null});
+ return sharedArtworkUpload;
+};
+async function uploadArtworkToR2(){
+  let existingId=document.getElementById('artwork_id').value.trim();
+
+  if(existingId){
+    try{
+      const check=await fetch('/api/artworks/'+encodeURIComponent(existingId)+'/complete',{method:'POST'});
+      if(check.ok){
+        const verified=await readJsonResponse(check,'Existing artwork verification');
+        // Re-queue idempotently so an earlier upload whose crop queue failed
+        // can repair itself without forcing the artwork to be uploaded again.
+        try{ await queueCropJob(existingId); }catch{}
+        window.dispatchEvent(new CustomEvent('pod-artwork-uploaded',{detail:{
+          artworkId:existingId,filename:masterFileInput.files?.[0]?.name,
+          size:masterFileInput.files?.[0]?.size,lastModified:masterFileInput.files?.[0]?.lastModified,orientation:verified.manifest?.orientation
+        }}));
+        return existingId;
+      }
+    }catch{}
+    try{
+      await fetch('/api/artworks/'+encodeURIComponent(existingId)+'/cancel',{method:'POST'});
+    }catch{}
+    document.getElementById('artwork_id').value='';
+    existingId='';
+  }
+
+  let reservedArtworkId='';
+  const master=masterFileInput.files?.[0];
+  const media=Array.from(mockupFilesInput.files||[]);
+  if(!master)throw new Error('Choose a master artwork file first.');
+
+  uploadProgress.style.width='3%';
+  uploadStatus.className='status';
+  uploadStatus.textContent='Reserving the next artwork ID…';
+
+  try{
+    let reserve;
+    try{
+      reserve=await fetch('/api/artworks/reserve',{
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({
+        title:document.getElementById('title').value.trim(),
+        orientation:document.getElementById('orientation').value,
+        master:{filename:master.name,contentType:master.type,size:master.size},
+        mockups:media.map(f=>({filename:f.name,contentType:f.type,size:f.size}))
+        })
+      });
+    }catch(error){
+      throw new Error('Could not contact the Silvia app while reserving the artwork ID.');
+    }
+    const data=await readJsonResponse(reserve,'Artwork reservation');
+    if(!reserve.ok)throw new Error(data.error||'Could not reserve artwork ID');
+
+    reservedArtworkId=data.artworkId;
+    document.getElementById('artwork_id').value=data.artworkId;
+    uploadStatus.textContent='Uploading master artwork as '+data.artworkId+'…';
+    uploadProgress.style.width='10%';
+
+    const uploads=data.uploads.mockups||[];
+    const uploadTasks=[
+      {file:master,uploadUrl:data.uploads.master.uploadUrl,contentType:data.uploads.master.contentType},
+      ...uploads.map((item)=>{
+        const file=media[item.originalIndex];
+        if(!file)throw new Error('Could not match media file '+String(item.originalFilename||item.index));
+        return {file,uploadUrl:item.uploadUrl,contentType:item.contentType};
+      })
+    ];
+    let completedUploads=0;
+    await mapLimit(uploadTasks,4,async(task)=>{
+      await putFile(task.uploadUrl,task.file,task.contentType);
+      completedUploads+=1;
+      uploadStatus.textContent='Uploading artwork files '+completedUploads+' of '+uploadTasks.length+'…';
+      uploadProgress.style.width=String(10+Math.round((completedUploads/uploadTasks.length)*75))+'%';
+    });
+
+    uploadStatus.textContent='Confirming files in R2…';
+    const complete=await fetch('/api/artworks/'+encodeURIComponent(data.artworkId)+'/complete',{
+      method:'POST',
+      headers:{}
+    });
+    const completed=await readJsonResponse(complete,'Artwork upload confirmation');
+    if(!complete.ok)throw new Error(completed.error||'Could not complete artwork upload');
+
+    let ratioSummary='';
+    try{
+      uploadStatus.textContent='Queueing POD production crops…';
+      uploadProgress.style.width='92%';
+      const queued=await queueCropJob(data.artworkId);
+      const job=queued.job||{};
+      ratioSummary='<br>POD crop job: '+String(job.status||'queued')+
+        (job.id?' · '+String(job.id):'')+'.';
+    }catch(error){
+      ratioSummary='<br>POD crop queue needs attention: '+String(error?.message||error);
+    }
+
+    uploadProgress.style.width='100%';
+    uploadStatus.className='status ok';
+    uploadStatus.innerHTML='<strong>'+data.artworkId+' uploaded and verified in R2.</strong><br>Cloudflare object prefix: artworks/'+data.artworkId+'/<br>Master artwork and '+uploads.length+' media'+(uploads.length===1?'':'s')+' are stored in R2 and linked to this product.'+ratioSummary;
+    // Fire and forget: mockup rendering must not hold up draft creation.
+    window.dispatchEvent(new CustomEvent('pod-artwork-uploaded',{detail:{
+      artworkId:data.artworkId,filename:master.name,size:master.size,lastModified:master.lastModified,orientation:completed.manifest?.orientation
+    }}));
+    return data.artworkId;
+  }catch(err){
+    uploadProgress.style.width='0%';
+    if(reservedArtworkId){
+      try{
+        await fetch('/api/artworks/'+encodeURIComponent(reservedArtworkId)+'/cancel',{method:'POST'});
+        document.getElementById('artwork_id').value='';
+      }catch{}
+    }
+    uploadStatus.className='status warn';
+    uploadStatus.textContent=err.message||String(err);
+    throw err;
+  }
+}
+
+// Regular mockups are independent of the master upload: the master might
+// already be stored before the user chooses their optional JPG/PNG files.
+let pendingRegularMockupUpload=null;
+async function saveSelectedRegularMockups(){
+ const chosen=Array.from(mockupFilesInput.files||[]);
+ if(!chosen.length)throw Error('Select JPG, PNG or WebP mockups first.');
+ const existingId=String(document.getElementById('existing-mockup-artwork-id').value||'').trim().toUpperCase();
+ if(existingId&&!/^SAC\d+$/.test(existingId))
+  throw Error('Enter a valid SAC artwork ID to add mockups to an existing Etsy draft.');
+ const artworkId=existingId||await window.startProductArtworkUpload();
+ const endpoint='/api/artworks/'+encodeURIComponent(artworkId)+'/regular-mockups';
+ const status=document.getElementById('regular-mockup-status');
+ status.className='status';
+ status.textContent='Preparing '+chosen.length+' regular mockup(s) for Cloudflare R2…';
+ const reserve=await fetch(endpoint+'/reserve',{
+  method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({files:chosen.map(file=>({
+   filename:file.name,contentType:file.type,size:file.size,lastModified:file.lastModified
+  }))})
+ });
+ const reserved=await readJsonResponse(reserve,'Regular mockup reservation');
+ if(!reserve.ok)throw Error(reserved.error||'Could not reserve regular mockups');
+ const needed=(reserved.uploads||[]).filter(file=>!file.alreadyPresent);
+ let saved=0;
+ await mapLimit(needed,3,async record=>{
+  const file=chosen.find(item=>item.name===record.filename&&
+   item.size===Number(record.size||item.size)&&
+   item.lastModified===Number(record.lastModified||item.lastModified));
+  if(!file)throw Error('Regular mockup file changed during upload: '+record.filename);
+  await putFile(record.uploadUrl,file,record.contentType);
+  saved++;
+  status.textContent='Uploading regular mockups to R2: '+saved+'/'+needed.length+'…';
+ });
+ status.textContent='Regular mockups saved in R2. Confirming files…';
+ const response=await fetch(endpoint+'/confirm',{method:'POST'});
+ const confirmation=await readJsonResponse(response,'Regular mockup confirmation');
+ if(!response.ok)throw Error(confirmation.error||'Could not verify mockups in R2');
+ if(confirmation.pending)throw Error(confirmation.pending+' mockup upload(s) were not verified in R2.');
+ if(confirmation.etsySync?.processing){
+  status.textContent='Uploading regular mockups to Etsy and verifying photo IDs…';
+  for(let attempt=0;attempt<100;attempt++){
+   await new Promise(resolve=>setTimeout(resolve,3000));
+   const r=await fetch(endpoint+'/status',{cache:'no-store'});
+   const update=await readJsonResponse(r,'Regular Etsy image verification');
+   if(!r.ok)continue;
+   if(update.status==='completed'){
+    status.className='status ok';
+    status.textContent='Confirmed on Etsy: '+update.photoCount+' total listing photos. Regular mockups are saved in R2.';
+    return confirmation;
+   }
+   if(update.status==='failed')throw Error(update.error||'Regular Etsy photo verification failed.');
+  }
+  throw Error('Etsy is still processing the photos. They are safely stored in R2; use Sync Regular Mockups to check again.');
+ }
+ status.className='status ok';
+ status.textContent='Regular mockups saved in R2. They will attach when the Etsy draft setup finishes.';
+ return confirmation;
+}
+function startRegularMockupUpload(){
+ if(pendingRegularMockupUpload)return pendingRegularMockupUpload;
+ const status=document.getElementById('regular-mockup-status');
+ pendingRegularMockupUpload=saveSelectedRegularMockups().catch(error=>{
+  status.className='status warn';status.textContent=String(error.message||error);
+  throw error;
+ }).finally(()=>{pendingRegularMockupUpload=null});
+ return pendingRegularMockupUpload;
+}
+document.getElementById('upload-regular-mockups').addEventListener('click',()=>{
+ void startRegularMockupUpload().catch(()=>{});
+});
+mockupFilesInput.addEventListener('change',()=>{
+ if(mockupFilesInput.files?.length&&
+   (masterFileInput.files?.[0]||document.getElementById('existing-mockup-artwork-id').value.trim()))
+  void startRegularMockupUpload().catch(()=>{});
+});
+
+// Retry R2 photos without selecting or uploading the originals again.
+async function retryStoredRegularMockups(){
+ const status=document.getElementById('regular-mockup-status');
+ const artworkId=String(
+  document.getElementById('existing-mockup-artwork-id').value||
+  document.getElementById('artwork_id').value||'').trim().toUpperCase();
+ if(!/^SAC\d+$/.test(artworkId))
+  throw Error('Enter an existing SAC artwork ID or upload a master first.');
+ const base='/api/artworks/'+encodeURIComponent(artworkId)+'/regular-mockups';
+ status.className='status';
+ status.textContent='Checking saved R2 mockups and Etsy images for '+artworkId+'…';
+ const result=await fetch(base+'/sync',{method:'POST'});
+ const d=await readJsonResponse(result,'Retry saved mockups');
+ if(!result.ok)throw Error(d.error||'Could not start Etsy media sync');
+ if(d.pendingDraft||d.pendingSetup){
+  status.className='status warn';
+  status.textContent=d.pendingDraft
+   ?'Artwork is saved, but there is no Etsy draft yet.'
+   :'The Etsy draft is processing. Retry after its current setup finishes.';
+  return;
+ }
+ for(let attempt=0;attempt<80;attempt++){
+  await new Promise(resolve=>setTimeout(resolve,2000));
+  const current=await fetch(base+'/status',{cache:'no-store'});
+  const state=await readJsonResponse(current,'Etsy image status');
+  if(!current.ok)throw Error(state.error||'Could not read Etsy image status');
+  if(state.status==='completed'){
+   status.className='status ok';
+   status.textContent='Etsy confirmed '+(state.photoCount||0)+' listing photos; '+
+    (state.uploaded||0)+' newly attached from saved R2 mockups.';
+   return;
+  }
+  if(state.status==='failed'||state.status==='interrupted')
+   throw Error(state.error||'Media sync was interrupted. Retry saved mockups again.');
+ }
+ status.className='status warn';
+ status.textContent='Media sync is taking longer than expected. Files remain in R2; use Retry Etsy sync to check again.';
+}
+document.getElementById('retry-saved-mockups').addEventListener('click',()=>{
+ void retryStoredRegularMockups().catch(error=>{
+  const status=document.getElementById('regular-mockup-status');
+  status.className='status warn';
+  status.textContent=String(error.message||error);
+ });
+});
+
+function presetRoleForFile(file){
+  const name=String(file?.name||'').toLowerCase();
+  if(/\.(mov|mp4|m4v)$/.test(name))return 'video';
+  if(name.includes('option'))return 'choose-option';
+  if(name.includes('frame'))return 'choose-frame';
+  if(name.includes('promo')||name.includes('offer'))return 'promotion';
+  return '';
+}
+
+function renderPresetStatus(status){
+  const items=Array.isArray(status?.items)?status.items:[];
+  if(status?.configured){
+    presetMediaStatus.className='status ok';
+    presetMediaStatus.innerHTML='<strong>Preset media installed.</strong><br>Choose Option · Choose Frame · Promotion · Video will be added automatically to every listing.';
+    installPresetsButton.style.display='none';
+    presetFilesInput.style.display='none';
+    return;
+  }
+  const missing=items.filter(x=>!x.exists).map(x=>x.role);
+  presetMediaStatus.className='status warn';
+  presetMediaStatus.innerHTML='<strong>One-time setup needed.</strong><br>Select the 3 preset images and 1 video you already use. Missing: '+(missing.length?missing.join(', '):'preset files')+'.';
+  installPresetsButton.style.display='';
+  presetFilesInput.style.display='';
+}
+
+async function installPresetMedia(){
+  const files=Array.from(presetFilesInput.files||[]);
+  if(files.length!==4){
+    presetMediaStatus.className='status warn';
+    presetMediaStatus.textContent='Select exactly the 3 preset images + 1 video.';
+    return;
+  }
+
+  const mapped=[];
+  for(const file of files){
+    const role=presetRoleForFile(file);
+    if(!role){
+      presetMediaStatus.className='status warn';
+      presetMediaStatus.textContent='Could not identify '+file.name+'. Use filenames containing Option, Frame, Promotion/Offer, and the video file.';
+      return;
+    }
+    if(mapped.some(x=>x.role===role)){
+      presetMediaStatus.className='status warn';
+      presetMediaStatus.textContent='Two files matched '+role+'. Rename the files so each preset is clear.';
+      return;
+    }
+    mapped.push({role,file});
+  }
+  if(mapped.length!==4){
+    presetMediaStatus.className='status warn';
+    presetMediaStatus.textContent='All four preset roles are required.';
+    return;
+  }
+
+  installPresetsButton.disabled=true;
+  presetMediaStatus.className='status';
+  presetMediaStatus.textContent='Preparing preset media upload…';
+
+  try{
+    const reserve=await fetch('/api/presets/reserve',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({
+        files:mapped.map(({role,file})=>({
+          role,
+          filename:file.name,
+          contentType:file.type,
+          size:file.size
+        }))
+      })
+    });
+    const data=await readJsonResponse(reserve,'Preset media reservation');
+    if(!reserve.ok)throw new Error(data.error||'Could not prepare preset media upload.');
+
+    presetMediaStatus.textContent='Uploading preset media…';
+    await mapLimit(data.uploads||[],4,async(upload)=>{
+      const match=mapped.find(x=>x.role===upload.role);
+      if(!match)throw new Error('Could not match preset '+upload.role+'.');
+      await putFile(upload.uploadUrl,match.file,upload.contentType);
+    });
+
+    const complete=await fetch('/api/presets/complete',{method:'POST'});
+    const done=await readJsonResponse(complete,'Preset media confirmation');
+    if(!complete.ok)throw new Error(done.error||'Preset upload did not complete.');
+    renderPresetStatus(done);
+  }catch(error){
+    presetMediaStatus.className='status warn';
+    presetMediaStatus.textContent=error.message||String(error);
+  }finally{
+    installPresetsButton.disabled=false;
+  }
+}
+
+installPresetsButton.addEventListener('click',installPresetMedia);
+
+async function loadOptions(){
+  try{
+    const r=await fetch('/etsy/listing-options',{cache:'no-store'});
+    const d=await readJsonResponse(r,'Etsy listing options');
+    if(!r.ok){
+      if(d.needsReauthorization){badge.textContent='Listing access not granted';reauth.style.display='block'}
+      else badge.textContent='Etsy setup needs attention';
+      shipping.innerHTML='<option value="">Unavailable</option>';
+      readiness.innerHTML='<option value="">Unavailable</option>';
+      return;
+    }
+    badge.textContent='Etsy presets loaded';
+    shipping.innerHTML='<option value="">Choose shipping profile</option>';
+    readiness.innerHTML='<option value="">Choose processing profile</option>';
+    section.innerHTML='<option value="">No shop section</option>';
+    returnPolicy.innerHTML='<option value="">Choose return policy</option>';
+    productionPartner.innerHTML='<option value="">No production partner</option>';
+
+    for(const p of d.shippingProfiles||[]){
+      option(shipping,p.shipping_profile_id,p.title||('Shipping profile '+p.shipping_profile_id));
+    }
+    for(const p of d.readinessProfiles||[]){
+      let label=p.title||p.name||p.readiness_state||('Processing profile '+p.readiness_state_id);
+      if(p.min_processing_time!==undefined&&p.max_processing_time!==undefined){
+        label+=' · '+p.min_processing_time+'–'+p.max_processing_time+' '+(p.processing_time_unit||'days');
+      }
+      option(readiness,p.readiness_state_id,label);
+    }
+    for(const p of d.shopSections||[]){
+      option(section,p.shop_section_id,p.title||('Section '+p.shop_section_id));
+    }
+    for(const p of d.returnPolicies||[]){
+      const label=(p.accepts_returns?'Returns':'No returns')+' · '+(p.accepts_exchanges?'Exchanges':'No exchanges')+(p.return_deadline?(' · '+p.return_deadline+' days'):'');
+      option(returnPolicy,p.return_policy_id,label);
+    }
+    for(const p of d.productionPartners||[]){
+      option(productionPartner,p.production_partner_id,p.partner_name||('Partner '+p.production_partner_id));
+    }
+
+    applyPreset(d.detectedPreset||{});
+    // Preset settings sometimes finish loading after SEO is pasted.
+    // Keep the SEO section authoritative across this asynchronous load.
+    selectSeoShopSection();
+    if(d.variantCatalog?.ownedByApp){
+      badge.textContent='Etsy presets + app-owned variants loaded';
+    }
+
+    renderPresetStatus(d.presetMedia||{configured:false,items:[]});
+
+    const fixed=d.defaults||{};
+    const materials=fixed.fixedAttributes?.Materials||[];
+    const summary=document.getElementById('preset-summary');
+    const mockupReferenceLine=d.mockupReference
+      ? '<br>Mockup template: locked listing #'+String(d.mockupReference.listingId)+' · '+String(d.mockupReference.imageCount||0)+' reference images'
+      : '<br>Mockup template: waiting for a locked Etsy reference';
+    if(summary){
+      summary.innerHTML='<strong>Silvia listing defaults loaded</strong><br>'+
+        'Category: '+String(fixed.categoryName||'Wall Decor')+' · Materials: '+String(materials.join(', '))+
+        '<br>Variants: app-owned Size × Product - Style · Pricing: Silvia CAD ladder → USD · whole-shop sale: 25%'+
+        mockupReferenceLine+
+        '<br>Processing target: '+String(fixed.processingLabel||'Made to order')+
+        ' · Renewal: Automatic';
+    }
+    button.disabled=false;
+  }catch(e){
+    badge.textContent='Could not load Etsy settings';
+  }
+}
+loadOptions();
+
+form.addEventListener('submit',async(e)=>{
+  e.preventDefault();
+
+  // Draft creation does not launch PSD rendering on the PC.
+
+  button.disabled=true;
+  result.className='result';
+
+  try{
+    if(!document.getElementById('artwork_id').value.trim()){
+      button.textContent='Uploading artwork…';
+      await window.startProductArtworkUpload();
+    }
+
+    // Do not create a draft while selected manual mockups are still uploading.
+    if(mockupFilesInput.files?.length &&
+       document.getElementById('mockup-generator-panel')?.dataset.generationReady!=='true'){
+      if(pendingRegularMockupUpload)await pendingRegularMockupUpload;
+      else await startRegularMockupUpload();
+    }
+    button.textContent='Creating Etsy draft…';
+    const payload={
+    artwork_id:document.getElementById('artwork_id').value.trim(),
+    orientation:document.getElementById('orientation').value,
+    title:document.getElementById('title').value.trim(),
+    seo_description:document.getElementById('seo_description').value.trim(),
+    seo_section_name:document.getElementById('seo_section_name').value.trim(),
+    seo_section_url:document.getElementById('seo_section_url').value.trim(),
+    homestyle:document.getElementById('homestyle').value.trim(),
+    listing_style:document.getElementById('listing_style').value.trim(),
+    tags:document.getElementById('tags').value.split(',').map(x=>x.trim()).filter(Boolean),
+    taxonomy_id:1027,
+    shipping_profile_id:Number(shipping.value),
+    readiness_state_id:Number(readiness.value),
+    shop_section_id:section.value?Number(section.value):null,
+    return_policy_id:returnPolicy.value?Number(returnPolicy.value):null,
+    production_partner_ids:productionPartner.value?[Number(productionPartner.value)]:[],
+    who_made:document.getElementById('who_made').value,
+    when_made:document.getElementById('when_made').value,
+    is_supply:document.getElementById('is_supply').value==='true',
+    should_auto_renew:document.getElementById('should_auto_renew').value==='true'
+    };
+
+    let r;
+    try{
+      r=await fetch('/etsy/drafts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+    }catch(error){
+      throw new Error('Could not contact the Silvia app while creating the Etsy draft.');
+    }
+    const d=await readJsonResponse(r,'Etsy draft creation');
+    if(!r.ok){
+      const suffix=d.draftCreated&&d.listingId
+        ? ' Etsy already created draft '+String(d.listingId)+' before this step failed.'
+        : '';
+      const detail=d.error||d.message||d.reason||('Draft creation failed (HTTP '+String(r.status)+')');
+      throw new Error(String(detail)+suffix);
+    }
+    result.className='result show';
+    if(d.processing){
+      result.textContent='Etsy draft #'+String(d.listingId)+' created. Configuring images, video and variants. R2: '+String(d.r2Prefix||'')+'. Keep unpublished until setup completes.';
+      const id=document.getElementById('artwork_id').value.trim();
+      // Poll read-only R2 status. Closing this tab does not cancel the server job.
+      void (async()=>{
+        for(let attempt=0;attempt<180;attempt++){
+          await new Promise(resolve=>setTimeout(resolve,5000));
+          try{
+            const response=await fetch('/api/artworks/'+encodeURIComponent(id)+'/draft-setup',{cache:'no-store'});
+            const report=await readJsonResponse(response,'Draft setup status');
+            if(!response.ok)throw Error(report.error||'Could not check draft progress');
+            const state=report.setup?.status||'unknown';
+            if(state==='completed'){
+              result.textContent='Etsy draft #'+String(report.listingId)+' initial setup complete: '+String(report.setup.media?.imageCount||0)+' photos and '+(report.setup.media?.videoUploaded?'video':'no video')+'. Generated PSD mockups upload separately as they finish. R2: '+String(report.r2Prefix);
+              return;
+            }
+            if(state==='failed'||state==='interrupted'){
+              result.textContent='Etsy draft #'+String(report.listingId)+' exists, but setup '+state+': '+String(report.setup?.error||'Please click Create Etsy Draft again to resume. Do not create a new listing.');
+              return;
+            }
+            result.textContent='Etsy draft #'+String(report.listingId)+' created. Etsy media and inventory still configuring. R2 master '+(report.masterExists?'verified':'MISSING')+'.';
+          }catch(error){result.textContent='Draft #'+String(d.listingId)+' created; status check failed: '+error.message+'. Use Create Etsy Draft again to resume.';return}
+        }
+        result.textContent='Draft #'+String(d.listingId)+' exists. Setup is still running or needs a status refresh.';
+      })();
+      return;
+    }
+    const variantSummary=d.variants
+      ? '<br>Variants: '+String(d.variants.count||0)+' · Size → Product - Style · USD '+String(d.variants.minimumPrice||'')+'+'
+      : '';
+    const mediaSummary=d.media
+      ? '<br>Listing media: '+String(d.media.imageCount||0)+' image'+(Number(d.media.imageCount||0)===1?'':'s')+(d.media.videoUploaded?' + video':'')
+      : '';
+    const warnings=[...(Array.isArray(d.variantWarnings)?d.variantWarnings:[]),...(Array.isArray(d.attributeWarnings)?d.attributeWarnings:[])];
+    const warningSummary=warnings.length
+      ? '<br><br><strong>Setup note:</strong> '+warnings.join(' ')
+      : '';
+    const sortSummary=d.mockupSort?.applied
+      ? '<br>Mockup order: matched exactly to locked listing #'+String(d.mockupSort.referenceListingId||'')
+      : '<br>Mockup order: kept upload/filename order'+(d.mockupSort?.reason?' · '+String(d.mockupSort.reason):'');
+    const timingSummary=d.timing?.totalMs
+      ? '<br>Draft setup time: '+(Number(d.timing.totalMs)/1000).toFixed(1)+' seconds'
+      : '';
+    const aiSummary=d.aiGenerator&&!d.aiGenerator.applied
+      ? '<br><br><strong>AI generator:</strong> Etsy does not expose this checkbox through the Open API, so this one editor setting still needs your Etsy helper.'
+      : '';
+    result.innerHTML='<strong>Draft configured.</strong><br>Listing ID: '+String(d.listingId||'')+'<br>State: '+String(d.state||'draft')+variantSummary+mediaSummary+sortSummary+timingSummary+warningSummary+aiSummary+'<br>Open Etsy Listings to review it.';
+  }catch(err){
+    result.className='result show';
+    result.textContent=err.message||String(err);
+  }finally{
+    button.disabled=false;
+    button.textContent='Create Etsy Draft';
+  }
+});
+</script>
+<script type="module" src="/assets/mockup-generator-client.js"></script>
+</body></html>`;
+}
+)).test(artworkId))throw Error('Upload a master or enter an existing SAC artwork ID first.');
     if(!size)throw Error('Enter a size such as 3.5x5 or 28x30.');
     const r=await fetch('/api/crop-jobs',{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({artworkId,size})});
