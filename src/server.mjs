@@ -1901,6 +1901,11 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
       }
       const current=(manifest.mockups||[]).slice(0,17);
       const existingSource=new Set(current.map(x=>x.generatedFromKey).filter(Boolean));
+      const newOutputs=outputs.filter(item=>!existingSource.has(item.outputKey));
+      if(newOutputs.length>Math.max(0,17-current.length))
+        throw Error('There are only '+Math.max(0,17-current.length)+
+          ' saved artwork mockup slot(s) left, but '+newOutputs.length+
+          ' selected PSD images need space. Reduce the selection or remove older mockups.');
       let prepared=0;
       for(const t of outputs){
         if(existingSource.has(t.outputKey)||current.length>=17)continue;
