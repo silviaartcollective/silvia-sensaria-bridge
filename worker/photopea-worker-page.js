@@ -213,7 +213,7 @@
   return null; // An ambiguous PSD must be mapped explicitly rather than guessing.
  }
  window.renderMockupOnPC=async function(config){
-  await stage('Connecting PC background Photoshop processor');
+  await stage('Connecting PC background Photopea processor');
   await init();
   await loadFile('psd',420000);
   await stage('Inspecting visible PSD Smart Objects');
@@ -231,6 +231,16 @@
   await stage('Opening artwork Smart Object '+selected.name);
   const slot=parse(await script(openArtworkSlot,selected.path),'MG_SLOT:');
   if(slot.width<1||slot.height<1)throw Error('Invalid artwork slot dimensions.');
+  // Verify the ACTUAL editable Smart Object, not the PSD canvas dimensions.
+  const artwork=String(config.artworkOrientation||'').toLowerCase();
+  const ratio=slot.width/slot.height;
+  const slotOrientation=Math.abs(1-ratio)<=0.04?'square':
+    ratio>1?'landscape':'portrait';
+  if(['portrait','landscape','square'].includes(artwork)&&
+     slotOrientation!==artwork){
+   throw Error('The PSD artwork Smart Object is '+slotOrientation+
+     ' but the master is '+artwork+'. This template was skipped to prevent distorted mockups.');
+  }
   await loadFile('artwork',240000);
   await stage('Replacing artwork in visible Smart Object '+selected.name);
   const replaced=parse(await script(replaceArtwork,config.fitMode||'contain'),'MG_REPLACED:');
