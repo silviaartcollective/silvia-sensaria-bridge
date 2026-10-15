@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
+import {boundedProductionGeometry} from './production-resolution.mjs';
 
 sharp.cache(false);
 sharp.concurrency(1);
@@ -136,6 +137,47 @@ function productionPipeline({ input, format, size, orientation = 'portrait', foc
     });
 }
 
+// Batch CSV must not enlarge a small source to huge 300-DPI dimensions.
+// Read the original orientation first; then extract, proportionally scale down,
+// and mirror 1.25-inch canvas edges without exceeding the source's detail.
+async function boundedProductionPipeline({input,format,size,orientation='portrait',focalPoint='centre'}) {
+  const spec=productionSpecFor({format,size,orientation});
+  const metadata=await sharp(input,{failOn:'warning',limitInputPixels:false}).metadata();
+  const rotated=[5,6,7,8].includes(Number(metadata.orientation||1));
+  const sourceWidth=rotated?Number(metadata.height):Number(metadata.width);
+  const sourceHeight=rotated?Number(metadata.width):Number(metadata.height);
+  const target=spec.kind==='poster'?spec.output:spec.face;
+  const geometry=boundedProductionGeometry({
+    sourceWidth,sourceHeight,targetWidth:target.width,targetHeight:target.height
+  });
+  let image=sharp(input,{
+    failOn:'warning',limitInputPixels:false,sequentialRead:true
+  }).rotate().extract(geometry.crop);
+  if(geometry.resized) {
+    image=image.resize(geometry.output.width,geometry.output.height,{
+      fit:'fill',withoutEnlargement:true,kernel:sharp.kernel.lanczos3
+    });
+  }
+  if(spec.kind==='canvas') {
+    const portrait=spec.orientation!=='landscape';
+    const inchesWide=portrait?spec.finished.widthIn:spec.finished.heightIn;
+    const inchesHigh=portrait?spec.finished.heightIn:spec.finished.widthIn;
+    const pixelsPerInch=Math.min(
+      geometry.output.width/Number(inchesWide),
+      geometry.output.height/Number(inchesHigh)
+    );
+    if(!Number.isFinite(pixelsPerInch)||pixelsPerInch<=0)
+      throw Error('Canvas production dimensions are invalid.');
+    const bleed=Math.max(1,Math.round(pixelsPerInch*1.25));
+    image=image.extend({
+      top:bleed,bottom:bleed,left:bleed,right:bleed,extendWith:'mirror'
+    });
+  }
+  return image.withMetadata({density:spec.dpi}).jpeg({
+    quality:90,chromaSubsampling:'4:2:0',progressive:true,optimiseCoding:true
+  });
+}
+
 export async function renderProductionArtwork({
   input,
   format,
@@ -155,7 +197,8 @@ export async function renderProductionArtworkToFile({
   focalPoint = 'centre'
 }) {
   if (!outputPath) throw new Error('Production outputPath is required');
-  return productionPipeline({ input, format, size, orientation, focalPoint }).toFile(outputPath);
+  const pipeline=await boundedProductionPipeline({input,format,size,orientation,focalPoint});
+  return pipeline.toFile(outputPath);
 }
 
 export function publicProductionSpecs() {
