@@ -1014,9 +1014,10 @@ async function withEtsyListingRetry(task, { attempts = 6, baseDelayMs = 300 } = 
 async function prepareMediaPlan({ session, manifest }) {
   const customMedia = Array.isArray(manifest?.mockups) ? manifest.mockups : [];
   const presetStatus = await presetMediaStatus();
-  if (!presetStatus.configured) {
-    throw new Error('The 3 preset images + listing video are not installed in R2 yet.');
-  }
+  // Reusable presets are optional. A missing R2 preset must NEVER prevent
+  // the master artwork or user-uploaded mockups from reaching the Etsy draft.
+  const installedPresets = presetStatus.items.filter(item=>item.exists);
+  const missingPresetRoles = presetStatus.items.filter(item=>!item.exists).map(item=>item.role);
 
   const customImages = customMedia.filter(item =>
     String(item?.contentType||'').startsWith('image/')
@@ -1065,7 +1066,7 @@ async function prepareMediaPlan({ session, manifest }) {
     }
   }
 
-  const presetByRole = new Map(PRESET_MEDIA.map((item) => [item.role, {
+  const presetByRole = new Map(installedPresets.map((item) => [item.role, {
     key: item.key,
     contentType: item.contentType,
     originalFilename: item.filename,
@@ -1077,9 +1078,14 @@ async function prepareMediaPlan({ session, manifest }) {
   const canonicalCustomItems = starterOnly ? [] :
     (sortResult.applied ? canonicalCustomMockupOrder(sortResult.items) : sortResult.items);
 
-  const orderedImages = starterOnly ? starterDraftMedia(manifest.master,PRESET_MEDIA).filter(item=>item.presetRole!=='video') : [];
+  const orderedImages = starterOnly ? [
+    { ...manifest.master, starterArtwork:true },
+    ...installedPresets.filter(item=>item.role!=='video').map(item=>({
+      key:item.key,contentType:item.contentType,originalFilename:item.filename,presetRole:item.role
+    }))
+  ] : [];
   let customIndex = 0;
-  const totalImageCount = canonicalCustomItems.length + 3;
+  const totalImageCount = canonicalCustomItems.length + installedPresets.filter(item=>item.role!=='video').length;
   for (let rank = 1; !starterOnly && rank <= totalImageCount; rank += 1) {
     const presetRole = presetImageRanks.get(rank);
     if (presetRole && presetByRole.get(presetRole)) {
@@ -1140,6 +1146,8 @@ async function prepareMediaPlan({ session, manifest }) {
 
   return {
     mediaItems,
+    missingPresetRoles,
+    installedPresetRoles:installedPresets.map(item=>item.role),
     objectByKey,
     sort: {
       applied: !starterOnly && Boolean(sortResult.applied),
@@ -3991,8 +3999,9 @@ const server = http.createServer(async (req, res) => {
         media,
         mockupSort: media.mockupSort,
         presetMedia: {
-          imageCount: 3,
-          videoCount: 1
+          imageCount:mediaPlan.installedPresetRoles.filter(role=>role!=='video').length,
+          videoCount:mediaPlan.installedPresetRoles.includes('video')?1:0,
+          missingRoles:mediaPlan.missingPresetRoles
         },
         timing: {
           totalMs: Date.now() - startedAt,
