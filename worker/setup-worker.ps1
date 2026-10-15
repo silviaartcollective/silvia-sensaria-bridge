@@ -32,13 +32,15 @@ foreach($entry in $definitions){
 }
 $config=@{apps=$apps;workerId="pod-crop-main-pc";pollIntervalMs=3000;idleExitMs=0}
 Write-Host ""
-Write-Host "Installing Sharp and Puppeteer Core for production crops and Photoshop PSD mockups…"
+Write-Host "Installing Sharp, native PSD parsing and compatibility rendering…"
 npm install
 if($LASTEXITCODE -ne 0){throw "npm install failed."}
 node --input-type=module -e "import('sharp').then(async ({default:sharp})=>{await sharp({create:{width:2,height:2,channels:3,background:'#ffffff'}}).jpeg().toBuffer();console.log('Sharp ready.')})"
 if($LASTEXITCODE -ne 0){throw "Sharp is not ready; please review npm install messages."}
 node --input-type=module -e "import('puppeteer-core').then(()=>console.log('Puppeteer Core ready.')).catch(e=>{console.error(e);process.exit(1);})"
 if($LASTEXITCODE -ne 0){throw "Puppeteer Core is missing. Check npm install messages."}
+node --input-type=module -e "import('ag-psd').then(()=>console.log('Native PSD parser ready.')).catch(e=>{console.error(e);process.exit(1);})"
+if($LASTEXITCODE -ne 0){throw "ag-psd is missing. Check npm install messages."}
 $BrowserPaths=@(
   "$env:PROGRAMFILES\\Google\\Chrome\\Application\\chrome.exe",
   "$env:PROGRAMFILES\\Microsoft\\Edge\\Application\\msedge.exe",
