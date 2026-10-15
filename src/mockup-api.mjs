@@ -89,8 +89,8 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    if(req.method==='POST'&&parts[1]==='claim'&&parts.length===2){
     const body=await readJson(req),owner=ownerCheck(body);
     const v=String(body.version||'0').split('.').map(Number);
-    if(!(v[0]>4||(v[0]===4&&v[1]>=2))){
-     sendJson(res,426,{ok:false,error:'PC mockup worker version 4.2.0 or newer is required for persistent Photopea. Update the worker folder and restart it.'});return true;
+    if(!(v[0]>4||(v[0]===4&&v[1]>=3))){
+     sendJson(res,426,{ok:false,error:'PC mockup worker version 4.3.0 or newer is required for native-first PSD rendering. Update the worker folder and restart it.'});return true;
     }
     const jobs=(await listMockupJobs()).filter(j=>j.artworkUploaded&&!j.paused&&!j.deleted&&
       j.templates?.some(t=>t.status==='queued'||t.status==='processing')&&!hasActiveMockupLease(j))
