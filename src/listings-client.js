@@ -26,6 +26,18 @@ function showTab(tab){
   converterLoaded=true;
  }
 }
+// Keep the old converter comfortably scrollable inside its Listings tab.
+const converterFrame=el('converter-frame');
+function resizeConverterFrame(){
+ if(!converterLoaded||el('converter-panel').classList.contains('hidden'))return;
+ try{
+  const doc=converterFrame.contentDocument;
+  const height=Math.max(doc?.documentElement?.scrollHeight||0,doc?.body?.scrollHeight||0,950);
+  converterFrame.style.height=Math.min(16000,height+36)+'px';
+ }catch{converterFrame.style.height='1100px';}
+}
+converterFrame.addEventListener('load',resizeConverterFrame);
+setInterval(resizeConverterFrame,3500);
 el('tab-master').addEventListener('click',()=>showTab('master'));
 el('tab-converter').addEventListener('click',()=>showTab('converter'));
 function filteredList(){
