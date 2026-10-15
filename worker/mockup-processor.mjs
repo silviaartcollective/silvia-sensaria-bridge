@@ -94,11 +94,33 @@ export async function openPhotopeaPCServer({psdPath,artworkPath,outputPath,onSta
  };
 }
 let nativeUnavailableReason='';
+// One persistent background Chromium process serves all PSDs from the shared PC
+// worker. Launching Chrome for every template added seconds of avoidable overhead.
+let sharedPhotopeaBrowser=null;
+let sharedBrowserLaunch=null;
+async function getWarmPhotopeaBrowser(puppeteer,executablePath,onStage){
+ if(sharedPhotopeaBrowser?.isConnected?.())return {browser:sharedPhotopeaBrowser,reused:true};
+ if(!sharedBrowserLaunch){
+  sharedBrowserLaunch=(async()=>{
+   await onStage('Starting persistent background Chromium for Photopea');
+   const browser=await puppeteer.launch({
+    executablePath,headless:true,protocolTimeout:18*60*1000,
+    args:['--no-first-run','--no-default-browser-check','--disable-extensions',
+     '--disable-dev-shm-usage','--enable-unsafe-swiftshader']
+   });
+   sharedPhotopeaBrowser=browser;
+   browser.on('disconnected',()=>{if(sharedPhotopeaBrowser===browser)sharedPhotopeaBrowser=null});
+   return browser;
+  })().finally(()=>{sharedBrowserLaunch=null});
+ }
+ return {browser:await sharedBrowserLaunch,reused:false};
+}
+
 export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateName='',mapping,
  smartObjects=[],fitMode='contain',onStage=()=>{}}){
- const engine=String(process.env.POD_PSD_RENDERER||'auto').toLowerCase();
+ const engine=String(process.env.POD_PSD_RENDERER||'photopea').toLowerCase();
  const started=Date.now();
- if(engine!=='photopea'&&(!nativeUnavailableReason||engine==='photoshop')){
+ if(engine==='photoshop'){
   try{
    const result=await renderMockupWithPhotoshop({psdPath,artworkPath,outputPath,
     templateName,mapping,smartObjects,fitMode,onStage});
@@ -120,15 +142,12 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
  try{puppeteer=(await import('puppeteer-core')).default}
  catch{throw Error('Run worker/setup-worker.cmd to install the updated shared crop and PSD worker.')}
  const local=await openPhotopeaPCServer({psdPath,artworkPath,outputPath,onStage});
- let browser=null,deadlineTimer=null;
+ let page=null,deadlineTimer=null;
  try{
-  await onStage('Starting background Chromium on PC');
-  browser=await puppeteer.launch({
-   executablePath,headless:true,protocolTimeout:18*60*1000,
-   args:['--no-first-run','--no-default-browser-check','--disable-extensions',
-    '--disable-dev-shm-usage','--enable-unsafe-swiftshader']
-  });
-  const page=await browser.newPage();
+  const warm=await getWarmPhotopeaBrowser(puppeteer,executablePath,onStage);
+  await onStage(warm.reused?'Reusing warm Photopea Chromium process':'Chromium ready for Photopea');
+  const browser=warm.browser;
+  page=await browser.newPage();
   await page.setViewport({width:1250,height:900,deviceScaleFactor:1});
   page.on('error',error=>{void Promise.resolve(onStage('PC Chromium error: '+bounded(error))).catch(()=>{})});
   page.on('pageerror',error=>console.error('[PC PSD renderer] Page error:',bounded(error)));
@@ -156,7 +175,9 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
   return {...result,engine:'photopea',dimensions:{width:metadata.width,height:metadata.height},size};
  }finally{
   if(deadlineTimer)clearTimeout(deadlineTimer);
-  if(browser)await browser.close().catch(()=>{});
+  if(page)await page.close().catch(()=>{});
+  // Keep the browser warm for the next PSD, but close the one-job localhost
+  // artwork server and document page to avoid leaking source files and memory.
   await local.close();
  }
 }
