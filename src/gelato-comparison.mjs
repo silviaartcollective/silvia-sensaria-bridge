@@ -182,14 +182,38 @@ function sizeCompatible(product, target, tolerance = 0.52) {
 }
 
 function productFinish(product, catalog) {
-  return finishFamily(productText(product, catalog));
+  // Framed canvas variants commonly mention several colors (e.g. the frame
+  // AND the artwork backing) in the UID and attribute descriptions. Use the
+  // actual frame-color field first instead of assuming the first color word
+  // in a concatenation is the decorative frame finish.
+  const attributes=product?.attributes&&typeof product.attributes==='object'
+    ?product.attributes:{};
+  for(const [key,value] of Object.entries(attributes)){
+    if(!/frame.?colou?r|frame.?finish|frame.?wood|frame.?material/i.test(key))continue;
+    const explicit=finishFamily(
+      value&&typeof value==='object'?
+        [value.title,value.value,value.name,value.productAttributeValueUid].filter(Boolean).join(' '):
+        value);
+    if(['black','white','natural','brown'].includes(explicit))return explicit;
+  }
+  // A clearly labeled finish in the variant UID is stronger evidence than
+  // incidental color terms in the broader catalog description.
+  const uid=String(product?.productUid||'');
+  const variant=uid.match(/(?:frame[_-]?(?:color|colour|finish)[_-]?)(black|white|natural|oak|brown|walnut|dark[_-]?wood)/i);
+  if(variant)return finishFamily(variant[1]);
+  const text=productText(product,catalog);
+  const possible=['black','white','natural','brown'].filter(family=>{
+    if(family==='natural')return /(?:natural|oak|beech|birch)/.test(text);
+    if(family==='brown')return /(?:brown|dark wood|dark[_-]wood|walnut|espresso|mahogany)/.test(text);
+    return new RegExp('(?:^|[^a-z])'+family+'(?:$|[^a-z])').test(text);
+  });
+  return possible.length===1?possible[0]:'unverified';
 }
 
 function finishCompatible(row, product, catalog) {
-  if (row?.productCode !== 'FC') return true;
-  const wanted = finishFamily(row?.finish);
-  const actual = productFinish(product, catalog);
-  return wanted !== 'none' && actual === wanted;
+  if(row?.productCode!=='FC')return true;
+  const wanted=finishFamily(row?.finish);
+  return wanted!=='none'&&productFinish(product,catalog)===wanted;
 }
 
 function compatibilityScore(row, product, catalog) {
@@ -508,6 +532,10 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
 
     if (!candidates.length) {
       const familyRows = (catalogRows || []).filter(item => item.productCode === row?.productCode);
+      const matchingSize=familyRows.filter(item=>sizeCompatible(item.product,target));
+      const sizeAvailableWithoutFinish=matchingSize.length>0&&row?.productCode==='FC';
+      const availableFinishes=[...new Set(matchingSize.map(item=>
+        productFinish(item.product,item.catalog)))].sort();
       const parsedSizes = familyRows.flatMap(item =>
         productSizeCandidates(item.product).map(size => ({
           width: size.width,
@@ -529,18 +557,22 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
         ...(exactFormatDiagnostics?.failures || [])
       ];
       const names = (diagnostic.relevantCatalogs || []).map(item => item.uid).slice(0, 15);
-      const status = !familyRows.length && failures.length
-        ? 'catalog-scan-error' : 'catalog-no-match';
+      const status=!familyRows.length&&failures.length?'catalog-scan-error':
+        sizeAvailableWithoutFinish?'finish-no-match':'catalog-no-match';
       result.set(rowKey(row), {
         provider: 'Gelato', eligible: false, status,
-        reason: familyRows.length
-          ? `Gelato mapped ${familyRows.length} products in this family but did not match ${row?.size}. Nearest parsed sizes: ${nearest.join(', ') || 'none'}.`
+        reason: sizeAvailableWithoutFinish
+          ? `Gelato HAS ${row?.size} in this product family (${matchingSize.length} exact-size variant(s)), but none verified with requested frame finish "${row?.finish}". Catalog finishes: ${availableFinishes.join(', ')||'unverified'}. This is a frame-color matching issue, NOT an unavailable size.`
+          : familyRows.length
+            ? `Gelato mapped ${familyRows.length} products in this family but found no compatible size for ${row?.size}. Nearest parsed sizes: ${nearest.join(', ') || 'none'}.`
           : failures.length
             ? `Gelato catalog scan failed for ${failures.length} catalog(s): ${failures.slice(0, 3).map(item => item.catalogUid + ': ' + item.message).join(' | ')}.`
             : `Gelato returned no products mapped to ${row?.productCode} (catalogs searched: ${names.join(', ') || 'none'}; total catalogs: ${diagnostic.totalCatalogs ?? '?'}, mapped variants: ${diagnostic.mappedProductCount ?? 0}).`,
         meta: {
           familyProductCount: familyRows.length,
           nearestParsedSizes: nearest,
+          matchingSizeProductCount: matchingSize.length,
+          availableFrameFinishes: availableFinishes,
           catalogDiagnostics: diagnostic,
           exactFormatDiagnostics
         }
@@ -617,6 +649,8 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
 export const __test = {
   classifyCatalog,
   finishFamily,
+  productFinish,
+  finishCompatible,
   parseTargetSize,
   productSizeCandidates,
   productSizeInches,
