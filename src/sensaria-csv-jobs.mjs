@@ -39,6 +39,7 @@ export function startCsvJob(receiptId,work){
    if(job.status!=='running')return;
    job.stage=String(value).slice(0,180);
    job.updatedAt=new Date().toISOString();
+   console.info('[sensaria CSV] #'+id+' stage: '+job.stage);
  };
  let timer;
  const timeout=new Promise((_,reject)=>{
@@ -54,6 +55,7 @@ export function startCsvJob(receiptId,work){
    job.expiresAt=Date.now()+TTL_MS;
  }).catch(error=>{
    job.status='failed';job.error=String(error?.message||error).slice(0,600);
+   console.error('[sensaria CSV] #'+id+' failed: '+job.error);
    job.stage='Preparation failed';job.expiresAt=Date.now()+5*60*1000;
  }).finally(()=>{
    clearTimeout(timer);job.updatedAt=new Date().toISOString();
