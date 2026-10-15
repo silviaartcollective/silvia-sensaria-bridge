@@ -216,6 +216,7 @@ export async function activateConverterArtworkRevision({shopId,listingId,revisio
      contentType:checked.contentType,size:checked.size,
      width:checked.masterGeometry?.width,height:checked.masterGeometry?.height,
      orientation:checked.orientation},
+   fulfillmentSizeCrops:{},
    fulfillmentRatios:ratios,fulfillmentRatiosReady:true,
    fulfillmentRatioInsufficient:{},fulfillmentRatiosUpdatedAt:updatedAt,
    production:{},cropWorkerJobId:checked.jobId,
