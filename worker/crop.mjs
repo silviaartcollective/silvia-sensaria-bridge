@@ -91,7 +91,7 @@ export async function generateProductionCrop({
   ratio,
   target
 }) {
-  const { crop, output, recommendedPixelsMet } = validateRatioSource(master, ratio, target);
+  const { crop, output: planned, recommendedPixelsMet } = validateRatioSource(master, ratio, target);
   // Extract the full-resolution crop directly from the original pixels. Do not
   // enlarge tiny masters or shrink larger masters to fixed 300-PPI dimensions.
   const left = Math.floor((master.width - crop.width) / 2);
@@ -99,8 +99,8 @@ export async function generateProductionCrop({
   let image = sharp(masterPath, { limitInputPixels: false, sequentialRead: true })
     .rotate()
     .extract({ left, top, width: crop.width, height: crop.height });
-  if (output.width !== crop.width || output.height !== crop.height) {
-    image = image.resize(output.width, output.height, {
+  if (planned.width !== crop.width || planned.height !== crop.height) {
+    image = image.resize(planned.width, planned.height, {
       fit: 'fill',
       withoutEnlargement: true,
       kernel: sharp.kernel.lanczos3
@@ -117,7 +117,7 @@ export async function generateProductionCrop({
     .toFile(outputPath);
 
   const output = await sharp(outputPath).metadata();
-  const expected = validateRatioSource(master, ratio, target).output;
+  const expected = planned;
   if (output.width !== expected.width || output.height !== expected.height) {
     throw new Error(
       `Generated ${ratio} crop is ${output.width}×${output.height}; expected ` +
