@@ -70,12 +70,12 @@ test('native JSX selects visible Smart Object 5, exports JPG, keeps hidden layer
  assert.ok(calls.some(c=>c[0]==='saveSmartObject'));
  assert.ok(!calls.some(c=>c[0]==='saveAs'&&c[1]==='template.psd'));
 });
-test('worker prefers installed Photoshop and retains Photopea fallback',()=>{
+test('worker keeps optional desktop Photoshop and legacy Photopea fallback',()=>{
  const processor=readFileSync(new URL('../worker/mockup-processor.mjs',import.meta.url),'utf8');
  const runner=readFileSync(new URL('../worker/index.mjs',import.meta.url),'utf8');
  assert.ok(processor.includes('renderMockupWithPhotoshop'));
  assert.ok(processor.includes('NativePhotoshopUnavailable'));
- assert.ok(processor.includes('Photopea fallback'));
+ assert.ok(processor.includes('renderMockupNative'));
  assert.ok(runner.includes('downloadCached'));
  assert.ok(runner.includes('smartObjects:claim.template.smartObjects'));
 });
