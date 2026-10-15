@@ -139,7 +139,8 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     const info=await artworkObjectInfo(master.key);
     const job=await createMockupJob({
       filename:master.originalFilename||artworkId+'.jpg',
-      size:info.size,templateIds:body.templateIds,fitMode:body.fitMode||'contain'
+      size:info.size,templateIds:body.templateIds,
+       artworkOrientation:manifest.orientation,fitMode:body.fitMode||'contain'
     });
     job.artworkId=artworkId;job.sourceMasterKey=master.key;
     await putMockupJob(job);
