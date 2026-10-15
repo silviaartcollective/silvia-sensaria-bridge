@@ -144,6 +144,65 @@ async function getWarmPhotopeaBrowser(puppeteer,executablePath,onStage){
  return {browser:await sharedBrowserLaunch,reused:false};
 }
 
+// The Chromium PROCESS alone was warm, but the original code closed every
+// page and reinitialized Photopea for EACH PSD. Preserve the actual initialized
+// Photopea iframe and reset documents before importing a new template.
+let sharedPhotopeaPage=null;
+async function getWarmPhotopeaPage(browser,url,onStage){
+ if(sharedPhotopeaPage&&!sharedPhotopeaPage.isClosed()&&
+    sharedPhotopeaBrowser===browser){
+  return {page:sharedPhotopeaPage,reused:true};
+ }
+ const errors=[];
+ for(let attempt=1;attempt<=2;attempt++){
+  let page=null,bootTimer=null;
+  try{
+   await onStage('Opening Photopea editor in PC Chromium (attempt '+attempt+'/2)');
+   page=await browser.newPage();
+   await page.setViewport({width:1250,height:900,deviceScaleFactor:1});
+   page.on('pageerror',error=>console.error('[PC PSD renderer] Page error:',bounded(error)));
+   page.on('error',error=>console.error('[PC PSD renderer] Chrome tab error:',bounded(error)));
+   page.on('requestfailed',request=>{
+    if(request.url().startsWith('https://www.photopea.com')){
+     const reason=request.failure()?.errorText||'unknown network error';
+     if(errors.length<8)errors.push(reason);
+     console.error('[PC PSD renderer] Photopea request failed:',reason);
+    }
+   });
+   page.on('response',response=>{
+    if(response.url().startsWith('https://www.photopea.com')&&response.status()>=400){
+     const info='Photopea HTTP '+response.status();
+     if(errors.length<8)errors.push(info);
+     console.error('[PC PSD renderer]',info,response.url().split('?')[0]);
+    }
+   });
+   page.on('crash',()=>console.error('[PC PSD renderer] Chromium crashed while loading Photopea.'));
+   await page.goto(url,{waitUntil:'domcontentloaded',timeout:35000});
+   await page.waitForFunction(()=>typeof window.initializePhotopeaWorker==='function',{timeout:15000});
+   await Promise.race([
+    page.evaluate(()=>window.initializePhotopeaWorker()),
+    new Promise((_,reject)=>{
+     bootTimer=setTimeout(()=>reject(Error('Background Photopea initialization exceeded 55 seconds.')),55000);
+    })
+   ]);
+   if(bootTimer)clearTimeout(bootTimer);
+   sharedPhotopeaPage=page;
+   await onStage('Photopea editor initialized and ready; reusing it for the remaining PSDs');
+   return {page,reused:false};
+  }catch(error){
+   if(bootTimer)clearTimeout(bootTimer);
+   console.error('[PC PSD renderer] Photopea startup '+attempt+'/2 failed:',bounded(error));
+   if(page)await page.close().catch(()=>{});
+   if(attempt===2)
+    throw Error('Photopea could not initialize in background Chrome/Edge. '+
+     'Open https://www.photopea.com in the same PC browser to check connectivity and any browser challenge. '+
+     'Recent errors: '+[bounded(error),...errors].slice(0,5).join('; '));
+   await onStage('Photopea did not connect; restarting its background tab once');
+  }
+ }
+ throw Error('Photopea could not initialize.');
+}
+
 export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateName='',mapping,
  smartObjects=[],fitMode='contain',artworkOrientation='',onStage=()=>{}}){
  const engine=String(process.env.POD_PSD_RENDERER||'photopea').toLowerCase();
@@ -163,29 +222,19 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
     '. Falling back to Photopea.');
   }
  }
- await onStage('Using Photopea fallback'+(nativeUnavailableReason?' (desktop Photoshop unavailable)':''));
+ await onStage('Using Photopea PC renderer (persistent editor session)');
  const executablePath=findPCBrowser();
  if(!executablePath)throw Error('Chrome or Microsoft Edge not found on PC. Set PHOTOPEA_CHROME_PATH or install Chrome/Edge.');
  let puppeteer;
  try{puppeteer=(await import('puppeteer-core')).default}
  catch{throw Error('Run worker/setup-worker.cmd to install the updated shared crop and PSD worker.')}
  const local=await openPhotopeaPCServer({psdPath,artworkPath,outputPath,onStage});
- let page=null,deadlineTimer=null;
+ let page=null,deadlineTimer=null,renderSucceeded=false;
  try{
   const warm=await getWarmPhotopeaBrowser(puppeteer,executablePath,onStage);
-  await onStage(warm.reused?'Reusing warm Photopea Chromium process':'Chromium ready for Photopea');
-  const browser=warm.browser;
-  page=await browser.newPage();
-  await page.setViewport({width:1250,height:900,deviceScaleFactor:1});
-  page.on('error',error=>{void Promise.resolve(onStage('PC Chromium error: '+bounded(error))).catch(()=>{})});
-  page.on('pageerror',error=>console.error('[PC PSD renderer] Page error:',bounded(error)));
-  page.on('requestfailed',request=>{
-   if(request.url().startsWith('https://www.photopea.com'))
-    console.error('[PC PSD renderer] Photopea request failed:',request.failure()?.errorText||'unknown');
-  });
-  page.on('crash',()=>console.error('[PC PSD renderer] Chromium crashed during PSD rendering.'));
-  await page.goto(local.url,{waitUntil:'domcontentloaded',timeout:45000});
-  await page.waitForFunction(()=>typeof window.renderMockupOnPC==='function',{timeout:20000});
+  const ready=await getWarmPhotopeaPage(warm.browser,local.url,onStage);
+  page=ready.page;
+  if(ready.reused)await onStage('Reusing already initialized Photopea editor');
   const rendering=page.evaluate(({templateName,mapping,fitMode,artworkOrientation})=>
     window.renderMockupOnPC({templateName,mapping,fitMode,artworkOrientation}),
     {templateName,mapping,fitMode,artworkOrientation});
@@ -193,7 +242,7 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
    deadlineTimer=setTimeout(()=>reject(Error('PSD processing exceeded 16 minutes on PC. Check RAM and retry.')),16*60*1000);
   });
   const result=await Promise.race([rendering,deadline]);
-  if(result.needsMapping)return result;
+  if(result.needsMapping){renderSucceeded=true;return result;}
   const metadata=await sharp(outputPath,{limitInputPixels:24_000_001}).metadata();
   if(metadata.format!=='jpeg'||!metadata.width||!metadata.height||
      metadata.width*metadata.height>24000000||metadata.width<150||metadata.height<150)
@@ -202,12 +251,18 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
   if(size<100||size>60*1024*1024)throw Error('Generated JPG file size is invalid.');
   console.log('[PC PSD renderer] '+templateName+' completed with Photopea in '+
    ((Date.now()-started)/1000).toFixed(1)+'s.');
+  renderSucceeded=true;
   return {...result,engine:'photopea',dimensions:{width:metadata.width,height:metadata.height},size};
  }finally{
   if(deadlineTimer)clearTimeout(deadlineTimer);
-  if(page)await page.close().catch(()=>{});
-  // Keep the browser warm for the next PSD, but close the one-job localhost
-  // artwork server and document page to avoid leaking source files and memory.
+  if(!renderSucceeded&&page){
+   // A failed script may leave Photopea's interpreter in an unknown state.
+   // Drop the tab so the next retry starts in a clean editor.
+   if(sharedPhotopeaPage===page)sharedPhotopeaPage=null;
+   await page.close().catch(()=>{});
+  }
+  // The permanent local server remains alive but cannot serve job assets
+  // when there is no active render. Successful Photopea tabs stay warm.
   await local.close();
  }
 }
