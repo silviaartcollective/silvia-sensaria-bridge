@@ -1,5 +1,17 @@
 {
+  "5x7": {
+    "fineArtPrint": true,
+    "canvas": false,
+    "framedCanvas": false,
+    "status": "Matte Poster Paper mapped"
+  },
   "8x10": {
+    "fineArtPrint": true,
+    "canvas": false,
+    "framedCanvas": false,
+    "status": "Matte Poster Paper mapped"
+  },
+  "8x12": {
     "fineArtPrint": true,
     "canvas": false,
     "framedCanvas": false,
@@ -46,6 +58,12 @@
     "canvas": true,
     "framedCanvas": true,
     "status": "mapped"
+  },
+  "28x30": {
+    "fineArtPrint": false,
+    "canvas": false,
+    "framedCanvas": false,
+    "status": "Awaiting verified poster and canvas supplier SKUs"
   },
   "30x40": {
     "fineArtPrint": true,
