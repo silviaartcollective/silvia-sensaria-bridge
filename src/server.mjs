@@ -2199,10 +2199,31 @@ const server = http.createServer(async (req, res) => {
           const target = cropTarget(ratio, currentJob.orientation);
           const width = Number(result.width || 0);
           const height = Number(result.height || 0);
-          if (width !== target.width || height !== target.height) {
+          // A crop must be extracted directly from the original pixels.
+          // Older workers that upscale to fixed 300-PPI targets must be updated.
+          const sourceCropWidth = Number(result.sourceCropWidth || 0);
+          const sourceCropHeight = Number(result.sourceCropHeight || 0);
+          const sourceMasterWidth = Number(result.sourceMasterWidth || 0);
+          const sourceMasterHeight = Number(result.sourceMasterHeight || 0);
+          if (!sourceCropWidth || !sourceCropHeight ||
+              !sourceMasterWidth || !sourceMasterHeight ||
+              width !== sourceCropWidth || height !== sourceCropHeight ||
+              width > sourceMasterWidth || height > sourceMasterHeight ||
+              result.upscaled === true) {
             throw new Error(
-              `${ratio} output is ${width}×${height}; expected ${target.width}×${target.height}`
+              `${ratio} crop was resized beyond its source or is missing native-resolution proof. ` +
+              'Update and restart the shared PC crop worker before retrying.'
             );
+          }
+          const expectedRatio = target.width / target.height;
+          if (Math.abs(width / height - expectedRatio) > 1 / Math.min(width, height)) {
+            throw new Error(`${ratio} crop does not match its requested aspect ratio.`);
+          }
+          if (!isStagedRevisionJob(currentJob) &&
+              manifest.master?.width && manifest.master?.height &&
+              (sourceMasterWidth !== Number(manifest.master.width) ||
+               sourceMasterHeight !== Number(manifest.master.height))) {
+            throw new Error(`${ratio} crop source dimensions differ from the R2 master.`);
           }
           const key = cropOutputKeyForJob(currentJob, ratio);
           if (!(await artworkObjectExists(key))) {
@@ -2222,7 +2243,10 @@ const server = http.createServer(async (req, res) => {
             sourceMasterKey: currentJob.masterKey,
             density: Number(result.density || 300),
             sizeBytes: Number(result.sizeBytes || 0) || null,
-            upscaled: result.upscaled === true,
+            recommendedPixelsMet: result.recommendedPixelsMet === true,
+            sourceCropWidth,
+            sourceCropHeight,
+            upscaled: false,
             updatedAt: new Date().toISOString()
           };
         }
@@ -4066,7 +4090,9 @@ const server = http.createServer(async (req, res) => {
       // A crop failure must never block creation of the Etsy draft.
       let cropQueue = null;
       let cropQueueWarning = '';
-      if (!manifest.fulfillmentRatiosReady) {
+      if (!manifest.fulfillmentRatiosReady || FULFILLMENT_RATIOS.some(
+        ratio => !manifest.fulfillmentRatios?.[ratio]?.productionReady
+      )) {
         try {
           const created = await createCropJob({
             artworkId: body.artwork_id,
