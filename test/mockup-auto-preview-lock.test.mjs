@@ -29,7 +29,7 @@ test('worker lease expires after two minutes with legacy browser lock recovery',
 test('private thumbnail API and worker-only claim route are present',()=>{
  const api=read('mockup-api.mjs');
  assert.ok(api.includes("parts[2]==='thumbnail'"));
- assert.ok(api.includes('resize(280,280'));
+ assert.ok(api.includes('resize(320,320'));
  assert.ok(api.includes("parts[0]==='worker'"));
  assert.ok(api.includes('workerAuthorized(req)'));
  assert.ok(api.includes('updateMockupItemProgress'));
