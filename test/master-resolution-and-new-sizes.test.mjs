@@ -70,9 +70,29 @@ test('crop targets below or above master never enlarge native pixel data',async(
  }finally{await Promise.all([rm(source,{force:true}),rm(output,{force:true})]);}
 });
 
+test('small-format files are proportionally downsized when the master has more pixels',async()=>{
+ const source=join(tmpdir(),'crop-large-'+randomUUID()+'.png');
+ const output=join(tmpdir(),'crop-small-'+randomUUID()+'.jpg');
+ try{
+  await sharp({create:{width:3000,height:4500,channels:3,background:'#c4c8c4'}}).png().toFile(source);
+  const master=await inspectMaster(source,'portrait');
+  const target={width:1500,height:2100};
+  const plan=validateRatioSource(master,'5x7',target);
+  assert.deepEqual(plan.crop,{width:3000,height:4200});
+  assert.deepEqual(plan.output,{width:1500,height:2100});
+  assert.equal(plan.upscaled,false);
+  const done=await generateProductionCrop({masterPath:source,outputPath:output,master,ratio:'5x7',target});
+  assert.equal(done.width,1500);
+  assert.equal(done.height,2100);
+  assert.equal(done.downscaled,true);
+  const meta=await sharp(output).metadata();
+  assert.deepEqual([meta.width,meta.height],[1500,2100]);
+ }finally{await Promise.all([rm(source,{force:true}),rm(output,{force:true})]);}
+});
+
 test('server does not accept legacy 300-PPI output or forget new ratios',()=>{
  const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
- assert.ok(server.includes('Shared PC Crop Worker v4.4.0 is required'));
- assert.ok(server.includes('width !== sourceCropWidth || height !== sourceCropHeight'));
+ assert.ok(server.includes('Shared PC Crop Worker v4.4.1 is required'));
+ assert.ok(server.includes('width > sourceCropWidth || height > sourceCropHeight'));
  assert.ok(server.includes('FULFILLMENT_RATIOS.some('));
 });
