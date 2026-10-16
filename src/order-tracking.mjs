@@ -102,6 +102,35 @@ export async function linkTrackingOrder(session, input) {
   await putJsonObject(key(id),doc);
   return doc;
 }
+// Tracking record for one receipt, only if it belongs to the connected shop.
+export async function readShopTrackingRecord(session, id) {
+  const doc = await readTrackingRecord(receiptId(id));
+  if (doc && String(doc.shopId) !== String(session.shop.shop_id)) return null;
+  return doc;
+}
+// Downloading a Sensaria CSV links the receipt automatically. The CSV's
+// "PO Number" is the Etsy receipt ID, so it is the reference Sensaria's shipped
+// order report matches on (PartnerOrderReferenceNumber). An existing link is
+// never replaced, and a receipt linked to another supplier is left alone.
+export async function autoLinkSensariaReceipt(session, receipt) {
+  const id = receiptId(receipt?.receipt_id);
+  const old = await readTrackingRecord(id);
+  if (old) {
+    if (String(old.shopId) !== String(session.shop.shop_id)) throw new Error('Shop mismatch.');
+    return { record: old, linked: false, reason: old.supplier === 'sensaria' ? 'already_linked' : 'other_supplier' };
+  }
+  if (receipt.shop_id && String(receipt.shop_id) !== String(session.shop.shop_id))
+    throw new Error('This Etsy receipt belongs to a different shop.');
+  const now = new Date().toISOString();
+  const doc = {
+    receiptId: id, shopId: String(session.shop.shop_id), supplier: 'sensaria', supplierOrderId: id,
+    supplierReference: 'sensaria_po_number', linkSource: 'sensaria_csv_download',
+    etsyStatus: { isShipped: !!(receipt.is_shipped || receipt.was_shipped), shipments: receiptShipments(receipt) },
+    shipments: [], linkedAt: now, updatedAt: now
+  };
+  await putJsonObject(key(id), doc);
+  return { record: doc, linked: true };
+}
 function safeTracking(value) {
   const s=text(value);
   if (!/^[A-Za-z0-9][A-Za-z0-9-]{4,79}$/.test(s)) throw new Error('Invalid or missing tracking number.');

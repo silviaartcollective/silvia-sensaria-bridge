@@ -14,7 +14,7 @@ import { findCandidates, getDetails, reserveMockups, prepareReplacement, finaliz
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
-import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy } from './order-tracking.mjs';
+import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy, readShopTrackingRecord, autoLinkSensariaReceipt } from './order-tracking.mjs';
 
 const TRACKING_SHOP_NAME="Silvia Art Collective";
 import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
@@ -3009,6 +3009,15 @@ const server = http.createServer(async (req, res) => {
            Math.max(exported.sources[0]?.width||0,exported.sources[0]?.height||0)>17500 ||
            !exported.rows[0]?.['Product Code'] || !exported.rows[0]?.URL)
           throw Error('Sensaria GO CSV needs the verified R2 production crop and a valid product code.');
+        stage('Linking this order to Sensaria for tracking');
+        try{
+          const linked=await autoLinkSensariaReceipt(session,latest);
+          if(!linked.linked&&linked.reason==='other_supplier')
+            console.warn('[sensaria CSV] #'+id+' is linked to '+linked.record.supplier+'; tracking link left unchanged.');
+        }catch(error){
+          // The CSV is still valid; the order can be linked from the order page.
+          console.warn('[sensaria CSV] #'+id+' tracking link skipped: '+String(error?.message||error));
+        }
         stage('Finalizing verified CSV download');
         return exported.csv;
       });
@@ -3209,6 +3218,15 @@ const server = http.createServer(async (req, res) => {
       'cache-control':'no-store','x-content-type-options':'nosniff'});
     return res.end(js);
   }
+  if (req.method === 'GET' && url.pathname === '/api/tracking/record') {
+    if (!requireAdminApi(req,res)) return;
+    try {
+      const session=await getEtsySession();
+      const record=await readShopTrackingRecord(session,url.searchParams.get('receiptId'));
+      return sendJson(res,200,{ok:true,record,
+        etsySubmissionEnabled:String(process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED||'').toLowerCase()==='true'});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
+  }
   if (req.method === 'GET' && url.pathname === '/api/tracking/orders') {
     if (!requireAdminApi(req,res)) return;
     try {
@@ -3216,7 +3234,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res,200,{ok:true,...(await listTrackingRecords(session))});
     }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
   }
-  if (req.method === 'POST' && /^\/api\/tracking\/(link|check-supplier|check-etsy|csv-preview|csv-import|send-etsy)$/.test(url.pathname)) {
+  if (req.method === 'POST' && /^\/api\/tracking\/(link|stage|check-supplier|check-etsy|csv-preview|csv-import|send-etsy)$/.test(url.pathname)) {
     if (!requireAdminApi(req,res)) return;
     const origin=String(req.headers.origin||'');
     const host=String(req.headers.host||'');
@@ -3240,6 +3258,14 @@ const server = http.createServer(async (req, res) => {
       if(url.pathname==='/api/tracking/link'){
         const record=await linkTrackingOrder(session,body);
         return sendJson(res,200,{ok:true,record});
+      }
+      if(url.pathname==='/api/tracking/stage'){
+        // Order page "Add tracking": a shipment the supplier confirmed, saved in
+        // the app only. Etsy is not updated and the buyer is not notified.
+        if(body.confirm!=='SAVE TRACKING')throw new Error('Explicit tracking save confirmation required.');
+        const data=await stageShipment(session,{receiptId:body.receiptId,trackingNumber:body.trackingNumber,
+          trackingUrl:body.trackingUrl,carrier:body.carrier,status:'shipped',source:'order_page'});
+        return sendJson(res,200,{ok:true,duplicate:data.duplicate,record:data.record,etsySubmitted:false});
       }
       if(url.pathname==='/api/tracking/check-supplier'){
         return sendJson(res,200,{ok:true,...(await checkSupplierTracking(session,body.receiptId))});
