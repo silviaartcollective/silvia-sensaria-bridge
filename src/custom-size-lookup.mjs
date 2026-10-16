@@ -238,7 +238,7 @@ async function prodigiRecord({ productCode, size, frame, countryCode }) {
 
 async function printifyRecord(row, countryCode) {
   try {
-    const records = await scanPrintifyComparisonRows({ rows: [row], countryCode, fresh: true });
+    const records = await scanPrintifyComparisonRows({ rows: [row], countryCode, fresh: false });
     const record = [...records.values()][0];
     return record || providerRecord({
       provider: 'Printify',
@@ -256,7 +256,7 @@ async function printifyRecord(row, countryCode) {
 
 async function gelatoRecord(row, countryCode) {
   try {
-    const records = await scanGelatoComparisonRows({ rows: [row], countryCode, fresh: true });
+    const records = await scanGelatoComparisonRows({ rows: [row], countryCode, fresh: false });
     const record = [...records.values()][0];
     return record || providerRecord({
       provider: 'Gelato',
@@ -435,13 +435,44 @@ function customShippingMethod(value) {
   return result;
 }
 
+// Never let one live POD catalog indefinitely block a custom-size comparison.
+// A timed-out supplier is UNKNOWN (not unavailable and not ranked).
+export const CUSTOM_LOOKUP_PROVIDER_DEADLINES_MS = Object.freeze({
+  prodigi: 18000,
+  printify: 24000,
+  gelato: 24000,
+  printshrimp: 10000,
+  artelo: 12000
+});
+export async function boundedCustomProvider(key, operation, timeoutMs = CUSTOM_LOOKUP_PROVIDER_DEADLINES_MS[key]) {
+  const names={prodigi:'Prodigi',printify:'Printify',gelato:'Gelato',printshrimp:'PrintShrimp',artelo:'Artelo'};
+  const provider=names[key];
+  if(!provider||typeof operation!=='function'||!Number.isFinite(timeoutMs)||timeoutMs<=0)
+    throw Error('Invalid bounded supplier lookup.');
+  let timer;
+  try{
+    return await Promise.race([
+      Promise.resolve().then(operation).catch(error=>providerRecord({
+        provider,status:'error',reason:String(error?.message||error).slice(0,250)
+      })),
+      new Promise(resolve=>{
+        timer=setTimeout(()=>resolve(providerRecord({
+          provider,status:'timed-out',reason:'Live '+provider+
+            ' scan exceeded '+Math.ceil(timeoutMs/1000)+' seconds. Availability and cost were not verified; this supplier was excluded from the ranking. Try again later.'
+        })),timeoutMs);
+      })
+    ]);
+  }finally{clearTimeout(timer);}
+}
+
 export async function lookupCustomSize({
   countryCode,
   productCode,
   width,
   height,
   frame,
-  shippingMode = 'auto'
+  shippingMode = 'auto',
+  previewOnly = false
 } = {}) {
   const country = normalizeCountry(countryCode);
   const requestedShippingMode = customShippingMethod(shippingMode);
@@ -469,13 +500,22 @@ export async function lookupCustomSize({
     countryCode: country
   });
 
-  const [prodigi, printify, gelato, printshrimp, artelo] = await Promise.all([
-    prodigiRecord({ productCode: product, size, frame: resolvedFrame, countryCode: country }),
-    printifyRecord(row, country),
-    gelatoRecord(row, country),
-    printShrimpRecord({ productCode: product, size, countryCode: country }),
-    arteloRecord({ productCode: product, size, countryCode: country })
-  ]);
+  // Return a quick captured-Sensaria estimate before long API scans. In a
+  // complete lookup all live providers run concurrently with independent bounds.
+  const providerTasks = [
+    ['prodigi', () => prodigiRecord({ productCode: product, size, frame: resolvedFrame, countryCode: country })],
+    ['printify', () => printifyRecord(row, country)],
+    ['gelato', () => gelatoRecord(row, country)],
+    ['printshrimp', () => printShrimpRecord({ productCode: product, size, countryCode: country })],
+    ['artelo', () => arteloRecord({ productCode: product, size, countryCode: country })]
+  ];
+  const quotes = previewOnly
+    ? providerTasks.map(([key]) => providerRecord({
+        provider: ({prodigi:'Prodigi',printify:'Printify',gelato:'Gelato',printshrimp:'PrintShrimp',artelo:'Artelo'})[key],
+        status:'checking',reason:'Live supplier quote has not completed yet.'
+      }))
+    : await Promise.all(providerTasks.map(([key, fn]) => boundedCustomProvider(key, fn)));
+  const [prodigi,printify,gelato,printshrimp,artelo] = quotes;
 
   const raw = {
     sensaria,
@@ -493,6 +533,11 @@ export async function lookupCustomSize({
       estimateSupplierLandedCost(record, { countryCode: country, policy })
     ])
   );
+
+  const incompleteProviders=Object.entries(suppliers)
+    .filter(([,record])=>['checking','timed-out'].includes(record?.status))
+    .map(([key])=>key);
+  const partial=incompleteProviders.length>0;
 
   const ranked = Object.values(suppliers)
     .filter(item => item?.eligible && numeric(item?.modeledLandedUsd ?? item?.totalUsd) != null)
@@ -606,6 +651,8 @@ export async function lookupCustomSize({
       frame: resolvedFrame || null
     },
     suppliers,
+    partial,
+    incompleteProviders,
     ranking: ranked.map((item, index) => ({
       rank: index + 1,
       provider: item.provider,
