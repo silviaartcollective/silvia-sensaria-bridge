@@ -5060,6 +5060,4 @@ server.listen(port, '0.0.0.0', () => {
     };
     setInterval(()=>{void poll();},GMAIL_TRACKING_POLL_MS).unref();
   }
-  if(false){
-  }
 });
