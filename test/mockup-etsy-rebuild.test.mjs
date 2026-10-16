@@ -70,13 +70,10 @@ test('vertical landscape and square mockups remain separated',()=>{
  assert.match(read('src/mockup-api.mjs'),/artworkOrientation:manifest\.orientation/);
 });
 
-test('PSD jobs use native by default and retain Chromium fallback',()=>{
+test('PSD jobs render natively on the PC worker with no browser fallback',()=>{
  const processor=read('worker/mockup-processor.mjs');
- assert.match(processor,/POD_PSD_RENDERER\|\|'auto'/);
- assert.match(processor,/getWarmPhotopeaBrowser/);
- assert.match(processor,/sharedPhotopeaBrowser\?\.isConnected/);
- assert.match(processor,/if\(page\)await page\.close/);
- assert.doesNotMatch(processor,/if\(browser\)await browser\.close/);
+ assert.match(processor,/renderMockupNative\(/);
+ assert.doesNotMatch(processor,/POD_PSD_RENDERER|puppeteer|getWarmPhotopea/);
 });
 
 test('only manually selected JPGs are attached to Etsy and saved for restart recovery',()=>{

@@ -16,15 +16,13 @@ test('shared startup checks for a running PC worker first',()=>{
  for(const phrase of ['/api/crop-worker/status','pod-crop-worker://start','status.online','COOLDOWN','isWindows'])
   assert.ok(script.includes(phrase),phrase);
 });
-test('Photopea timeouts run on PC and errors remain visible in Product Creator',()=>{
- const worker=src('../worker/photopea-worker-page.js');
+test('PSD rendering runs on the PC worker and its errors remain visible in Product Creator',()=>{
  const renderer=src('../worker/mockup-processor.mjs');
+ const worker=src('../worker/index.mjs');
  const client=src('mockup-generator-client.js');
- assert.doesNotThrow(()=>new vm.Script(worker));
- assert.ok(worker.includes('MG_SENTINEL:'));
- assert.ok(worker.includes('did not respond within'));
- assert.ok(renderer.includes('protocolTimeout'));
+ assert.ok(renderer.includes('renderMockupNative('));
  assert.ok(renderer.includes('onStage'));
+ assert.ok(worker.includes('api.mockupFail(id,mockupOwner,itemId,error,false)'));
  assert.ok(client.includes("t.progress"));
  assert.ok(!client.includes('await pp.init()'));
 });

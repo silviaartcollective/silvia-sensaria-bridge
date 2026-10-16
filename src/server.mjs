@@ -2124,7 +2124,7 @@ async function reconcileCompletedMockupsForArtwork(artworkId){
 }
 
 const server = http.createServer(async (req, res) => {
-  // Photopea mockup batch endpoints are private and separate from Etsy fulfillment.
+  // PSD mockup batch endpoints are private and separate from Etsy fulfillment.
   const mockupUrl=new URL(req.url||'/', 'https://'+String(req.headers.host||'localhost'));
   if(mockupUrl.pathname==='/assets/crop-worker-auto.js'&&req.method==='GET'){
     if(!requireAdminApi(req,res))return;

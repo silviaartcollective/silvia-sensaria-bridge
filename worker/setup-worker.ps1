@@ -32,24 +32,13 @@ foreach($entry in $definitions){
 }
 $config=@{apps=$apps;workerId="pod-crop-main-pc";pollIntervalMs=3000;idleExitMs=0}
 Write-Host ""
-Write-Host "Installing Sharp, native PSD parsing and compatibility rendering…"
+Write-Host "Installing Sharp and the PSD reader (no Photoshop, Photopea or browser needed)…"
 npm install
 if($LASTEXITCODE -ne 0){throw "npm install failed."}
 node --input-type=module -e "import('sharp').then(async ({default:sharp})=>{await sharp({create:{width:2,height:2,channels:3,background:'#ffffff'}}).jpeg().toBuffer();console.log('Sharp ready.')})"
 if($LASTEXITCODE -ne 0){throw "Sharp is not ready; please review npm install messages."}
-node --input-type=module -e "import('puppeteer-core').then(()=>console.log('Puppeteer Core ready.')).catch(e=>{console.error(e);process.exit(1);})"
-if($LASTEXITCODE -ne 0){throw "Puppeteer Core is missing. Check npm install messages."}
-node --input-type=module -e "import('ag-psd').then(()=>console.log('Native PSD parser ready.')).catch(e=>{console.error(e);process.exit(1);})"
+node --input-type=module -e "import('ag-psd').then(()=>console.log('PSD reader ready.')).catch(e=>{console.error(e);process.exit(1);})"
 if($LASTEXITCODE -ne 0){throw "ag-psd is missing. Check npm install messages."}
-$BrowserPaths=@(
-  "$env:PROGRAMFILES\\Google\\Chrome\\Application\\chrome.exe",
-  "$env:PROGRAMFILES\\Microsoft\\Edge\\Application\\msedge.exe",
-  "${env:PROGRAMFILES(X86)}\\Microsoft\\Edge\\Application\\msedge.exe",
-  "$env:LOCALAPPDATA\\Google\\Chrome\\Application\\chrome.exe"
-)
-if(-not ($BrowserPaths | Where-Object { Test-Path $_ } | Select-Object -First 1)){
- Write-Host "Warning: Chrome/Edge not found in usual locations. Install one or set PHOTOPEA_CHROME_PATH for PSD rendering." -ForegroundColor Yellow
-}
 $config | ConvertTo-Json -Depth 6 | Set-Content -Path $target -Encoding UTF8
 & (Join-Path $WorkerDir "install-protocol.ps1")
 if($LASTEXITCODE -ne 0){throw "Windows protocol installation failed."}

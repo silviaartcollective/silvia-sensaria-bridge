@@ -1,5 +1,5 @@
 // Product Creator UI for the shared PC Crop + Mockup Worker.
-// The browser uploads inputs and previews results; it NEVER opens PSDs in Photopea.
+// The browser uploads inputs and previews results; PSDs are rendered by the shared PC worker.
 const panel=document.getElementById('mockup-generator-panel');
 if(panel){
 const $=id=>document.getElementById(id);
@@ -395,18 +395,16 @@ async function workerStatus(){
   const data=await response.json(),worker=data.worker||{};
   const version=String(worker.version||'0').split('.').map(Number);
   const fixed=worker.online&&worker.mockups===true&&
-   (version[0]>4||(version[0]===4&&version[1]>=3));
+   (version[0]>4||(version[0]===4&&version[1]>=5));
   const text=fixed
-   ?'Shared PC Crop + Mockup Worker v'+worker.version+' online'+(worker.busy?' · processing':' · idle')+
-     ((version[0]===4&&(version[1]<4||(version[1]===4&&Number(version[2]||0)<2)))?' · Crop worker update to v4.4.2 required (PSD mockups still supported)':'')
+   ?'Shared PC Crop + Mockup Worker v'+worker.version+' online'+(worker.busy?' · processing':' · idle')
    :worker.online&&worker.mockups===true
-    ?'PSD worker v'+(worker.version||'unknown')+' needs the Smart Object fix. Update the local worker and restart (version 4.3.0).'
+    ?'PC worker v'+(worker.version||'unknown')+' still uses Photoshop/Photopea. Update the worker folder, run setup-worker.cmd and restart (v4.5.0 renders PSDs on its own).'
     :worker.online?'Old crop-only worker online. Update the PC worker folder, run setup-worker.cmd and restart.'
     :worker.configured?'Shared PC worker offline · use Launch Shared Crop Worker above'
     :'Shared PC worker not configured in Render';
   $('mg-worker-status').textContent=text;
-  $('mg-worker-status').style.color=fixed&&(version[0]>4||(version[0]===4&&(version[1]>4||(version[1]===4&&Number(version[2]||0)>=2))))
-   ?'#477153':'#a46b3d';
+  $('mg-worker-status').style.color=fixed?'#477153':'#a46b3d';
   return fixed;
  }catch{
   $('mg-worker-status').textContent='Could not check PC worker connection';
