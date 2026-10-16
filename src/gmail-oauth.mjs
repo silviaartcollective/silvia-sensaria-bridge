@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import {getJsonObject,putJsonObject,isMissingR2Object} from './r2.mjs';
 
-const KEY='integrations/gmail/sensaria-oauth-v1.json';
+const KEY='integrations/gmail/silvia/sensaria-oauth-v1.json';
 const SCOPE='https://www.googleapis.com/auth/gmail.readonly';
 const flowRequests=new Map();
 const cachedTokens=new Map();
