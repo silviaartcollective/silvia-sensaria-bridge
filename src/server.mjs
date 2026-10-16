@@ -35,7 +35,8 @@ import { renderListingConverterPage } from './listing-converter-page.mjs';
 import {renderListingsPage} from './listings-page.mjs';
 import {
   listingEditorFields,listingEditorFingerprint,validateMasterListingEdit,
-  inventoryEditorRows,inventoryEditorFingerprint,applyInventoryEditorChanges
+  inventoryEditorRows,inventoryEditorFingerprint,applyInventoryEditorChanges,
+  artworkIdFromSkus
 } from './master-listings.mjs';
 import {originalEtsyCreationTimestamp,sortConverterListingsOldestFirst} from './converter-listing-order.mjs';
 import { listingSeoPreservation, describeEtsyDescriptionDifference, sameEtsyDescription } from './converter-description.mjs';
@@ -45,7 +46,7 @@ import {
  updateConversionJob,cancelConversion
 } from './listing-conversion-queue.mjs';
 import {
- reserveConverterArtworkRevision,startConverterArtworkCrop,getConverterArtworkRevisionStatus,
+ reserveConverterArtworkRevision,reserveConverterArtworkRegeneration,startConverterArtworkCrop,getConverterArtworkRevisionStatus,
  assertConverterArtworkReady,activateConverterArtworkRevision
 } from './converter-artwork-revision.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
@@ -460,6 +461,30 @@ async function cachedConverterListingPreview(session,listingId){
 // round-trip every time the user switches tabs or refreshes.
 const masterListingPageCache=new Map();
 const MASTER_PAGE_TTL_MS=2*60*1000;
+// Verified listing → artwork link for edits that touch artwork files: either a
+// converted listing in the converter map, or a Product Creator listing whose
+// artwork manifest records this Etsy listing ID.
+async function resolveListingArtwork({listingId,listing,map}){
+ const id=Number(listingId);
+ const mapping=map?.listings?.[String(id)];
+ if(mapping?.status==='converted'&&mapping.artworkId){
+  const artworkId=String(mapping.artworkId).toUpperCase();
+  const manifest=await loadArtworkManifest(artworkId).catch(()=>null);
+  if(manifest?.master?.key&&manifest.status==='ready'&&hasAuthorizedConverterLink({
+    listingId:id,sourceListingId:manifest.sourceEtsyListingId,artworkId,
+    reconvert:true,mappings:map.listings}))
+   return {artworkId,source:'converter',manifest};
+ }
+ const fromSku=artworkIdFromSkus(listing?.skus);
+ if(fromSku){
+  const manifest=await loadArtworkManifest(fromSku).catch(()=>null);
+  const recorded=[manifest?.etsyDraftListingId,manifest?.etsyConfiguration?.listingId,manifest?.sourceEtsyListingId]
+   .some(value=>Number(value)===id);
+  if(manifest?.master?.key&&manifest.status==='ready'&&recorded)
+   return {artworkId:fromSku,source:'product-creator',manifest};
+ }
+ return null;
+}
 async function masterListingPage(session,offset=0){
  const safeOffset=Number(offset);
  if(!Number.isInteger(safeOffset)||safeOffset<0||safeOffset>4900||safeOffset%100!==0)
@@ -483,7 +508,7 @@ async function masterListingPage(session,offset=0){
      .map(x=>{
        const mapping=map.listings?.[String(x.listing_id)];
        return {listingId:Number(x.listing_id),title:String(x.title||''),state:x.state,
-         artworkId:mapping?.artworkId||null,converted:mapping?.status==='converted',
+         artworkId:mapping?.artworkId||artworkIdFromSkus(x.skus),converted:mapping?.status==='converted',
          originalCreationTimestamp:originalEtsyCreationTimestamp(x)};
      });
    return {listings:sortConverterListingsOldestFirst(rows),offset:safeOffset,
@@ -3672,8 +3697,11 @@ const server = http.createServer(async (req, res) => {
         // previews load after the editor is visible instead of blocking it.
         const map=await loadListingConverterMap();
         const entry=map.listings?.[String(id)]||null;
+        const linked=await resolveListingArtwork({listingId:id,listing:fresh,map});
         return sendJson(res,200,{ok:true,listingId:id,state:String(fresh.state||''),
-          artworkId:entry?.artworkId||null,converted:entry?.status==='converted',
+          artworkId:linked?.artworkId||entry?.artworkId||artworkIdFromSkus(fresh.skus),
+          converted:entry?.status==='converted',artworkEditable:Boolean(linked),
+          artworkSource:linked?.source||null,
           fields:listingEditorFields(fresh),metadataHash:listingEditorFingerprint(fresh),
           inventoryRows:[],inventoryHash:null,sections:[],previewUrl:null,
           optionsPending:true});
@@ -3797,7 +3825,8 @@ const server = http.createServer(async (req, res) => {
   // Staged reconversion requires a fresh master and a separately verified crop job.
   if ((req.method==='POST'&&(
      url.pathname==='/api/listing-converter/reconvert/reserve'||
-     url.pathname==='/api/listing-converter/reconvert/crop'
+     url.pathname==='/api/listing-converter/reconvert/crop'||
+     url.pathname==='/api/listing-converter/reconvert/activate'
   ))||(req.method==='GET'&&url.pathname==='/api/listing-converter/reconvert/status')){
     if(!requireAdminApi(req,res))return;
     if(req.method==='POST'){
@@ -3815,34 +3844,56 @@ const server = http.createServer(async (req, res) => {
      const listingId=Number(body.listingId);
      if(!Number.isSafeInteger(listingId)||listingId<=0)
       return sendJson(res,400,{ok:false,error:'Invalid Etsy listing ID.'});
-     const map=await loadListingConverterMap(),prior=map.listings?.[String(listingId)];
-     if(!prior?.artworkId||prior.status!=='converted')
-      return sendJson(res,409,{ok:false,error:'Only already-converted listings can upload a reconversion master.'});
-     const artworkId=String(prior.artworkId).toUpperCase();
-     if(!new RegExp('^SAC\\d+$').test(artworkId))
-      return sendJson(res,409,{ok:false,error:'The artwork is not linked to this shop.'});
-     const manifest=await loadArtworkManifest(artworkId);
-     if(!manifest?.master?.key||manifest.status!=='ready'||
-        !hasAuthorizedConverterLink({
-         listingId,sourceListingId:manifest.sourceEtsyListingId,artworkId,
-         reconvert:true,mappings:map.listings
-        }))
-      return sendJson(res,409,{ok:false,error:'Artwork ownership could not be verified.'});
+     const map=await loadListingConverterMap();
      const session=await getEtsySession({forceRefresh:true}),shopId=String(session.shop.shop_id);
+     // Converted listings are verified through the converter map; Product
+     // Creator listings through their artwork manifest and Etsy SKUs.
+     const etsyListing=map.listings?.[String(listingId)]?.status==='converted'?null:
+      await getListing({listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
+       accessToken:session.accessToken}).catch(()=>null);
+     if(etsyListing&&Number(etsyListing.shop_id)!==Number(session.shop.shop_id))
+      return sendJson(res,403,{ok:false,error:'Listing does not belong to the connected Silvia Etsy shop.'});
+     const linked=await resolveListingArtwork({listingId,listing:etsyListing,map});
+     if(!linked||!new RegExp('^SAC\\d+$').test(linked.artworkId))
+      return sendJson(res,409,{ok:false,error:'Artwork ownership could not be verified for this listing.'});
+     const artworkId=linked.artworkId;
      if(req.method==='GET')
       return sendJson(res,200,{ok:true,...await getConverterArtworkRevisionStatus(shopId,listingId)});
      if(url.pathname.endsWith('/reserve')){
-      if(!body.master?.filename)
+      const useExistingMaster=body.useExistingMaster===true;
+      if(!useExistingMaster&&!body.master?.filename)
        return sendJson(res,400,{ok:false,error:'Choose a new master artwork file.'});
       const listings=await allShopListingsForPriceSync(session);
       if(!listings.some(item=>Number(item.listing_id)===listingId))
        return sendJson(res,404,{ok:false,error:'Etsy listing is not active or draft in this shop.'});
+      if(useExistingMaster)
+       return sendJson(res,200,{ok:true,...await reserveConverterArtworkRegeneration({
+        shopId,listingId,artworkId
+       })});
       return sendJson(res,200,{ok:true,...await reserveConverterArtworkRevision({
        shopId,listingId,artworkId,master:body.master,orientation:body.orientation
       })});
      }
      if(!/^[0-9a-f-]{36}$/i.test(String(body.revision||'')))
       return sendJson(res,400,{ok:false,error:'Missing artwork revision ID.'});
+     if(url.pathname.endsWith('/activate')){
+      // Listings editor "Re-upload artwork": Etsy variants, SKUs and prices are
+      // unchanged, so the verified master + crops are promoted into the
+      // artwork's R2 folder directly (same checks and rollback as reconversion).
+      if(body.confirm!=='REPLACE SILVIA ARTWORK')
+       return sendJson(res,400,{ok:false,error:'Explicit artwork replacement confirmation is required.'});
+      const activated=await activateConverterArtworkRevision({
+       shopId,listingId,artworkId,revision:String(body.revision)
+      });
+      const latestMap=await loadListingConverterMap();
+      const entry=latestMap.listings?.[String(listingId)];
+      if(entry&&!activated.alreadyActive){
+       entry.artworkReplacedAt=new Date().toISOString();
+       entry.artworkReplacementCount=Number(entry.artworkReplacementCount||0)+1;
+       await saveListingConverterMap(latestMap);
+      }
+      return sendJson(res,200,{ok:true,...activated});
+     }
      const queued=await startConverterArtworkCrop({
       shopId,listingId,artworkId,revision:body.revision
      });

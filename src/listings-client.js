@@ -59,8 +59,8 @@ function renderList(){
   const b=document.createElement('button');b.type='button';b.className='listing-choice'+(row.listingId===selectedId?' selected':'');
   const title=document.createElement('b');title.textContent=row.title||'Untitled';
   const sub=document.createElement('span');sub.className='muted';
-  sub.textContent='#'+row.listingId+' · '+(row.state||'unknown')+' · '+(row.artworkId||'Not linked to Silvia')+
-     (row.converted?' · Converted':'');
+  sub.textContent=['#'+row.listingId,row.state||'unknown',row.artworkId,row.converted?'Converted':'']
+     .filter(Boolean).join(' · ');
   b.append(title,sub);b.addEventListener('click',()=>{if(dirty&&!confirm('Discard unsaved edits to this listing?'))return;
     openListing(row.listingId).catch(error=>notice('details-status',String(error.message||error),true));});
   box.append(b);
@@ -132,7 +132,7 @@ async function openListing(id){
  current=data;el('editor-empty').classList.add('hidden');el('editor').classList.remove('hidden');
  const f=data.fields;
  el('editor-heading').textContent='Editing #'+id;
- el('editor-info').textContent='Etsy '+data.state+' · '+(data.artworkId||'No Silvia artwork mapping')+' · '+(data.converted?'Converted listing':'Not converted');
+ el('editor-info').textContent=['Etsy '+data.state,data.artworkId,data.converted?'Converted listing':''].filter(Boolean).join(' · ');
  el('open-etsy').href='https://www.etsy.com/listing/'+id;
  el('edit-title').value=f.title||'';el('edit-description').value=f.description||'';
  el('edit-tags').value=(f.tags||[]).join(', ');
@@ -146,6 +146,7 @@ async function openListing(id){
   const o=document.createElement('option');o.value=String(f.shopSectionId);o.textContent='Current section #'+f.shopSectionId;section.append(o);
  }
  section.value=String(f.shopSectionId||0);
+ resetArtworkSection(data);
  el('listing-preview').classList.add('hidden');
  if(data.previewUrl){
   const img=el('listing-preview');img.src=data.previewUrl;img.classList.remove('hidden');
@@ -187,6 +188,95 @@ async function openListing(id){
   }).catch(()=>{});
  }
 }
+// ---- Production artwork: re-upload or regenerate crops from the stored master.
+let artworkBusy=false;
+function artworkButtonLabel(){
+ const file=el('artwork-file').files?.[0];
+ el('artwork-replace').textContent=file?'Re-upload artwork':'Regenerate crops from stored master';
+}
+function resetArtworkSection(data){
+ const show=Boolean(data?.artworkEditable&&data?.artworkId);
+ el('artwork-section').classList.toggle('hidden',!show);
+ if(artworkBusy)return;
+ el('artwork-file').value='';artworkButtonLabel();clearNotice('artwork-status');
+}
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function fileFingerprint(file){
+ if(!globalThis.crypto?.subtle)throw Error('Secure browser file verification is unavailable. Open this app over HTTPS.');
+ const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+ return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
+}
+async function fileOrientation(file){
+ try{const b=await createImageBitmap(file);const o=b.width===b.height?'square':b.width>b.height?'landscape':'portrait';b.close();return o;}
+ catch{return 'auto';}
+}
+async function uploadToR2(url,file,contentType){
+ for(let attempt=0;attempt<3;attempt++){
+  try{
+   const res=await fetch(url,{method:'PUT',headers:{'content-type':contentType||file.type||'image/jpeg'},body:file});
+   if(res.ok)return;
+   if(![408,429,500,502,503,504].includes(res.status)||attempt===2)throw Error('Cloudflare upload failed ('+res.status+')');
+  }catch(error){if(attempt===2)throw error;}
+  await pause(1200*(2**attempt));
+ }
+}
+async function waitForArtworkCrops(id,onUpdate){
+ const deadline=Date.now()+45*60*1000;
+ let failures=0;
+ while(Date.now()<deadline){
+  await pause(3000);
+  let status;
+  try{status=await request('/api/listing-converter/reconvert/status?listingId='+encodeURIComponent(id));failures=0;}
+  catch(error){if(++failures>=5)throw error;continue;}
+  if(status.ready)return status;
+  if(status.status==='failed')throw Error(status.message||'The crop worker could not generate the new crops.');
+  onUpdate(status);
+ }
+ throw Error('Crops are still not finished after 45 minutes. Check the PC crop worker, then click the button again to resume.');
+}
+el('artwork-file').addEventListener('change',artworkButtonLabel);
+el('artwork-replace').addEventListener('click',async()=>{
+ if(!current?.artworkId||artworkBusy)return;
+ const id=selectedId,artworkId=String(current.artworkId),file=el('artwork-file').files?.[0]||null;
+ const ok=confirm(file
+  ?'Replace the artwork for '+artworkId+' with '+file.name+'?\n\nThe new master is uploaded and cropped on the PC worker. After the crops are verified, '+artworkId+'\'s master, crops and manifest in R2 are overwritten. Etsy photos, SKUs and prices are not changed.'
+  :'Regenerate the production crops for '+artworkId+' from the master already stored in R2?\n\nNo upload is needed. After the new crops are verified, '+artworkId+'\'s crops and manifest in R2 are overwritten. Etsy photos, SKUs and prices are not changed.');
+ if(!ok)return;
+ const btn=el('artwork-replace');artworkBusy=true;btn.disabled=true;el('artwork-file').disabled=true;
+ try{
+  let reserved;
+  if(file){
+   notice('artwork-status','Checking '+file.name+'…');
+   const [sha256,orientation]=await Promise.all([fileFingerprint(file),fileOrientation(file)]);
+   reserved=await request('/api/listing-converter/reconvert/reserve',{listingId:id,artworkId,orientation,
+    master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size,sha256}});
+   if(!reserved.uploadAlreadyPresent){
+    notice('artwork-status','Uploading '+file.name+' to Cloudflare R2…');
+    await uploadToR2(reserved.upload.uploadUrl,file,reserved.upload.contentType);
+   }
+  }else{
+   notice('artwork-status','Copying the stored master for '+artworkId+' inside R2…');
+   reserved=await request('/api/listing-converter/reconvert/reserve',{listingId:id,artworkId,useExistingMaster:true});
+  }
+  const revision=reserved.revision;
+  notice('artwork-status','Queueing new production crops for '+artworkId+'…');
+  const started=await request('/api/listing-converter/reconvert/crop',{listingId:id,artworkId,revision});
+  if(started.job?.status!=='completed'){
+   if(started.worker&&!started.worker.online)
+    notice('artwork-status','Crops queued. Launch the PC crop worker; this page keeps waiting and finishes automatically.');
+   await waitForArtworkCrops(id,status=>{
+    notice('artwork-status','Cropping '+artworkId+' on the PC worker'+(status.currentRatio?' · '+status.currentRatio:'')+
+     ' · '+(status.progress||0)+'%'+(status.message?' · '+status.message:''));
+   });
+  }
+  notice('artwork-status','Crops verified. Writing the new files into '+artworkId+'\'s R2 folder…');
+  await request('/api/listing-converter/reconvert/activate',{listingId:id,artworkId,revision,confirm:'REPLACE SILVIA ARTWORK'});
+  notice('artwork-status',(file?'Artwork replaced':'Crops regenerated')+' for '+artworkId+'. Sensaria CSVs and supplier orders now use the new files.');
+  el('artwork-file').value='';artworkButtonLabel();
+ }catch(error){
+  notice('artwork-status','Artwork not replaced: '+String(error.message||error)+' The current artwork is unchanged; click the button again to resume.',true);
+ }finally{artworkBusy=false;btn.disabled=false;el('artwork-file').disabled=false;}
+});
 fields.forEach(id=>el(id).addEventListener('input',()=>{dirty=true;}));
 el('listing-search').addEventListener('input',renderList);
 el('reload-list').addEventListener('click',()=>loadListings());

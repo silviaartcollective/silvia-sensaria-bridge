@@ -6,7 +6,7 @@ import {renderListingConverterPage} from '../src/listing-converter-page.mjs';
 import {hasAuthorizedConverterLink} from '../src/listing-converter-link.mjs';
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 
-test('reconvert requires a newly uploaded master and new production crops',()=>{
+test('reconvert accepts a new master or regenerates crops from the stored master',()=>{
  const html=renderListingConverterPage();
  const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
  assert.ok(script,'converter must contain an executable client script');
@@ -14,10 +14,11 @@ test('reconvert requires a newly uploaded master and new production crops',()=>{
  assert.ok(html.includes("item.converted?'Reconvert listing':'Upload artwork & convert'"));
  assert.ok(html.includes("item.converted?reconvertListing(item,card):convertListing(item,card)"));
  assert.ok(html.includes('async function reconvertListing(item,card)'));
- assert.ok(html.includes('Upload the master artwork again (required)'));
- assert.ok(html.includes('Upload replacement master artwork (required)'));
+ assert.ok(html.includes('leave the file empty to regenerate the crops from the master already stored in R2'));
+ assert.ok(html.includes('Upload replacement master artwork (optional)'));
  assert.ok(html.includes("const file=input?.files?.[0]"));
- assert.ok(html.includes('if(!file){'));
+ assert.ok(html.includes('const useExistingMaster=!file;'));
+ assert.ok(html.includes('useExistingMaster:true'));
  assert.ok(html.includes("'/api/listing-converter/reconvert/reserve'"));
  assert.ok(html.includes("'/api/listing-converter/reconvert/crop'"));
  assert.ok(html.includes("await waitForCrop(setup.jobId"));
