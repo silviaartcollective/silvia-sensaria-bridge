@@ -3,80 +3,255 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import {readFileSync} from 'node:fs';
 import sharp from 'sharp';
-import {
- NativeMockupUnsupported,verifyNativeSmartObject,nativeSmartObjects,
- renderNativeScene,prepareNativePsd
-} from '../worker/native-mockup.mjs';
 
-const rect={left:60,top:60,width:100,height:100};
-const transform=[60,60,160,60,160,160,60,160];
+// The prepared-template cache lives under LOCALAPPDATA; keep it in a temp folder.
+const cacheRoot=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-cache-'));
+process.env.LOCALAPPDATA=cacheRoot;
+test.after(()=>fs.rm(cacheRoot,{recursive:true,force:true}));
 
-test('native PSD Smart Object strictly rejects skewed, perspective and warp transforms',()=>{
- assert.equal(verifyNativeSmartObject({placedLayer:{transform}},rect),true);
- assert.throws(()=>verifyNativeSmartObject({placedLayer:{transform:[60,60,180,60,160,160,60,160]}},rect),
-  NativeMockupUnsupported);
- assert.throws(()=>verifyNativeSmartObject({placedLayer:{transform,warp:{style:'arc'}}},rect),
-  NativeMockupUnsupported);
- assert.throws(()=>verifyNativeSmartObject({placedLayer:{transform:[]}},rect),
-  NativeMockupUnsupported);
-});
+// The PSD reader is a worker dependency (npm --prefix worker install).
+let agPsd=null;
+try{agPsd=await import('../worker/node_modules/ag-psd/dist/index.js')}catch{}
+const needsReader={skip:agPsd?false:'worker dependencies are not installed'};
+const native=agPsd?await import('../worker/native-mockup.mjs'):{};
+const processor=agPsd?await import('../worker/mockup-processor.mjs'):{};
+agPsd?.initializeCanvas(()=>{throw Error('no canvas')},
+ (width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)}));
 
-test('native parser discovers Photoshop Smart Object paths without guessing hidden layers',()=>{
- const psd={children:[
-  {name:'Top',placedLayer:{},visible:false},
-  {name:'Main Art',placedLayer:{},visible:true},
-  {name:'Backdrop',children:[{name:'Inside',placedLayer:{},visible:true}],visible:true}
- ]};
- const found=nativeSmartObjects(psd);
- assert.deepEqual(found.map(r=>r.path),['0','1','2.0']);
- assert.deepEqual(found.map(r=>r.visible),[false,true,true]);
-});
+const GUID='20953ddb-9391-11ec-b4f1-c15674f50bc4';
+const GUID2='4f1c5e2a-9391-11ec-b4f1-c15674f50bc4';
+function image(width,height,fn){
+ const data=new Uint8ClampedArray(width*height*4);
+ for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+  const p=fn(x,y);data.set([p[0],p[1],p[2],p[3]??255],(y*width+x)*4);
+ }
+ return {width,height,data};
+}
+// Pixel centre inside a convex quad (TL, TR, BR, BL), independent of the renderer.
+function inQuad(quad,x,y){
+ const px=x+0.5,py=y+0.5;
+ for(let i=0;i<4;i++){
+  const [ax,ay]=quad[i],[bx,by]=quad[(i+1)%4];
+  if((bx-ax)*(py-ay)-(by-ay)*(px-ax)<0)return false;
+ }
+ return true;
+}
+const lerp=(a,b,t)=>a+(b-a)*t;
+const multiply=(b,s)=>b*s/255;
+const screen=(b,s)=>255-(255-b)*(255-s)/255;
 
-test('native compositor inserts artwork and preserves foreground overlays without browser',async()=>{
- const folder=await fs.mkdtemp(path.join(os.tmpdir(),'native-pod-test-'));
+// A perspective frame mockup:
+//   wall (gradient) → group "Frame" with a mask hiding the right strip of the art
+//   { artwork Smart Object (trapezoid), glare clipped to it (screen, 40%) }
+//   → shadow strip across the top (multiply, 60%).
+function frameScene({W=240,H=180,inconsistent=false}={}){
+ const quad=[[60,30],[180,40],[180,150],[60,160]];
+ const old=[150,120,90];
+ const wall=(x,y)=>[200-(y>>2),190,170+(x>>3)];
+ const glare=[255,255,255],glareAlpha=x=>x<120?0.4:0;
+ const groupMask=x=>x<170?255:0;
+ const shadow=y=>y<60?0.6:0;
+ const composite=image(W,H,(x,y)=>{
+  let c=wall(x,y);
+  if(inQuad(quad,x,y)&&groupMask(x)){
+   let a=old.slice();
+   a=a.map((v,i)=>lerp(v,screen(v,glare[i]),glareAlpha(x)));
+   c=a;
+  }
+  c=c.map(v=>lerp(v,multiply(v,60),shadow(y)));
+  if(inconsistent&&x>90&&x<150&&y>80&&y<130)c=[20,200,20];
+  return c;
+ });
+ const psd={width:W,height:H,imageData:composite,children:[
+  {name:'Wall',left:0,top:0,right:W,bottom:H,imageData:image(W,H,(x,y)=>wall(x,y))},
+  {name:'Frame',opened:true,blendMode:'pass through',
+   mask:{left:0,top:0,right:W,bottom:H,defaultColor:0,imageData:image(W,H,x=>[groupMask(x),groupMask(x),groupMask(x),255])},
+   children:[
+    {name:'Your Art',left:0,top:0,right:W,bottom:H,
+     imageData:image(W,H,(x,y)=>inQuad(quad,x,y)?[...old,255]:[0,0,0,0]),
+     placedLayer:{id:GUID,type:'raster',transform:quad.flat(),width:400,height:500}},
+    {name:'Glare',blendMode:'screen',opacity:1,clipping:true,left:0,top:0,right:W,bottom:H,
+     imageData:image(W,H,x=>[...glare,Math.round(255*glareAlpha(x))])}
+   ]},
+  {name:'Shadow',blendMode:'multiply',opacity:0.6,left:0,top:0,right:W,bottom:60,
+   imageData:image(W,60,()=>[60,60,60,255])}
+ ],linkedFiles:[{id:GUID,name:'art.png',data:new Uint8Array([1,2,3])}]};
+ return {psd,quad,wall,glareAlpha,groupMask,shadow};
+}
+function readBack(psd){
+ return agPsd.readPsd(agPsd.writePsdBuffer(psd),{useImageData:true,skipThumbnail:true});
+}
+// Artwork with four flat quadrants: TL red, TR green, BL blue, BR yellow.
+const QUADRANTS={tl:[230,20,20],tr:[20,200,40],bl:[30,40,220],br:[240,220,30]};
+async function quadrantArtwork(file,width=400,height=500){
+ const {data}=image(width,height,(x,y)=>QUADRANTS[(y<height/2?'t':'b')+(x<width/2?'l':'r')]);
+ await sharp(Buffer.from(data.buffer),{raw:{width,height,channels:4}}).removeAlpha().png().toFile(file);
+}
+async function pixels(file){
+ const {data,info}=await sharp(file).removeAlpha().raw().toBuffer({resolveWithObject:true});
+ return {info,at:(x,y)=>[...data.subarray((y*info.width+x)*3,(y*info.width+x)*3+3)]};
+}
+const near=(a,b,tol,label)=>assert.ok(a.every((v,i)=>Math.abs(v-b[i])<=tol),
+ label+': got '+a.join(',')+' expected '+b.map(Math.round).join(','));
+
+test('perspective artwork, clipped glare, group mask and shadow render on the PC worker alone',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
  try{
-  const background=path.join(folder,'bg.png');
-  const foreground=path.join(folder,'front.png');
-  const mask=path.join(folder,'mask.png');
-  const artwork=path.join(folder,'art.jpg');
-  const out=path.join(folder,'out.jpg');
-  const width=220,height=220;
-  await sharp({create:{width,height,channels:4,background:'#dddddd'}}).png().toFile(background);
-  const red=await sharp({create:{width:140,height:12,channels:4,background:'#ff0000'}})
-   .png().toBuffer();
-  await sharp({create:{width,height,channels:4,background:{r:0,g:0,b:0,alpha:0}}})
-   .composite([{input:red,left:40,top:56}]).png().toFile(foreground);
-  await sharp({create:{width:100,height:100,channels:4,background:'#ffffff'}})
-   .png().toFile(mask);
-  await sharp({create:{width:120,height:160,channels:3,background:'#1562e2'}})
-   .jpeg().toFile(artwork);
-  const report=await renderNativeScene({background,foreground,mask,artwork,slot:rect,
-   outputPath:out,fitMode:'cover'});
-  assert.equal(report.width,220);
-  assert.equal(report.height,220);
-  const {data,info}=await sharp(out).ensureAlpha().raw().toBuffer({resolveWithObject:true});
-  const sample=(x,y)=>[...data.subarray((y*info.width+x)*4,(y*info.width+x)*4+3)];
-  const center=sample(100,110),top=sample(100,60),outside=sample(12,12);
-  assert.ok(center[2]>center[0]+100,'artwork blue must fill the Smart Object slot');
-  assert.ok(top[0]>top[1]+100,'PSD foreground overlay must remain above the artwork');
-  assert.ok(outside.every(c=>Math.abs(c-221)<15),'unaltered PSD background must be preserved');
- }finally{await fs.rm(folder,{recursive:true,force:true})}
-});
+  const scene=frameScene();
+  const psdPath=path.join(dir,'frame.psd'),artPath=path.join(dir,'art.png'),out=path.join(dir,'out.jpg');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(scene.psd));
+  await quadrantArtwork(artPath);
+  const stages=[];
+  const first=await processor.renderMockupOnPC({psdPath,artworkPath:artPath,outputPath:out,
+   templateName:'frame.psd',fitMode:'cover',onStage:s=>stages.push(s)});
+  assert.equal(first.needsMapping,false);
+  assert.equal(first.usedMapping,'1.0');
+  assert.equal(first.preparedFromCache,false);
+  assert.ok(first.fidelity.meanPixelError<1,JSON.stringify(first.fidelity));
+  assert.deepEqual(first.dimensions,{width:240,height:180});
+  const {at}=await pixels(out);
+  // The diagonals of the quad meet at the artwork's centre; step toward each corner.
+  const [cx,cy]=[120,96];
+  const expect=(colour,x,y)=>{
+   let c=colour.map((v,i)=>lerp(v,screen(v,255),scene.glareAlpha(x)));
+   return c.map(v=>lerp(v,multiply(v,60),scene.shadow(y)));
+  };
+  near(at(cx-25,cy-25),expect(QUADRANTS.tl,cx-25,cy-25),10,'top-left quadrant');
+  near(at(cx+25,cy-25),expect(QUADRANTS.tr,cx+25,cy-25),10,'top-right quadrant');
+  near(at(cx-25,cy+25),expect(QUADRANTS.bl,cx-25,cy+25),10,'bottom-left quadrant');
+  near(at(cx+25,cy+25),expect(QUADRANTS.br,cx+25,cy+25),10,'bottom-right quadrant');
+  // Outside the artwork and under the group mask the PSD is untouched.
+  near(at(20,100),scene.wall(20,100),6,'wall');
+  near(at(175,100),scene.wall(175,100),6,'masked strip of the artwork');
+  near(at(20,20),scene.wall(20,20).map(v=>lerp(v,multiply(v,60),0.6)),6,'shadow over the wall');
 
-test('unsupported PSB fails safely without generating an incorrect JPG',async()=>{
- const dir=await fs.mkdtemp(path.join(os.tmpdir(),'pod-unsupported-'));
- try{
-  await assert.rejects(()=>prepareNativePsd({psdPath:path.join(dir,'scene.psb')}),
-   error=>error instanceof NativeMockupUnsupported&&/PSB/.test(error.message));
+  const second=await processor.renderMockupOnPC({psdPath,artworkPath:artPath,outputPath:out,templateName:'frame.psd'});
+  assert.equal(second.preparedFromCache,true);
+  assert.ok(stages.some(s=>/one time per template/.test(s)));
  }finally{await fs.rm(dir,{recursive:true,force:true})}
 });
 
-test('PC renderer tries native before Photopea and retains legacy fallback for complex PSDs',async()=>{
- const source=await fs.readFile(new URL('../worker/mockup-processor.mjs',import.meta.url),'utf8');
- assert.match(source,/POD_PSD_RENDERER\|\|'auto'/);
- assert.match(source,/renderMockupNative\(/);
- assert.match(source,/error instanceof NativeMockupUnsupported/);
- assert.match(source,/engine==='native'/);
- assert.match(source,/getWarmPhotopeaPage/);
+test('a template the renderer cannot reproduce is rejected with the reason, never rendered wrong',needsReader,()=>{
+ const psd=readBack(frameScene({inconsistent:true}).psd);
+ assert.throws(()=>native.prepareFromPsd(psd),
+  error=>error instanceof native.NativeMockupUnsupported&&/differs from the PSD/.test(error.message));
+});
+
+test('several visible Smart Objects ask for the artwork layer once, then use the saved choice',needsReader,()=>{
+ const {psd}=frameScene();
+ psd.children.push({name:'Logo',left:0,top:0,right:20,bottom:20,imageData:image(20,20,()=>[0,0,0,255]),
+  placedLayer:{id:GUID2,type:'raster',transform:[0,0,20,0,20,20,0,20],width:20,height:20}});
+ psd.linkedFiles.push({id:GUID2,name:'logo.png',data:new Uint8Array([1])});
+ const parsed=readBack(psd);
+ const asked=native.prepareFromPsd(parsed);
+ assert.equal(asked.needsMapping,true);
+ assert.deepEqual(asked.objects.map(o=>o.path),['1.0','3']);
+ const mapped=native.prepareFromPsd(parsed,{path:'1.0'});
+ assert.equal(mapped.needsMapping,false);
+ assert.equal(mapped.usedMapping,'1.0');
+});
+
+test('a hidden Smart Object (like mockup 19\'s "mockup 1 (1)") is never chosen as the artwork',needsReader,()=>{
+ const {psd}=frameScene();
+ psd.children.push({name:'mockup 1 (1)',hidden:true,left:0,top:0,right:20,bottom:20,imageData:image(20,20,()=>[0,0,0,255]),
+  placedLayer:{id:GUID2,type:'raster',transform:[0,0,20,0,20,20,0,20],width:20,height:20}});
+ psd.linkedFiles.push({id:GUID2,name:'hidden.png',data:new Uint8Array([1])});
+ const prepared=native.prepareFromPsd(readBack(psd));
+ assert.equal(prepared.needsMapping,false);
+ assert.equal(prepared.usedMapping,'1.0');
+ assert.deepEqual(prepared.objects.map(o=>[o.path,o.visible]),[['1.0',true],['3',false]]);
+ assert.throws(()=>native.prepareFromPsd(readBack(psd),{path:'3'}),/not found among visible layers/);
+});
+
+test('ordinary Smart Objects (identity warp grid) are accepted; real warps and filters are not',needsReader,()=>{
+ const grid=(dx=0)=>({style:'custom',uOrder:4,vOrder:4,
+  bounds:{left:{value:0},top:{value:0},right:{value:300},bottom:{value:300}},
+  customEnvelopeWarp:{meshPoints:Array.from({length:16},(_,i)=>({x:(i%4)*100+(i===5?dx:0),y:Math.floor(i/4)*100}))}});
+ assert.equal(native.warpIsIdentity(grid()),true);
+ assert.equal(native.warpIsIdentity(undefined),true);
+ assert.equal(native.warpIsIdentity(grid(40)),false);
+ assert.equal(native.warpIsIdentity({style:'arc',value:30}),false);
+ const layer=extra=>({placedLayer:{transform:[0,0,10,0,10,10,0,10],width:10,height:10,...extra}});
+ assert.ok(native.smartObjectGeometry(layer({warp:grid()})));
+ assert.throws(()=>native.smartObjectGeometry(layer({warp:grid(40)})),/Warp/);
+ assert.throws(()=>native.smartObjectGeometry(layer({filter:{list:[{enabled:true}]}})),/Smart Filters/);
+});
+
+test('homography maps the Smart Object corners exactly',needsReader,()=>{
+ const quad=[[60,30],[180,40],[180,150],[60,160]];
+ const H=native.homography([[0,0],[400,0],[400,500],[0,500]],quad);
+ [[0,0],[400,0],[400,500],[0,500]].forEach(([x,y],i)=>{
+  const [u,v]=native.applyHomography(H,x,y);
+  assert.ok(Math.abs(u-quad[i][0])<1e-6&&Math.abs(v-quad[i][1])<1e-6);
+ });
+});
+
+test('templates without a saved composite or with 16-bit colour are rejected clearly',needsReader,()=>{
+ assert.throws(()=>native.prepareFromPsd({width:10,height:10,colorMode:3,bitsPerChannel:8,children:[]}),
+  /Maximize PSD and PSB File Compatibility/);
+ assert.throws(()=>native.prepareFromPsd({width:10,height:10,colorMode:3,bitsPerChannel:16,children:[]}),
+  /8-bit/);
+});
+
+test('an unsupported template fails that PSD without pausing the batch',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const psdPath=path.join(dir,'bad.psd');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(frameScene({inconsistent:true}).psd));
+  await quadrantArtwork(path.join(dir,'art.png'));
+  await assert.rejects(processor.renderMockupOnPC({psdPath,artworkPath:path.join(dir,'art.png'),
+   outputPath:path.join(dir,'out.jpg'),templateName:'bad.psd'}),
+   error=>error.nativeUnsupported===true&&/bad\.psd" is not supported by the PC worker/.test(error.message));
+  const worker=readFileSync(new URL('../worker/index.mjs',import.meta.url),'utf8');
+  assert.match(worker,/!error\.nativeUnsupported&&/);
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
+});
+
+test('a 12-megapixel template renders each new artwork in seconds once prepared',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const W=4000,H=3000,quad=[[900,400],[3100,400],[3100,2700],[900,2700]];
+  const wall=(x,y)=>[180+(x%40),170,160+(y%30)];
+  const psd={width:W,height:H,
+   imageData:image(W,H,(x,y)=>inQuad(quad,x,y)?[150,120,90]:wall(x,y)),
+   children:[
+    {name:'Wall',left:0,top:0,right:W,bottom:H,imageData:image(W,H,wall)},
+    {name:'Art',left:900,top:400,right:3100,bottom:2700,imageData:image(2200,2300,()=>[150,120,90,255]),
+     placedLayer:{id:GUID,type:'raster',transform:quad.flat(),width:2200,height:2300}}
+   ],linkedFiles:[{id:GUID,name:'art.png',data:new Uint8Array([1])}]};
+  const psdPath=path.join(dir,'big.psd'),art=path.join(dir,'art.png'),out=path.join(dir,'out.jpg');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(psd));
+  await quadrantArtwork(art,6000,7200);
+  const prepare=Date.now();
+  await processor.renderMockupOnPC({psdPath,artworkPath:art,outputPath:out,templateName:'big.psd'});
+  const prepared=Date.now()-prepare;
+  const start=Date.now();
+  const result=await processor.renderMockupOnPC({psdPath,artworkPath:art,outputPath:out,templateName:'big.psd'});
+  const render=Date.now()-start;
+  console.log('12 MP template: first render with preparation '+prepared+' ms, cached render '+render+' ms');
+  assert.equal(result.preparedFromCache,true);
+  assert.deepEqual(result.dimensions,{width:4000,height:3000});
+  assert.ok(render<8000,'cached render took '+render+' ms');
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
+});
+
+test('the PC worker renders PSDs itself: no Photoshop, Photopea or browser code remains',()=>{
+ const worker=new URL('../worker/',import.meta.url);
+ const processorSource=readFileSync(new URL('mockup-processor.mjs',worker),'utf8');
+ const pkg=JSON.parse(readFileSync(new URL('package.json',worker),'utf8'));
+ assert.doesNotMatch(processorSource.replace(/^\/\/.*$/gm,''),/puppeteer|photopea|photoshop|chrom/i);
+ assert.match(processorSource,/renderMockupNative\(/);
+ assert.equal(pkg.dependencies['puppeteer-core'],undefined);
+ assert.ok(pkg.dependencies['ag-psd']);
+ for(const legacy of ['native-photoshop.mjs','photoshop-native.jsx','photoshop-runner.ps1','photopea-worker-page.js'])
+  assert.throws(()=>readFileSync(new URL(legacy,worker)),{code:'ENOENT'},legacy);
+});
+
+test('the worker claims the next queued PSD immediately instead of waiting between mockups',()=>{
+ const source=readFileSync(new URL('../worker/index.mjs',import.meta.url),'utf8');
+ assert.match(source,/mockupPollAt\.delete\(app\.appUrl\)/);
+ assert.match(source,/if\(await pollOnce\(\)\)continue;/);
+ assert.doesNotMatch(source,/<12000/);
 });

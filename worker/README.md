@@ -25,26 +25,31 @@ The default idle timeout is **disabled**: the worker stays running until stopped
 - **Legacy separate workers:** Close them and rerun the shared installer. Do not leave old individual workers running in parallel.
 - **Never post \`config.local.json\`:** It contains confidential tokens and is covered by \`.gitignore\`.
 
-## Photoshop PSD mockup generation
+## PSD mockup generation (worker v4.5.0)
 
-The **same running worker** now processes two queues: production artwork crops and PSD mockups from Silvia and Japandi Product Creator. Arté Antica remains connected for its existing crop jobs.
+The **same running worker** processes two queues: production artwork crops and PSD mockups from the Product Creator. PSDs are rendered **entirely by the worker's own Node process**: no Photoshop, no Photopea, and no Chrome/Edge.
 
-- Product Creator uploads the master image and PSDs directly to private R2, then creates a mockup batch automatically. It **does not** open PSDs or run Photopea in your browser.
-- The PC worker downloads one PSD and master artwork to local temporary files, opens that PSD in a separate background Chromium session, replaces only its selected **visible Smart Object**, verifies all original layer visibility, exports a maximum **24-megapixel JPEG**, and uploads it to R2.
-- Jobs continue without the Product Creator tab being open. Progress and thumbnails appear when the page is reopened. Checkboxes (selected by default), Select all, Deselect all, and Apply selected determine which seven custom mockups accompany the three preset Etsy images.
-- For **mockup 19.psd**, the visible artwork Smart Object is named **5**. The other Smart Object is hidden and must stay hidden. Large files can take several minutes; errors appear against the affected PSD instead of indefinitely freezing the browser.
-- **On your Windows PC:** update this repository's worker folder, close the old shared worker when idle, run `worker/setup-worker.cmd` (press Enter to keep previously saved per-shop tokens), and launch `worker/start-worker.cmd` once. The new PSD renderer needs **Chrome or Microsoft Edge** and the Puppeteer Core package installed by setup.
-- You can examine `worker/worker.log` for PSD loading, processing and export errors. Generated JPGs and templates are only stored under the originating shop's namespace.
-- Real PSD rendering still requires validation on the user's Windows workstation: Render deployments alone do not update installed PC worker files.
+- Product Creator uploads the master image and PSDs to private R2 and creates a mockup batch. The browser never opens a PSD; the batch continues with the tab closed.
+- The first time the worker sees a PSD it **prepares** it (a few seconds to a minute for very large files) and caches the result in `%LOCALAPPDATA%\pod-worker-cache\native-psd-v2`:
+  - Photoshop's own saved composite is kept as the background, so layers below the artwork are reproduced exactly;
+  - the artwork Smart Object's four corners give its placement, including perspective;
+  - its layer mask and clipping give the visible area;
+  - layers above it (shadows, glare, frames, plants) are kept with their blend mode, opacity, masks and clipping.
+- Each preparation is checked against Photoshop's composite using the Smart Object's original pixels. If the template cannot be reproduced exactly, that PSD fails with the reason; a wrong mockup is never produced.
+- After that, each mockup is a warp and composite: typically **1–3 seconds** plus the R2 upload. The worker claims the next PSD as soon as one finishes.
+- If a PSD has several visible Smart Objects, choose the artwork layer once in the Product Creator. The choice is saved with the template.
 
+**Template requirements:**
+- RGB, 8 bits/channel, saved with **Maximize PSD and PSB File Compatibility** turned on.
+- The artwork Smart Object uses Normal blending at 100% opacity.
+- The artwork Smart Object has no Warp transform and no Smart Filters.
 
-## Faster rendering: native Photoshop (worker v4.1.0)
+Any other layers, adjustments and effects in the scene are fine.
 
-On **Windows**, the shared worker now prefers **installed Adobe Photoshop** for PSD Smart Object replacement, using native Photoshop scripting. This avoids repeatedly launching Chromium, starting Photopea and waiting for Photopea's Smart Object editor. **Photopea is used as a fallback only if native Photoshop COM automation is unavailable.** Existing production crop processing remains unchanged.
+**After pulling this update on the PC:**
+1. Wait for the current job to finish and stop the old worker.
+2. Update the single shared worker folder.
+3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
+4. Run `start-worker.cmd`.
 
-**After pulling the latest code**: wait for the current crop to finish, stop the old worker, update the single shared worker folder, run `setup-worker.cmd` (press Enter to retain your saved shop tokens), and run `start-worker.cmd`. The Product Creator status should display **Crop + Mockup Worker v4.1.0**. Do not run separate workers for Silvia and Japandi. If desktop Photoshop is installed, watch `worker.log` for `native Photoshop` and per-PSD elapsed seconds. If you see `Photopea fallback`, check Photoshop installation/COM registration and the log.
-
-Original PSDs are never overwritten. Hidden layers remain hidden. JPGs are validated at a maximum of 24 megapixels. A bounded, private on-disk cache in `%LOCALAPPDATA%\\pod-worker-cache\\v1` reuses PSD templates and master images between jobs; it defaults to 4 GB and evicts old files. You may delete this folder while the worker is stopped to reclaim disk space. Set `POD_WORKER_CACHE_GB` to adjust its limit or `POD_PSD_RENDERER=photopea` to force the original renderer.
-
-**Performance expectations:** small cached mockups can be considerably faster, but opening a complex 194 MB PSD and exporting a 24MP JPG may still take longer than a few seconds, depending on PC hardware and the document. Measure actual times from `worker.log` before claiming a performance target. A stuck Smart Object operation will time out, be logged as a failure and allow the worker to continue.
-
+The dashboards should show **Crop + Mockup Worker v4.5.0**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.

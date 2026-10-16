@@ -15,18 +15,13 @@ test('PSD workflow stays in existing Product Creator without an iframe',()=>{
  assert.equal(ADMIN_LINKS.filter(x=>x.href==='/product-creator').length,1);
  assert.ok(!ADMIN_LINKS.some(x=>x.href==='/mockup-generator'));
 });
-test('Photopea runs only in PC background processor with hidden layers preserved',()=>{
+test('PSDs render only on the PC worker; the browser never opens them',()=>{
  const browser=read('src/mockup-generator-client.js');
- const workerPage=read('worker/photopea-worker-page.js');
  const worker=read('worker/mockup-processor.mjs');
  assert.doesNotThrow(()=>new vm.Script(browser));
- assert.doesNotThrow(()=>new vm.Script(workerPage));
  assert.ok(!browser.includes('postMessage('));
- assert.ok(workerPage.includes('placedLayerEditContents'));
- assert.ok(workerPage.includes("app.activeDocument"));
- assert.ok(workerPage.includes("doc.saveToOE('jpg:0.9')"));
- assert.ok(workerPage.includes("24000000"));
- assert.ok(workerPage.includes('JSON.stringify(after)!==JSON.stringify(inspected.visibility)'));
- assert.ok(worker.includes('headless:true'));
+ assert.ok(!/photopea\.com/i.test(browser));
+ assert.ok(worker.includes('renderMockupNative('));
+ assert.ok(worker.includes('24000000'));
  assert.ok(!browser.includes('R2_SECRET_ACCESS_KEY'));
 });

@@ -25,5 +25,7 @@ jobs:
           node --check worker/index.mjs
           node --check worker/api.mjs
           node --check worker/mockup-processor.mjs
-          node --check worker/photopea-worker-page.js
+          node --check worker/native-mockup.mjs
           node --check src/mockup-generator-client.js
+      - name: Test native PSD rendering with worker dependencies
+        run: node --test test/native-mockup.test.mjs

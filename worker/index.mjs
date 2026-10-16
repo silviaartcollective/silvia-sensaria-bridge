@@ -34,6 +34,9 @@ let activeJob = null;
 let heartbeatInFlight = false;
 const mockupOwner = crypto.randomUUID();
 const mockupPollAt = new Map(),mockupUnsupported=new Map(); // Retry temporarily unavailable PSD endpoints.
+// An idle shop's mockup queue is checked at most this often. While a batch has
+// queued PSDs the next one is claimed immediately after the previous finishes.
+const MOCKUP_IDLE_POLL_MS = 5000;
 let preferMockupNext=false; // A crop backlog must not starve all pending PSD jobs.
 
 function sleep(ms) {
@@ -246,12 +249,12 @@ async function processPSDJob(app,claim){
  const stage=value=>{
   console.log('['+app.name+'] '+claim.item.name+': '+value);
   const now=Date.now();
-  // One remote progress write can require a complete R2 JSON round trip.
-  // Avoid pausing each Photopea stage for unnecessary network writes.
+  // One remote progress write can require a complete R2 JSON round trip,
+  // so stage updates closer than 2.5 s apart stay local.
   if(now-lastStageWriteAt<2500&&!/Uploading and verifying|PSD completed|failed/i.test(value))
    return Promise.resolve();
   lastStageWriteAt=now;
-  // Progress writes are advisory; R2 latency must not freeze Photopea.
+  // Progress writes are advisory; R2 latency must not hold up rendering.
   // Completion/failure still awaits the same write queue in order.
   void queue(()=>api.mockupProgress(id,itemId,mockupOwner,value)).catch(error=>
    console.error('['+app.name+'] Non-fatal PSD progress update error:',error.message));
@@ -273,12 +276,10 @@ async function processPSDJob(app,claim){
   tempPaths.add(outputPath);
   const render=await renderMockupOnPC({
    psdPath,artworkPath,outputPath,templateName:claim.template.name,mapping:claim.template.mapping||null,
-   smartObjects:claim.template.smartObjects||[],
    fitMode:claim.job.fitMode||'contain',
-   artworkOrientation:claim.job.artworkOrientation||'',
    onStage:stage
   });
-  measure(render.engine==='native'?'nativeRenderMs':'photopeaRenderMs');
+  measure('renderMs');
   const inspected=await queue(()=>api.inspectMockupTemplate(itemId,render.objects));
   const classification=inspected.classification||{};
   measure('smartObjectVerificationMs');
@@ -297,11 +298,11 @@ async function processPSDJob(app,claim){
   completionRecorded=true;
   console.log('['+app.name+'] PSD_TIMINGS '+JSON.stringify({
    template:claim.item.name,artworkId:claim.job.artworkId||null,
-   ...timings,totalMs:Date.now()-startedAt,engine:render.engine||'photopea'
+   ...timings,totalMs:Date.now()-startedAt,preparedFromCache:!!render.preparedFromCache
   }));
   console.log('['+app.name+'] PSD completed '+claim.item.outputName+
-   ' ('+render.dimensions.width+'x'+render.dimensions.height+', '+(render.engine||'unknown')+
-   ', '+((Date.now()-startedAt)/1000).toFixed(1)+'s total)');
+   ' ('+render.dimensions.width+'x'+render.dimensions.height+', '+
+   ((Date.now()-startedAt)/1000).toFixed(1)+'s total)');
  }catch(error){
   if(completionRecorded){
    // A post-completion reporting error must not downgrade a verified JPG.
@@ -311,7 +312,7 @@ async function processPSDJob(app,claim){
   console.error('['+app.name+'] PSD mockup failed '+claim.item.name+': '+error.message);
   try{await queue(()=>api.mockupFail(id,mockupOwner,itemId,error,false))}
   catch(reportError){console.error('['+app.name+'] Could not mark PSD failed:',reportError.message)}
-  if(/timed out|time.?out|exceeded|did not respond|did not connect|could not initialize|interrupted|stalled|Photopea startup/i.test(error.message||'')){
+  if(!error.nativeUnsupported&&/timed out|time.?out|did not respond|interrupted|stalled/i.test(error.message||'')){
    console.error('['+app.name+'] Pausing the batch after an unresponsive PSD renderer. Completed JPGs are safe.');
    try{await queue(()=>api.mockupPause(id,mockupOwner))}
    catch(pauseError){console.error('['+app.name+'] Could not pause stalled batch:',pauseError.message)}
@@ -340,8 +341,9 @@ async function heartbeatAll(){
     }));
   }finally{heartbeatInFlight=false;}
 }
+// Returns true when a crop or PSD was processed, so the caller polls again at once.
 async function pollOnce(){
-  if(busy||stopping)return;
+  if(busy||stopping)return false;
   busy=true;
   try{
     const cycle=rotatingApps(APP_CONNECTIONS,nextAppIndex);
@@ -361,24 +363,26 @@ async function pollOnce(){
           try{await processJob(app,result.job);}
           finally{activeJob=null;await heartbeatAll()}
           preferMockupNext=true;
-          return;
+          return true;
         }catch(error){console.error('['+app.name+'] Crop polling failed:',error.message)}
       }
       }else{
       for(const app of cycle){
         if(stopping||(mockupUnsupported.get(app.appUrl)||0)>Date.now())continue;
-        if(Date.now()-(mockupPollAt.get(app.appUrl)||0)<12000)continue;
+        if(Date.now()-(mockupPollAt.get(app.appUrl)||0)<MOCKUP_IDLE_POLL_MS)continue;
         mockupPollAt.set(app.appUrl,Date.now());
         try{
           const api=clientFor(app);
           const claimed=await api.claimMockup(mockupOwner);
           if(!claimed.item)continue;
+          // More PSDs may be queued: let the next poll claim without waiting.
+          mockupPollAt.delete(app.appUrl);
           activeJob={app,job:{id:claimed.job.id},type:'mockup'};
           await heartbeatAll();
           try{await processPSDJob(app,claimed)}
           finally{activeJob=null;await heartbeatAll()}
           preferMockupNext=false;
-          return;
+          return true;
         }catch(error){
           // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
           if(/404|not found|non-json/i.test(error.message)){
@@ -389,6 +393,7 @@ async function pollOnce(){
       }
       }
     }
+    return false;
   }finally{busy=false;}
 }
 async function main(){
@@ -405,7 +410,7 @@ async function main(){
   ticker.unref();
   try{
     while(!stopping){
-      await pollOnce();
+      if(await pollOnce())continue;
       if(IDLE_EXIT_MS>0&&!busy&&Date.now()-lastWorkAt>=IDLE_EXIT_MS){
         console.log('Shared crop worker exiting after explicitly configured idle limit.');
         break;
