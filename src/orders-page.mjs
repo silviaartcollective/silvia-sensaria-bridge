@@ -34,6 +34,9 @@ pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 .supplier-banner .small{display:block;margin-top:4px;font-size:12px}
 #sensaria-csv{background:#303a30;color:#fff;border-color:#303a30}
 #sensaria-csv-status{padding:9px 0;font-size:13px;color:#446148}
+.tracking-box{margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fbfaf6}
+.tracking-form{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.tracking-form input{flex:1 1 200px}
+#tracking-saved{margin:8px 0 0}#tracking-status{margin-top:8px}#tracking-status.error{color:#a14737}
 #sensaria-csv-status.error{color:#a14737}
 .hidden{display:none!important}#list{max-height:74vh;overflow:auto}#order-detail{min-height:230px}
 @media(max-width:1150px){.grid{grid-template-columns:1fr}#list{max-height:none}}
@@ -59,7 +62,21 @@ pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 <div id="supplier-banner" class="supplier-banner hidden"><span class="eyebrow">Recommended fulfillment supplier</span><strong id="supplier-name">SENSARIA</strong><span class="small">Manual supplier order · Check artwork, variant and shipping before submitting</span></div>
 <div class="detailrow"><strong>Artwork / items</strong><pre id="items"></pre></div>
 <div class="detailrow"><strong>Shipping address</strong><pre id="address"></pre></div>
-<div class="detailrow"><strong>Shipping status &amp; tracking</strong><pre id="shipment"></pre></div>
+<div class="detailrow"><strong>Shipping status &amp; tracking</strong><pre id="shipment"></pre>
+<div id="tracking-box" class="tracking-box">
+<div id="tracking-summary" class="small">Loading supplier tracking…</div>
+<pre id="tracking-saved" class="hidden"></pre>
+<div id="tracking-link-form" class="tracking-form hidden">
+<select id="tracking-supplier" aria-label="Supplier"><option value="sensaria">Sensaria</option><option value="prodigi">Prodigi</option><option value="artelo">Artelo</option><option value="printshrimp">PrintShrimp</option><option value="printify">Printify</option><option value="gelato">Gelato</option></select>
+<input id="tracking-supplier-order" placeholder="Supplier order ID (Sensaria: leave empty to use this receipt as the PO number)" aria-label="Supplier order ID">
+<button type="button" id="tracking-link">Link supplier order</button></div>
+<div id="tracking-add-form" class="tracking-form hidden">
+<input id="tracking-number" placeholder="Tracking number" aria-label="Tracking number" autocomplete="off">
+<select id="tracking-carrier" aria-label="Carrier"><option value="">Carrier…</option><option>USPS</option><option>UPS</option><option>FedEx</option><option>DHL</option><option>Canada Post</option><option>Purolator</option><option>OnTrac</option><option>DPD</option><option>Royal Mail</option><option>Australia Post</option><option>Other</option></select>
+<input id="tracking-url" placeholder="Tracking link (optional)" aria-label="Tracking link">
+<button type="button" id="tracking-save" class="primary">Save tracking</button></div>
+<div id="tracking-status" class="small" role="status" aria-live="polite"></div>
+</div></div>
 <div class="detailrow"><strong>Order totals</strong><div id="totals"></div></div>
 <div class="actions"><a class="btn primary" id="review-custom" href="/custom-orders">Review as custom order</a>
 <a class="btn" id="track-order" href="/tracking">Open Order Tracking</a>

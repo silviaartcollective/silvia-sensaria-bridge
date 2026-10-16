@@ -123,7 +123,8 @@ async function openOrder(id){
     '\n'+(shipments.length?shipments.map(s=>(
       'Carrier: '+(s.carrier_name||s.carrier||'Not supplied')+
       '\nTracking: '+(s.tracking_code||s.tracking_number||'Not supplied')
-    )).join('\n\n'):'No tracking in the saved receipt. Use Order Tracking to check the latest data.'));
+    )).join('\n\n'):'No tracking on Etsy yet.'));
+  void loadTracking(id);
   const currencyAmount=v=>{
     if(v?.amount==null)return 'Not available';
     return (Number(v.amount)/Number(v.divisor||100)).toFixed(2)+' '+(v.currency_code||'');
@@ -135,6 +136,80 @@ async function openOrder(id){
   $('review-regular').href='/fulfillment-review?receipt='+encodeURIComponent(id);
   if(window.innerWidth<1150)$('order-detail').scrollIntoView({behavior:'smooth',block:'start'});
 }
+// ---- Supplier tracking for the open order (no receipt ID typing needed).
+let trackingRecord=null;
+function trackingNotice(message,failed=false){
+  const node=$('tracking-status');node.textContent=message||'';node.className='small'+(failed?' error':'');
+}
+function renderTracking(record){
+  trackingRecord=record||null;
+  const linked=Boolean(record?.supplier);
+  const supplier=linked?record.supplier.charAt(0).toUpperCase()+record.supplier.slice(1):'';
+  const reference=!linked?'':record.supplierReference==='sensaria_po_number'
+    ?'PO number '+record.receiptId:'order '+record.supplierOrderId;
+  const shipments=Array.isArray(record?.shipments)?record.shipments:[];
+  set('tracking-summary',linked
+    ?'Linked to '+supplier+' ('+reference+')'+(record.linkSource==='sensaria_csv_download'?' · linked automatically when the Sensaria CSV was downloaded':'')+
+      ' · '+(shipments.length?shipments.length+' tracking number'+(shipments.length===1?'':'s')+' saved':'no tracking saved yet')
+    :'Not linked to a supplier order yet. Downloading the Sensaria CSV links it automatically, or link it here.');
+  $('tracking-saved').classList.toggle('hidden',!shipments.length);
+  set('tracking-saved',shipments.map(s=>s.carrier+' · '+s.trackingNumber+
+    (s.trackingUrl?'\n'+s.trackingUrl:'')+
+    '\n'+(s.etsySentAt?'Sent to Etsy':'Saved in this app (add it on Etsy manually)')+
+    (s.source==='sensaria_csv'?' · from Sensaria report':'')).join('\n\n'));
+  $('tracking-link-form').classList.toggle('hidden',linked);
+  $('tracking-add-form').classList.toggle('hidden',!linked);
+}
+async function loadTracking(id){
+  renderTracking(null);set('tracking-summary','Loading supplier tracking…');trackingNotice('');
+  $('tracking-link-form').classList.add('hidden');
+  try{
+    const data=await api('/api/tracking/record?receiptId='+encodeURIComponent(id));
+    if(String(selectedId)!==String(id))return;
+    renderTracking(data.record);
+  }catch(error){
+    if(String(selectedId)!==String(id))return;
+    set('tracking-summary','Tracking could not be loaded.');trackingNotice(String(error.message||error),true);
+  }
+}
+$('tracking-link').addEventListener('click',async()=>{
+  const id=String(selectedId),button=$('tracking-link');
+  const supplier=$('tracking-supplier').value;
+  let supplierOrderId=$('tracking-supplier-order').value.trim();
+  if(!supplierOrderId&&supplier==='sensaria')supplierOrderId=id;
+  if(!supplierOrderId){trackingNotice('Enter the supplier order ID.',true);return;}
+  button.disabled=true;trackingNotice('Verifying the Etsy order and saving the link…');
+  try{
+    const data=await api('/api/tracking/link',{receiptId:id,supplier,supplierOrderId});
+    if(String(selectedId)===id){renderTracking(data.record);trackingNotice('Linked.');}
+  }catch(error){trackingNotice(String(error.message||error),true);}
+  finally{button.disabled=false;}
+});
+$('tracking-url').addEventListener('change',()=>{
+  if($('tracking-carrier').value)return;
+  let host='';try{host=new URL($('tracking-url').value.trim()).hostname.toLowerCase();}catch{return;}
+  const guess=[[/ups\.com$/,'UPS'],[/fedex\.com$/,'FedEx'],[/usps\.com$/,'USPS'],[/dhl\.com$/,'DHL'],
+    [/canadapost(-postescanada)?\.ca$/,'Canada Post'],[/purolator\.com$/,'Purolator'],[/ontrac\.com$/,'OnTrac']]
+    .find(([re])=>re.test(host));
+  if(guess)$('tracking-carrier').value=guess[1];
+});
+$('tracking-save').addEventListener('click',async()=>{
+  const id=String(selectedId),button=$('tracking-save');
+  const trackingNumber=$('tracking-number').value.trim(),carrier=$('tracking-carrier').value;
+  if(!trackingNumber){trackingNotice('Enter the tracking number.',true);return;}
+  if(!carrier){trackingNotice('Choose the carrier.',true);return;}
+  button.disabled=true;trackingNotice('Checking the Etsy order and saving tracking…');
+  try{
+    const data=await api('/api/tracking/stage',{receiptId:id,trackingNumber,carrier,
+      trackingUrl:$('tracking-url').value.trim(),confirm:'SAVE TRACKING'});
+    if(String(selectedId)!==id)return;
+    renderTracking(data.record);
+    $('tracking-number').value='';$('tracking-url').value='';$('tracking-carrier').value='';
+    trackingNotice(data.duplicate?'That tracking number was already saved.':
+      'Tracking saved in this app. Etsy and the buyer were not updated — add it on Etsy until Etsy approves automatic shipping updates.');
+  }catch(error){trackingNotice(String(error.message||error),true);}
+  finally{button.disabled=false;}
+});
 // Generate the production image asynchronously; report each stage and
 // provide bounded retries rather than leaving the button spinning indefinitely.
 async function prepareSensariaCsv(receiptId,notify){
@@ -198,6 +273,7 @@ $('sensaria-csv').addEventListener('click',async()=>{
   try{
     await prepareSensariaCsv(id,message=>{notice.textContent=message;});
     notice.textContent='Sensaria CSV downloaded. Verify the current cost, canvas artwork, and address before manually ordering.';
+    if(String(selectedId)===id)void loadTracking(id);
   }catch(error){
     notice.className='error';
     notice.textContent=String(error.message||error);
