@@ -3,7 +3,7 @@ import {gmailAccessToken,gmailConnectionStatus} from './gmail-oauth.mjs';
 import {listTrackingRecords,stageShipment} from './order-tracking.mjs';
 import {trustedSensariaDomains,parseSensariaShipment,extractGmailText} from './sensaria-gmail-parser.mjs';
 
-const STATE_KEY='integrations/gmail/sensaria-scan-v1.json';
+const STATE_KEY='integrations/gmail/silvia/sensaria-scan-v1.json';
 let running=null;
 async function state(){
   try{return await getJsonObject(STATE_KEY);}
