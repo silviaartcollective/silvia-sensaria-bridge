@@ -152,5 +152,62 @@ $('stage-csv').addEventListener('click',()=>run(async()=>{
     '\nNothing was sent to Etsy.');
   previewRows=[];csvText='';$('csv').value='';$('csv-preview').replaceChildren();
 }));
+// Gmail connection is separate from ChatGPT's connectors. OAuth is hosted by
+// this shop app and never grants permission to send or modify Gmail messages.
+async function refreshGmailStatus(){
+ const box=$('gmail-status');
+ if(!box)return;
+ try{
+  const res=await api('/api/tracking/gmail/status');
+  const connected=Boolean(res.connected);
+  $('gmail-connect').style.display=res.configured&&!connected?'inline-block':'none';
+  $('gmail-scan').disabled=!connected||Boolean(res.scanning);
+  $('gmail-disconnect').style.display=connected?'inline-block':'none';
+  box.className='status'+(connected?' success':'');
+  box.textContent=!res.configured
+   ?'Setup required: add Gmail OAuth client ID, client secret, redirect URI, and a 32-byte encryption key to Render. Then use Connect Gmail.'
+   :connected
+    ?'Connected (read-only): '+(res.emailAddress||'Gmail')+
+      (res.scanning?' · Background scan running':' · Scans are scheduled every 30 minutes while the app server is running.')
+    :'Gmail has not yet been connected. Authorize only the mailbox where Sensaria sends shipment updates.';
+  const last=res.lastRun;
+  if(last){
+    $('gmail-results').textContent='Last scan: '+last.checkedAt+
+      ' · '+(last.scanned||0)+' messages inspected · '+(last.staged||0)+
+      ' new tracking numbers staged · '+(last.duplicates||0)+' already present.'+
+      (last.message?' '+last.message:'')+
+      (last.needsReview?.length?' '+last.needsReview.length+' message(s) need review.':'');
+  }
+ }catch(error){
+  box.className='status error';
+  box.textContent='Gmail status unavailable: '+String(error.message||error);
+ }
+}
+$('gmail-scan').addEventListener('click',()=>run(async()=>{
+  $('gmail-status').textContent='Checking Gmail shipment emails. Only confirmed, uniquely matched tracking will be staged…';
+  const scan=await api('/api/tracking/gmail/scan',{});
+  if(scan.alreadyRunning){message('A Gmail scan is already running. Try again shortly.');return;}
+  await refresh();
+  await refreshGmailStatus();
+  const rows=Array.isArray(scan.needsReview)?scan.needsReview:[];
+  const summary='Gmail scan finished: '+(scan.staged||0)+' tracking number(s) staged, '+
+    (scan.duplicates||0)+' duplicate(s), '+rows.length+' needing review.'+
+    (scan.message?'\n'+scan.message:'');
+  const problems=rows.slice(0,10).map(item=>
+    (item.receiptId?'Etsy #'+item.receiptId+': ':'')+item.reason+
+    (item.trackingNumber?' (tracking '+item.trackingNumber+')':'')).join('\n');
+  message(summary+(problems?'\n'+problems:''));
+}));
+$('gmail-disconnect').addEventListener('click',()=>run(async()=>{
+  if(!window.confirm('Disconnect Gmail from this shop app? This revokes Gmail access and leaves existing staged tracking intact.'))return;
+  await api('/api/tracking/gmail/disconnect',{confirm:'DISCONNECT GMAIL'});
+  await refreshGmailStatus();
+  message('Gmail disconnected. Existing staged tracking was preserved.');
+}));
+const gmailCallback=new URL(location.href).searchParams.get('gmail');
+if(gmailCallback==='connected')message('Gmail was connected. Shipment tracking will be staged only after a verified supplier order link.');
+else if(gmailCallback==='error')message('Gmail connection could not finish. Check the server settings and try Connect Gmail again.',true);
+void refreshGmailStatus();
+
 refresh().catch(error=>message(error.message||String(error),true));
 })();
