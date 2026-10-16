@@ -143,3 +143,23 @@ test('Listings editor offers re-upload / regenerate and activates through a conf
  assert.ok(server.includes("body.confirm!=='REPLACE SILVIA ARTWORK'"));
  assert.ok(server.includes('reserveConverterArtworkRegeneration({'));
 });
+
+test('new Product Creator listings are linked by their SKUs, not shown as "Not linked"', async()=>{
+ const {artworkIdFromSkus}=await import('../src/master-listings.mjs');
+ assert.equal(artworkIdFromSkus(['SAC0012-P-1218','SAC0012-FC-2436-BLK']),'SAC0012');
+ assert.equal(artworkIdFromSkus(['sac0031-c-4060']),'SAC0031');
+ assert.equal(artworkIdFromSkus(['SAC0001-P-1218','SAC0002-P-1218']),null,'mixed artworks are not guessed');
+ assert.equal(artworkIdFromSkus(['GELATO-123','']),null);
+ assert.equal(artworkIdFromSkus(undefined),null);
+ const client=readFileSync(new URL('../src/listings-client.js',import.meta.url),'utf8');
+ assert.ok(!client.includes('Not linked to Silvia'));
+ assert.ok(!client.includes('No Silvia artwork mapping'));
+ assert.ok(client.includes('data?.artworkEditable'));
+ const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
+ assert.ok(server.includes('artworkId:mapping?.artworkId||artworkIdFromSkus(x.skus)'));
+ // Artwork edits still require a verified link: converter map or the artwork's
+ // own manifest recording this Etsy listing ID.
+ assert.ok(server.includes('async function resolveListingArtwork({listingId,listing,map})'));
+ assert.ok(server.includes('manifest?.etsyDraftListingId,manifest?.etsyConfiguration?.listingId,manifest?.sourceEtsyListingId'));
+ assert.ok(server.includes("error:'Artwork ownership could not be verified for this listing.'"));
+});

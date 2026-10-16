@@ -1,5 +1,15 @@
 import crypto from 'node:crypto';
 
+// Every Silvia variant SKU starts with its artwork ID (SAC0012-C-2436). Listings
+// made by the Product Creator are not in the converter map, so the SKU prefix
+// identifies their artwork; exactly one distinct ID is required.
+const LISTING_SKU_ARTWORK=/^(SAC\d+)-/i;
+export function artworkIdFromSkus(skus){
+  const ids=new Set((Array.isArray(skus)?skus:[])
+    .map(sku=>LISTING_SKU_ARTWORK.exec(String(sku||'').trim())?.[1]?.toUpperCase()).filter(Boolean));
+  return ids.size===1?[...ids][0]:null;
+}
+
 export function masterListingTags(value) {
   const tags=Array.isArray(value)?value:String(value??'').split(',');
   const clean=tags.map(t=>String(t||'').trim()).filter(Boolean);

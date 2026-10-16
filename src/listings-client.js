@@ -59,8 +59,8 @@ function renderList(){
   const b=document.createElement('button');b.type='button';b.className='listing-choice'+(row.listingId===selectedId?' selected':'');
   const title=document.createElement('b');title.textContent=row.title||'Untitled';
   const sub=document.createElement('span');sub.className='muted';
-  sub.textContent='#'+row.listingId+' · '+(row.state||'unknown')+' · '+(row.artworkId||'Not linked to Silvia')+
-     (row.converted?' · Converted':'');
+  sub.textContent=['#'+row.listingId,row.state||'unknown',row.artworkId,row.converted?'Converted':'']
+     .filter(Boolean).join(' · ');
   b.append(title,sub);b.addEventListener('click',()=>{if(dirty&&!confirm('Discard unsaved edits to this listing?'))return;
     openListing(row.listingId).catch(error=>notice('details-status',String(error.message||error),true));});
   box.append(b);
@@ -132,7 +132,7 @@ async function openListing(id){
  current=data;el('editor-empty').classList.add('hidden');el('editor').classList.remove('hidden');
  const f=data.fields;
  el('editor-heading').textContent='Editing #'+id;
- el('editor-info').textContent='Etsy '+data.state+' · '+(data.artworkId||'No Silvia artwork mapping')+' · '+(data.converted?'Converted listing':'Not converted');
+ el('editor-info').textContent=['Etsy '+data.state,data.artworkId,data.converted?'Converted listing':''].filter(Boolean).join(' · ');
  el('open-etsy').href='https://www.etsy.com/listing/'+id;
  el('edit-title').value=f.title||'';el('edit-description').value=f.description||'';
  el('edit-tags').value=(f.tags||[]).join(', ');
@@ -195,7 +195,7 @@ function artworkButtonLabel(){
  el('artwork-replace').textContent=file?'Re-upload artwork':'Regenerate crops from stored master';
 }
 function resetArtworkSection(data){
- const show=Boolean(data?.converted&&data?.artworkId);
+ const show=Boolean(data?.artworkEditable&&data?.artworkId);
  el('artwork-section').classList.toggle('hidden',!show);
  if(artworkBusy)return;
  el('artwork-file').value='';artworkButtonLabel();clearNotice('artwork-status');
