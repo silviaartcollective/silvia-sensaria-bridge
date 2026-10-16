@@ -65,6 +65,11 @@ export function parseSensariaShipment({from,subject='',body='',messageId=''},rec
   const content=cleanMessageBody(body),title=cleanMessageBody(subject);
   if(!/\b(shipp?ed|shipment|tracking|on (?:its|the) way|out for delivery|in transit)\b/i.test(title+' '+content))
     return {status:'ignored',reason:'Not a shipment update'};
+  // A tracking number in a label-created or preproduction message does not
+  // prove the shipment actually left the supplier. Require explicit shipped
+  // language before any automatic staging.
+  if(!/\b(shipped|has shipped|was shipped|on (?:its|the) way|in transit|dispatched|out for delivery|delivered)\b/i.test(title+' '+content))
+    return {status:'review',reason:'Tracking email does not explicitly confirm shipment.'};
   const labels=[
     /(?:tracking\s*(?:number|no\.?|code|#)?|tracking\s*ID)\s*[:#=\-]\s*([A-Za-z0-9][A-Za-z0-9-]{7,59})\b/gi,
     /\b(1Z[A-Z0-9]{16})\b/gi
