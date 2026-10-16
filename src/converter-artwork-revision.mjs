@@ -7,7 +7,7 @@ import { checkedRevisionAssets } from './artwork-revision.mjs';
 import {inspectStoredMasterGeometry} from './master-geometry.mjs';
 import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey} from './artwork-ratios.mjs';
 import { getJsonObject,putJsonObject,artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl,
-  copyArtworkObject,deleteArtworkObject,listArtworkObjectKeys } from './r2.mjs';
+  copyArtworkObject,deleteArtworkObject,listArtworkObjectKeys,listArtworkObjects } from './r2.mjs';
 
 const TYPES={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff'};
 const textId=value=>{
@@ -87,6 +87,46 @@ export async function reserveConverterArtworkRevision({shopId,listingId,artworkI
   status:record.status,upload:{key:masterKey,contentType:file.contentType,
    uploadUrl:await signedArtworkUploadUrl(masterKey,file.contentType,45*60)}};
 }
+// Regenerate production crops from the master already stored in R2, without
+// re-uploading it. The master is copied inside R2 into the same staging folder
+// a fresh upload would use, so cropping, Etsy verification and promotion follow
+// exactly the same safe path.
+export async function reserveConverterArtworkRegeneration({shopId,listingId,artworkId}){
+ const id=textId(listingId),aid=artId(artworkId);
+ const manifest=await loadArtworkManifest(aid);
+ if(manifest?.status!=='ready'||!manifest.master?.key)
+  throw Error('The existing master artwork is not ready in R2.');
+ const sourceKey=String(manifest.master.key);
+ const ext=sourceKey.toLowerCase().match(/\.([a-z]+)$/)?.[1];
+ if(!TYPES[ext])throw Error('The stored master has an unsupported file type: '+sourceKey);
+ const recordKey=keyFor(shopId,id);
+ const previous=await readOptional(recordKey);
+ if(previous&&previous.status!=='activated'&&previous.status!=='abandoned'){
+  if(previous.artworkId!==aid||previous.originalMasterKey!==sourceKey)
+   throw Error('An earlier reconversion changed the artwork linkage. Refresh the listing before retrying.');
+  const job=previous.jobId?await getCropJob(previous.jobId):null;
+  if(previous.source==='existing-master'&&job?.status!=='failed'&&await artworkObjectExists(previous.masterKey))
+   return {resumed:true,revision:previous.revision,artworkId:aid,uploadAlreadyPresent:true,
+    cropJobId:previous.jobId||null,status:previous.status,source:'existing-master'};
+  if(job&&['pending','claimed','processing','uploading'].includes(job.status))
+   throw Error('Another artwork file is still being cropped for this listing. Wait for it to finish first.');
+ }
+ const info=await artworkObjectInfo(sourceKey);
+ const revision=crypto.randomUUID();
+ const masterKey='artworks/'+aid+'/.reconvert/'+revision+'/master.'+ext;
+ await copyArtworkObject(sourceKey,masterKey);
+ const original=String(manifest.master.originalFilename||'').trim();
+ const filename=(original.toLowerCase().endsWith('.'+ext)?original:aid+'-master.'+ext).slice(0,180);
+ const record={
+  shopId:String(shopId),listingId:id,artworkId:aid,revision,masterKey,
+  filename,contentType:info.contentType||TYPES[ext],size:info.size,sha256:'',
+  source:'existing-master',originalMasterKey:sourceKey,orientation:manifest.orientation,
+  jobId:null,status:'uploaded',temporary:true,createdAt:new Date().toISOString()
+ };
+ await putJsonObject(recordKey,record);
+ return {resumed:false,revision,artworkId:aid,uploadAlreadyPresent:true,cropJobId:null,
+  status:record.status,source:'existing-master'};
+}
 export async function startConverterArtworkCrop({shopId,listingId,revision,artworkId}){
  const record=await getConverterArtworkRevision(shopId,listingId);
  if(!record||record.revision!==String(revision)||record.artworkId!==artId(artworkId))
@@ -156,6 +196,24 @@ export function canonicalReconversionKeys(artworkId,extension){
  };
 }
 const pendingRoot=(record)=>'artworks/'+artId(record.artworkId)+'/.reconvert/'+record.revision+'/';
+// Files derived from a previous master that the manifest no longer references
+// after a reconversion. Mockups, the master, ratio crops and the manifest are
+// never touched. Recent files are kept because a Sensaria or supplier order
+// placed in the last 7 days may still be downloading them by signed URL.
+export const STALE_DERIVED_FOLDERS=Object.freeze(['production/','fulfillment/by-size/','fulfillment/sensaria/']);
+export const STALE_DERIVED_MIN_AGE_MS=7*24*60*60*1000;
+export async function cleanupStaleDerivedFiles(artworkId,{now=Date.now(),minAgeMs=STALE_DERIVED_MIN_AGE_MS}={}){
+ const root='artworks/'+artId(artworkId)+'/';
+ const deleted=[],kept=[];
+ for(const folder of STALE_DERIVED_FOLDERS){
+  for(const item of await listArtworkObjects(root+folder)){
+   const age=item.lastModified?now-item.lastModified.getTime():0;
+   if(age>=minAgeMs){await deleteArtworkObject(item.key);deleted.push(item.key)}
+   else kept.push(item.key);
+  }
+ }
+ return {deleted,kept};
+}
 async function cleanupTemporary(record){
  const prefix=pendingRoot(record),keys=await listArtworkObjectKeys(prefix);
  await Promise.all(keys.map(key=>deleteArtworkObject(key)));
@@ -260,5 +318,11 @@ export async function activateConverterArtworkRevision({shopId,listingId,revisio
    for(const key of legacyKeys)await deleteArtworkObject(key);
   }
  }catch(error){console.warn('Legacy revision cleanup skipped:',error.message)}
+ try{
+  const cleaned=await cleanupStaleDerivedFiles(checked.artworkId);
+  if(cleaned.deleted.length||cleaned.kept.length)
+   console.info('[reconvert] '+checked.artworkId+': removed '+cleaned.deleted.length+
+    ' stale derived file(s); kept '+cleaned.kept.length+' newer than 7 days.');
+ }catch(error){console.warn('Stale derived file cleanup skipped:',error.message)}
  return {artworkId:checked.artworkId,revision:checked.revision,alreadyActive:false};
 }

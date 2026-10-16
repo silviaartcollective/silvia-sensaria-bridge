@@ -428,9 +428,9 @@ function renderCards(){
         (item.originalListedAt?'<div class="meta">Originally listed: '+esc(new Date(item.originalListedAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric',timeZone:'UTC'}))+'</div>':'')+
         '<div class="upload">'+
           (item.converted
-           ?'<div class="status reconvert-note">Upload the master artwork again (required). Fresh production crops will replace the old ones only after verification. Artwork ID '+esc(item.artworkId)+' is preserved.</div>'
+           ?'<div class="status reconvert-note">Choose a new master to replace the artwork, or leave the file empty to regenerate the crops from the master already stored in R2. Either way the artwork folder is rewritten only after verification. Artwork ID '+esc(item.artworkId)+' is preserved.</div>'
            :'<div class="status">Select the matching master artwork to convert this listing.</div>')+
-          '<input class="master" type="file" accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff" aria-label="'+(item.converted?'Upload replacement master artwork (required)':'Upload master artwork')+'">'+
+          '<input class="master" type="file" accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff" aria-label="'+(item.converted?'Upload replacement master artwork (optional)':'Upload master artwork')+'">'+
           '<button class="btn '+(item.converted?'reconvert':'primary')+' convert" type="button">'+(item.converted?'Reconvert listing':'Upload artwork & convert')+'</button>'+
           '<button class="btn queue-remove" type="button" hidden>Remove from queue</button>'+
           '<div class="progress"><span></span></div>'+
@@ -467,13 +467,18 @@ async function reconvertListing(item,card){
     status.textContent='The linked artwork ID is missing. Refresh listings before reconverting.';
     return;
   }
-  if(!file){
-    status.className='cardstatus bad';
-    status.textContent='Choose the new master artwork file first. Uploading it again is required for reconversion.';
-    return;
-  }
-  const orientation=await detectOrientation(file);
-  const approved=confirm(
+  const useExistingMaster=!file;
+  const orientation=useExistingMaster?'auto':await detectOrientation(file);
+  const approved=useExistingMaster
+   ?confirm(
+    'Regenerate the production crops for this listing from the master already stored in R2?\\n\\n'+
+    item.title+'\\nArtwork ID: '+artworkId+'\\n\\n'+
+    'No upload is needed. The stored master is newly cropped on the shared PC worker and, after verification, '+
+    'the master, crops and manifest in the '+artworkId+' folder are rewritten and the Silvia variants reapplied. '+
+    'Old derived files (production renders, size crops) older than 7 days are removed. '+
+    'Existing photos, video, title, description and tags are kept.\\n\\n'+
+    'To replace the artwork itself, Cancel and choose a new master file instead.')
+   :confirm(
     'Reconvert this Silvia Etsy listing with new artwork?\\n\\n'+
     item.title+'\\nArtwork ID: '+artworkId+'\\nNew file: '+file.name+'\\n\\n'+
     'Your new master artwork will be uploaded to R2 and newly cropped on the shared PC worker. '+
@@ -488,17 +493,29 @@ async function reconvertListing(item,card){
   let revision=null;
   try{
     const setup=await withSetupSlot(async()=>{
-     status.textContent='Checking the new master artwork before upload…';
-     const sha256=await artworkFingerprint(file);
-     bar.style.width='9%';
-     status.textContent='Reserving a fresh upload for '+artworkId+' (no new artwork ID)…';
-     const reserved=await requestJsonRetry('/api/listing-converter/reconvert/reserve',{
-      method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({listingId:item.listingId,artworkId,orientation,
-       master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size,sha256}})
-     });
+     let reserved;
+     if(useExistingMaster){
+      status.textContent='Copying the stored master for '+artworkId+' inside R2 (no upload)…';
+      reserved=await requestJsonRetry('/api/listing-converter/reconvert/reserve',{
+       method:'POST',headers:{'content-type':'application/json'},
+       body:JSON.stringify({listingId:item.listingId,artworkId,useExistingMaster:true})
+      });
+      bar.style.width='65%';
+     }else{
+      status.textContent='Checking the new master artwork before upload…';
+      const sha256=await artworkFingerprint(file);
+      bar.style.width='9%';
+      status.textContent='Reserving a fresh upload for '+artworkId+' (no new artwork ID)…';
+      reserved=await requestJsonRetry('/api/listing-converter/reconvert/reserve',{
+       method:'POST',headers:{'content-type':'application/json'},
+       body:JSON.stringify({listingId:item.listingId,artworkId,orientation,
+        master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size,sha256}})
+      });
+     }
      revision=reserved.revision;
-     if(!reserved.uploadAlreadyPresent){
+     if(useExistingMaster){
+      // Stored master already copied into the staging folder.
+     }else if(!reserved.uploadAlreadyPresent){
       status.textContent='Uploading fresh master artwork '+file.name+' for '+artworkId+'…';
       await putFile(reserved.upload.uploadUrl,file,p=>{bar.style.width=p+'%'},reserved.upload.contentType);
      }else{
@@ -519,7 +536,9 @@ async function reconvertListing(item,card){
     });
     if(!setup.cropsReady&&!setup.workerOnline){
      status.className='cardstatus warn';
-     status.textContent='New master uploaded and crops queued. Start the shared PC worker, then choose this same file and click Reconvert listing to resume. Existing artwork and Etsy listing are unchanged.';
+     status.textContent=useExistingMaster
+      ?'Crops queued from the stored master. Start the shared PC worker, then click Reconvert listing again (no file) to resume. Existing artwork and Etsy listing are unchanged.'
+      :'New master uploaded and crops queued. Start the shared PC worker, then choose this same file and click Reconvert listing to resume. Existing artwork and Etsy listing are unchanged.';
      return;
     }
     if(!setup.cropsReady){
@@ -535,7 +554,7 @@ async function reconvertListing(item,card){
   }catch(error){
     status.className='cardstatus bad';
     status.textContent='Reconversion incomplete: '+String(error.message||error)+
-      '. Existing artwork ID remains '+artworkId+'. Keep this file selected and retry if needed.';
+      '. Existing artwork ID remains '+artworkId+'. '+(useExistingMaster?'Retry when ready.':'Keep this file selected and retry if needed.');
     bar.style.width='0%';
   }finally{
     if(!['queued','running'].includes(queueForListing(item.listingId)?.status)){

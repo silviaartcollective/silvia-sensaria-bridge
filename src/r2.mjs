@@ -243,6 +243,23 @@ export async function listArtworkObjectKeys(prefix) {
   }while(continuationToken);
   return keys;
 }
+// Same exact-folder listing as listArtworkObjectKeys, with modification times.
+export async function listArtworkObjects(prefix) {
+  const config=r2Config(),client=r2Client(),objects=[];
+  const normalized=String(prefix||'');
+  if(!normalized||!normalized.endsWith('/'))throw Error('R2 listing requires an exact folder prefix.');
+  let continuationToken;
+  do{
+    const batch=await client.send(new ListObjectsV2Command({
+      Bucket:config.bucket,Prefix:normalized,ContinuationToken:continuationToken
+    }));
+    for(const item of batch.Contents||[])
+      if(item.Key?.startsWith(normalized))
+        objects.push({key:item.Key,lastModified:item.LastModified?new Date(item.LastModified):null});
+    continuationToken=batch.IsTruncated?batch.NextContinuationToken:undefined;
+  }while(continuationToken);
+  return objects;
+}
 export async function deleteArtworkObject(key) {
   const config = r2Config();
   const client = r2Client();

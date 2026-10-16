@@ -45,7 +45,7 @@ import {
  updateConversionJob,cancelConversion
 } from './listing-conversion-queue.mjs';
 import {
- reserveConverterArtworkRevision,startConverterArtworkCrop,getConverterArtworkRevisionStatus,
+ reserveConverterArtworkRevision,reserveConverterArtworkRegeneration,startConverterArtworkCrop,getConverterArtworkRevisionStatus,
  assertConverterArtworkReady,activateConverterArtworkRevision
 } from './converter-artwork-revision.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
@@ -3797,7 +3797,8 @@ const server = http.createServer(async (req, res) => {
   // Staged reconversion requires a fresh master and a separately verified crop job.
   if ((req.method==='POST'&&(
      url.pathname==='/api/listing-converter/reconvert/reserve'||
-     url.pathname==='/api/listing-converter/reconvert/crop'
+     url.pathname==='/api/listing-converter/reconvert/crop'||
+     url.pathname==='/api/listing-converter/reconvert/activate'
   ))||(req.method==='GET'&&url.pathname==='/api/listing-converter/reconvert/status')){
     if(!requireAdminApi(req,res))return;
     if(req.method==='POST'){
@@ -3832,17 +3833,40 @@ const server = http.createServer(async (req, res) => {
      if(req.method==='GET')
       return sendJson(res,200,{ok:true,...await getConverterArtworkRevisionStatus(shopId,listingId)});
      if(url.pathname.endsWith('/reserve')){
-      if(!body.master?.filename)
+      const useExistingMaster=body.useExistingMaster===true;
+      if(!useExistingMaster&&!body.master?.filename)
        return sendJson(res,400,{ok:false,error:'Choose a new master artwork file.'});
       const listings=await allShopListingsForPriceSync(session);
       if(!listings.some(item=>Number(item.listing_id)===listingId))
        return sendJson(res,404,{ok:false,error:'Etsy listing is not active or draft in this shop.'});
+      if(useExistingMaster)
+       return sendJson(res,200,{ok:true,...await reserveConverterArtworkRegeneration({
+        shopId,listingId,artworkId
+       })});
       return sendJson(res,200,{ok:true,...await reserveConverterArtworkRevision({
        shopId,listingId,artworkId,master:body.master,orientation:body.orientation
       })});
      }
      if(!/^[0-9a-f-]{36}$/i.test(String(body.revision||'')))
       return sendJson(res,400,{ok:false,error:'Missing artwork revision ID.'});
+     if(url.pathname.endsWith('/activate')){
+      // Listings editor "Re-upload artwork": Etsy variants, SKUs and prices are
+      // unchanged, so the verified master + crops are promoted into the
+      // artwork's R2 folder directly (same checks and rollback as reconversion).
+      if(body.confirm!=='REPLACE SILVIA ARTWORK')
+       return sendJson(res,400,{ok:false,error:'Explicit artwork replacement confirmation is required.'});
+      const activated=await activateConverterArtworkRevision({
+       shopId,listingId,artworkId,revision:String(body.revision)
+      });
+      const latestMap=await loadListingConverterMap();
+      const entry=latestMap.listings?.[String(listingId)];
+      if(entry&&!activated.alreadyActive){
+       entry.artworkReplacedAt=new Date().toISOString();
+       entry.artworkReplacementCount=Number(entry.artworkReplacementCount||0)+1;
+       await saveListingConverterMap(latestMap);
+      }
+      return sendJson(res,200,{ok:true,...activated});
+     }
      const queued=await startConverterArtworkCrop({
       shopId,listingId,artworkId,revision:body.revision
      });
