@@ -233,9 +233,11 @@ function render(data){
   hero.classList.add('show');profitNote.style.display='block';privateOrderNote.style.display='block';
   winner.textContent=data.winner.provider;
   winnerCost.textContent=money(data.winner.modeledLandedUsd);
-  winnerDetail.textContent=data.winner.savingsVsNextBestUsd!=null
-    ? 'Saves '+money(data.winner.savingsVsNextBestUsd)+' vs next best'
-    : 'Only one eligible provider';
+  winnerDetail.textContent=data.partial
+    ? 'PROVISIONAL: lowest of completed providers. Other supplier quotes still unverified.'
+    : data.winner.savingsVsNextBestUsd!=null
+      ? 'Saves '+money(data.winner.savingsVsNextBestUsd)+' vs next best'
+      : 'Only one eligible provider';
   if(pCurrent){
     const p=pCurrent;
     customerPrice.textContent=money(p.salePriceAfterDiscountUsd);
@@ -364,7 +366,55 @@ libraryButton.addEventListener('click',async()=>{
    libraryButton.disabled=false;
  }
 });
-button.addEventListener('click',async()=>{button.disabled=true;button.innerHTML='<span class="spinner"></span>Checking providers…';status.className='status';status.textContent='Looking up the exact request across connected providers…';try{const body={countryCode:country.value.trim().toUpperCase(),productCode:product.value,width:Number(width.value),height:Number(height.value),frame:product.value==='FC'?frame.value:'',shippingMode:shippingMode.value};const r=await fetch('/api/custom-size/lookup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'Lookup failed');render(d);status.textContent=d.winner?'Lookup complete · '+d.request.size+' '+d.request.product+' to '+d.request.countryCode+' · best option: '+d.winner.provider+'.':'Lookup complete, but no provider returned a fully priced eligible option.';}catch(e){status.className='status bad';status.textContent=String(e.message||e);}finally{button.disabled=false;button.textContent='Find best option';}});
+async function requestCustomQuote(body,maxWaitMs){
+  const response=await fetch('/api/custom-size/lookup',{
+    method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify(body),signal:AbortSignal.timeout(maxWaitMs)
+  });
+  const data=await response.json().catch(()=>null);
+  if(!data)throw Error('Custom lookup returned an invalid response (HTTP '+response.status+').');
+  if(!response.ok||!data.ok)throw Error(data.error||'Custom lookup failed (HTTP '+response.status+').');
+  return data;
+}
+button.addEventListener('click',async()=>{
+  button.disabled=true;button.innerHTML='<span class="spinner"></span>Checking providers…';
+  status.className='status';
+  status.textContent='Retrieving the captured Sensaria price first…';
+  const body={
+    countryCode:country.value.trim().toUpperCase(),productCode:product.value,
+    width:Number(width.value),height:Number(height.value),
+    frame:product.value==='FC'?frame.value:'',shippingMode:shippingMode.value
+  };
+  try{
+    // Show a useful quote immediately even if a live supplier catalog stalls.
+    try{
+      const preview=await requestCustomQuote({...body,previewOnly:true},8000);
+      render(preview);
+      status.textContent='Sensaria estimate loaded. Checking other providers live (up to 24 seconds). Prices and ranking are provisional until these checks finish.';
+    }catch(error){
+      status.textContent='Preview was unavailable; checking live providers with a time limit…';
+    }
+    const data=await requestCustomQuote(body,36000);
+    render(data);
+    const partial=Boolean(data.partial);
+    const delayed=(data.incompleteProviders||[]).join(', ');
+    status.className=partial?'status bad':'status';
+    status.textContent=partial
+      ? 'Partial comparison: '+(data.winner?'lowest verified quote: '+data.winner.provider+'. ':'No verified quote yet. ')+
+        'Not checked in time: '+delayed+'. These suppliers were NOT treated as unavailable or included in the ranking. Retry later for a complete comparison.'
+      : data.winner
+        ? 'Comparison complete · '+data.request.size+' '+data.request.product+' to '+data.request.countryCode+
+          ' · lowest eligible option: '+data.winner.provider+'.'
+        : 'Comparison complete. No provider returned a fully priced eligible option; see each provider status below.';
+  }catch(error){
+    status.className='status bad';
+    status.textContent=error?.name==='TimeoutError'||error?.name==='AbortError'
+      ? 'Live provider comparison exceeded its time limit. The Sensaria estimate above remains provisional. Please retry later.'
+      : 'Custom lookup failed: '+String(error?.message||error)+'. If a Sensaria estimate appears above, it is provisional.';
+  }finally{
+    button.disabled=false;button.textContent='Find best option';
+  }
+});
 })();
 </script></body></html>`;
 }
