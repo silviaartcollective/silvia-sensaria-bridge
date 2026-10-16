@@ -14,6 +14,8 @@ import { findCandidates, getDetails, reserveMockups, prepareReplacement, finaliz
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
+import {beginGmailAuthorization,finishGmailAuthorization,gmailConnectionStatus,disconnectGmail,gmailOAuthConfigured} from './gmail-oauth.mjs';
+import {scanSensariaGmail,gmailTrackingStatus} from './sensaria-gmail-tracking.mjs';
 import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy } from './order-tracking.mjs';
 
 const TRACKING_SHOP_NAME="Silvia Art Collective";
@@ -3197,6 +3199,64 @@ const server = http.createServer(async (req, res) => {
   }
 
 
+  // Gmail integration is an explicitly authorized, read-only mailbox connection.
+  // Shipment extraction only stages tracking; no Etsy completion or notifications.
+  if(req.method==='GET' && url.pathname==='/tracking/gmail/connect'){
+    if(!requireAdminPage(req,res,'/tracking'))return;
+    try{
+      const oauth=beginGmailAuthorization();
+      res.writeHead(302,{'location':oauth,'cache-control':'no-store'});
+      return res.end();
+    }catch(error){return sendJson(res,503,{ok:false,error:String(error.message||error)});}
+  }
+  if(req.method==='GET' && url.pathname==='/tracking/gmail/callback'){
+    if(!requireAdminPage(req,res,'/tracking'))return;
+    try{
+      if(url.searchParams.get('error'))
+        throw Error('Gmail authorization was declined: '+url.searchParams.get('error'));
+      await finishGmailAuthorization(url.searchParams.get('state'),url.searchParams.get('code'));
+      res.writeHead(302,{'location':'/tracking?gmail=connected','cache-control':'no-store'});
+      return res.end();
+    }catch(error){
+      console.error('[gmail tracking] OAuth failed: '+String(error.message||error));
+      res.writeHead(302,{'location':'/tracking?gmail=error','cache-control':'no-store'});
+      return res.end();
+    }
+  }
+  if(req.method==='GET'&&url.pathname==='/api/tracking/gmail/status'){
+    if(!requireAdminApi(req,res))return;
+    try{return sendJson(res,200,{ok:true,...await gmailTrackingStatus()});}
+    catch(error){return sendJson(res,503,{ok:false,error:String(error.message||error)});}
+  }
+  if(req.method==='POST'&&
+     (url.pathname==='/api/tracking/gmail/scan'||url.pathname==='/api/tracking/gmail/disconnect')){
+    if(!requireAdminApi(req,res))return;
+    const origin=String(req.headers.origin||''),host=String(req.headers.host||'');
+    const expected=String(req.headers['x-forwarded-proto']||'https')+'://'+host;
+    if(!host||(origin&&origin!==expected)||req.headers['sec-fetch-site']==='cross-site')
+      return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+      return sendJson(res,415,{ok:false,error:'JSON request required.'});
+    try{
+      const body=await readTrackingJsonBody(req);
+      if(url.pathname==='/api/tracking/gmail/disconnect'){
+        if(body.confirm!=='DISCONNECT GMAIL')
+          return sendJson(res,400,{ok:false,error:'Explicit disconnect confirmation is required.'});
+        await disconnectGmail();
+        return sendJson(res,200,{ok:true,connected:false});
+      }
+      const session=await getEtsySession();
+      const scope=new Set(String(session.scope||'').split(/\s+/));
+      if(!scope.has('transactions_r'))
+        return sendJson(res,403,{ok:false,error:'Etsy transactions_r access required.'});
+      const result=await scanSensariaGmail(session);
+      return sendJson(res,200,{ok:true,...result});
+    }catch(error){
+      console.error('[gmail tracking] scan failed: '+String(error.message||error));
+      return sendJson(res,502,{ok:false,error:String(error.message||error)});
+    }
+  }
+
   // CSV import is review-only. Etsy shipment updates have a separate guarded approval action.
   if (req.method === 'GET' && url.pathname === '/tracking') {
     if (!requireAdminPage(req, res, '/tracking')) return;
@@ -4977,6 +5037,10 @@ async function recoverRecentGeneratedJpgs(){
   }
 }
 
+// Gmail polls are advisory and run only after explicit OAuth connection.
+// Render instances that sleep do not offer guaranteed continuous polling;
+// the on-demand Scan Gmail button remains available.
+const GMAIL_TRACKING_POLL_MS=30*60*1000;
 server.listen(port, '0.0.0.0', () => {
   console.log(`Silvia Sensaria bridge listening on port ${port}`);
   setTimeout(()=>{void recoverRecentGeneratedJpgs().catch(
@@ -4985,5 +5049,17 @@ server.listen(port, '0.0.0.0', () => {
   if(AUTO_REVIEW_ENABLED){
     setTimeout(()=>{void reconcileNewEtsyPaidOrders();},30000).unref();
     setInterval(()=>{void reconcileNewEtsyPaidOrders();},AUTO_REVIEW_INTERVAL_MS).unref();
+  }
+  if(gmailOAuthConfigured()){
+    const poll=async()=>{
+      try{
+        if(!(await gmailConnectionStatus()).connected)return;
+        const session=await getEtsySession();
+        await scanSensariaGmail(session);
+      }catch(error){console.error('[gmail tracking] scheduled scan error: '+String(error.message||error));}
+    };
+    setInterval(()=>{void poll();},GMAIL_TRACKING_POLL_MS).unref();
+  }
+  if(false){
   }
 });
