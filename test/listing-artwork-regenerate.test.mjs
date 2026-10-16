@@ -163,3 +163,18 @@ test('new Product Creator listings are linked by their SKUs, not shown as "Not l
  assert.ok(server.includes('manifest?.etsyDraftListingId,manifest?.etsyConfiguration?.listingId,manifest?.sourceEtsyListingId'));
  assert.ok(server.includes("error:'Artwork ownership could not be verified for this listing.'"));
 });
+
+test('crop completion treats .reconvert staging jobs as staged, not as a changed master', async()=>{
+ const {isStagedConverterCropJob,isStagedRevisionJob,cropOutputKeyForJob}=await import('../src/artwork-revision.mjs');
+ const job={artworkId:'SAC0007',masterKey:'artworks/SAC0007/.reconvert/00000000-0000-4000-8000-000000000001/master.jpeg'};
+ assert.equal(isStagedConverterCropJob(job),true);
+ assert.equal(isStagedRevisionJob(job),false);
+ assert.equal(cropOutputKeyForJob(job,'2x3'),'artworks/SAC0007/.reconvert/00000000-0000-4000-8000-000000000001/fulfillment/2x3.jpg');
+ assert.equal(isStagedConverterCropJob({artworkId:'SAC0007',masterKey:'artworks/SAC0007/master.jpg'}),false);
+ const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
+ const complete=server.slice(server.indexOf("const currentJob = await getCropJob(jobId);"),server.indexOf('const job = await completeCropJob(jobId, workerId, assets);')+400);
+ assert.ok(complete.includes('if (isStagedCropJob(currentJob)) {'),'staged master is not compared with the live master');
+ assert.ok(complete.includes('} else if (!isStagedCropJob(currentJob)) {'),'staged crops never overwrite live manifest crops');
+ assert.ok(!/isStagedRevisionJob\(currentJob\)/.test(complete),'every completion check covers both staging folders');
+ assert.ok(server.includes('return isStagedRevisionJob(job)||isStagedConverterCropJob(job);'));
+});

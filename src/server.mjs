@@ -7,7 +7,7 @@ import { renderDashboard } from './dashboard.mjs';
 import { renderReadinessPage } from './readiness-page.mjs';
 import { renderListingReposterPage } from './listing-reposter-page.mjs';
 import {
-  cropOutputKeyForJob, isStagedRevisionJob, reserveArtworkRevision,
+  cropOutputKeyForJob, isStagedRevisionJob, isStagedConverterCropJob, reserveArtworkRevision,
   startArtworkRevisionCrop, getArtworkRevisionStatus, artworkIdFromInventory
 } from './artwork-revision.mjs';
 import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement } from './listing-reposter.mjs';
@@ -182,6 +182,14 @@ async function persistDraftManifestFields(manifest, fields) {
   return updateArtworkManifest(manifest.artworkId, current => {
     for (const field of fields) current[field] = manifest[field];
   });
+}
+
+// Crop jobs that read a staged replacement master (Listings editor re-upload,
+// converter reconversion, or the older revisions flow) write to their own
+// staging folder and must not be compared with, or written over, the artwork's
+// live master and crops until the replacement is activated.
+function isStagedCropJob(job){
+  return isStagedRevisionJob(job)||isStagedConverterCropJob(job);
 }
 
 function moneyAmount(value) {
@@ -2280,7 +2288,7 @@ const server = http.createServer(async (req, res) => {
         if (!currentJob) return sendJson(res, 404, { ok: false, error: 'Crop job not found' });
 
         const manifest = await loadArtworkManifest(currentJob.artworkId);
-        if (isStagedRevisionJob(currentJob)) {
+        if (isStagedCropJob(currentJob)) {
           if (!manifest?.master?.key || !(await artworkObjectExists(currentJob.masterKey)))
             throw new Error('Staged replacement master missing while crop job was running');
         } else if (!manifest?.master?.key || manifest.master.key !== currentJob.masterKey) {
@@ -2324,7 +2332,7 @@ const server = http.createServer(async (req, res) => {
           if (Math.abs(width / height - expectedRatio) > 1 / Math.min(width, height)) {
             throw new Error(`${ratio} crop does not match its requested aspect ratio.`);
           }
-          if (!isStagedRevisionJob(currentJob) &&
+          if (!isStagedCropJob(currentJob) &&
               manifest.master?.width && manifest.master?.height &&
               (sourceMasterWidth !== Number(manifest.master.width) ||
                sourceMasterHeight !== Number(manifest.master.height))) {
@@ -2366,7 +2374,7 @@ const server = http.createServer(async (req, res) => {
             latest.fulfillmentSizeCrops ||= {};
             latest.fulfillmentSizeCrops[currentJob.size]={...crop,size:currentJob.size,jobId:currentJob.id};
           });
-        } else if (!isStagedRevisionJob(currentJob)) {
+        } else if (!isStagedCropJob(currentJob)) {
           await updateArtworkManifest(currentJob.artworkId, latest=>{
             if(latest.master?.key!==currentJob.masterKey)
               throw Error('Master artwork changed before default crops completed.');
@@ -2379,7 +2387,7 @@ const server = http.createServer(async (req, res) => {
           });
         }
         const job = await completeCropJob(jobId, workerId, assets);
-        if (!currentJob.size && !isStagedRevisionJob(currentJob)) await writeFulfillmentStatus(currentJob.artworkId, {
+        if (!currentJob.size && !isStagedCropJob(currentJob)) await writeFulfillmentStatus(currentJob.artworkId, {
           status: 'completed',
           jobId: currentJob.id,
           workerId,
