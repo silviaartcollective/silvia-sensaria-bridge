@@ -420,7 +420,7 @@ function renderResults(){
     t.status+(t.progress?' · '+t.progress:'')+(t.error?' — '+t.error:'')));
   row.append(caption);
   if(t.status==='completed'){
-   row.append(create('a','Download JPG',{href:'/api/mockups/jobs/'+job.id+'/download/'+t.id,download:t.outputName}));
+   row.append(create('a','Download JPG',{href:'/api/mockups/jobs/'+job.id+'/download/'+t.id+'?direct=1',download:t.outputName}));
    const remove=create('button','Delete JPG',{type:'button'});
    remove.addEventListener('click',()=>act(async()=>{
     if(!confirm('Delete '+t.outputName+'?'))return;
@@ -631,9 +631,19 @@ initialLoad.then(()=>{
  message('Saved PSD templates loaded. Master uploads automatically queue selected mockups.');
 }).catch(failure);
 // Polling updates are UI-only. The PC worker continues running if this tab closes.
+// Every poll is Render bandwidth, so a background tab or a finished batch is not
+// polled; the worker status is checked every 30 s while nothing is running.
+let lastWorkerCheck=Date.now();
+const batchRunning=()=>!!job&&!job.paused&&job.templates.some(t=>t.status==='queued'||t.status==='processing');
 setInterval(()=>{
- if(preparing)return;
- if(job)void showJob(job.id,{quiet:true}).catch(failure);
- void workerStatus();
+ if(preparing||document.hidden)return;
+ const running=batchRunning();
+ if(running)void showJob(job.id,{quiet:true}).catch(failure);
+ if(running||Date.now()-lastWorkerCheck>=30000){lastWorkerCheck=Date.now();void workerStatus();}
 },6000);
+document.addEventListener('visibilitychange',()=>{
+ if(document.hidden||preparing)return;
+ lastWorkerCheck=Date.now();void workerStatus();
+ if(job)void showJob(job.id,{quiet:true}).catch(failure);
+});
 }

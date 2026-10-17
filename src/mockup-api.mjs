@@ -1,4 +1,5 @@
 import {GetObjectCommand} from '@aws-sdk/client-s3';
+import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 import {pipeline} from 'node:stream/promises';
 import sharp from 'sharp';
 import {
@@ -90,6 +91,14 @@ async function claimCandidates(){
   if(!j.paused&&!hasActiveMockupLease(j))jobs.push(j);
  }
  return jobs.sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)));
+}
+// Download links go straight to R2 so full-size JPGs never count against the
+// Render service's outbound bandwidth.
+async function redirectToObject(res,key,name){
+ const config=r2Config();
+ const url=await getSignedUrl(r2Client(),new GetObjectCommand({Bucket:config.bucket,Key:key,
+  ResponseContentDisposition:"attachment; filename*=UTF-8''"+encodeURIComponent(name)}),{expiresIn:300});
+ res.writeHead(302,{location:url,'cache-control':'no-store'});res.end();
 }
 function makeError(error){
  const msg=String(error?.message||error||'Unexpected error');
@@ -276,12 +285,14 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     const thumbnail=await generatedMockupThumbnail(d.key);
     res.writeHead(200,{
      'content-type':'image/jpeg','content-length':thumbnail.length,
-     'cache-control':'private, max-age=180','x-content-type-options':'nosniff'
+     // The client URL carries ?v=finishedAt, so a regenerated JPG gets a new URL.
+     'cache-control':'private, max-age=2592000, immutable','x-content-type-options':'nosniff'
     });
     res.end(thumbnail);return true;
    }
    if(req.method==='GET'&&parts[2]==='download'&&isId(parts[3])){
     const d=await getMockupItemDownload(id,parts[3]);
+    if(url.searchParams.get('direct')==='1')return redirectToObject(res,d.key,d.name).then(()=>true);
     return streamObject(res,d.key,d.name).then(()=>true);
    }
    if(req.method==='DELETE'&&parts.length===2){
