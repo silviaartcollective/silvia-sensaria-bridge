@@ -52,4 +52,4 @@ Any other layers, adjustments and effects in the scene are fine.
 3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
 4. Run `start-worker.cmd`.
 
-The dashboards should show **Crop + Mockup Worker v4.5.0**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+The dashboards should show **Crop + Mockup Worker v4.5.1**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
