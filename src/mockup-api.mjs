@@ -7,7 +7,7 @@ import {
  deleteMockupTemplate,listMockupJobs,getMockupJob,createMockupJob,markMockupArtworkUploaded,
  controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
  classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput,
- hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT
+ hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT,knownMockupArtworkTarget
 } from './mockup-generator.mjs';
 import {
  signedArtworkUploadUrl,signedArtworkUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
@@ -71,6 +71,27 @@ async function streamObject(res,key,name=''){
  });
  await pipeline(result.Body,res);
 }
+// Batches that may still have queued PSDs. Reading every batch ever created from
+// R2 on each worker poll made every claim slow, so the full listing runs only
+// at start-up and every 10 minutes; new and resumed batches are added directly.
+const activeBatches={ids:null,listedAt:0};
+const openBatch=j=>!!j&&j.artworkUploaded&&!j.deleted&&
+ !!j.templates?.some(t=>t.status==='queued'||t.status==='processing');
+function markBatchActive(id){activeBatches.ids?.add(id)}
+async function claimCandidates(){
+ if(!activeBatches.ids||Date.now()-activeBatches.listedAt>10*60*1000){
+  const listedAt=Date.now(),all=await listMockupJobs();
+  activeBatches.ids=new Set(all.filter(openBatch).map(j=>j.id));activeBatches.listedAt=listedAt;
+ }
+ const jobs=[];
+ for(const id of [...activeBatches.ids]){
+  let j=null;
+  try{j=await getMockupJob(id)}catch{}
+  if(!openBatch(j)){activeBatches.ids.delete(id);continue}
+  if(!j.paused&&!hasActiveMockupLease(j))jobs.push(j);
+ }
+ return jobs.sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)));
+}
 // Download links go straight to R2 so full-size JPGs never count against the
 // Render service's outbound bandwidth.
 async function redirectToObject(res,key,name){
@@ -101,15 +122,16 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     if(!(v[0]>4||(v[0]===4&&v[1]>=5))){
      sendJson(res,426,{ok:false,error:'PC mockup worker version 4.5.0 or newer is required (PSDs now render on the PC worker alone, without Photoshop or Photopea). Run worker/setup-worker.cmd and restart it.'});return true;
     }
-    const jobs=(await listMockupJobs()).filter(j=>j.artworkUploaded&&!j.paused&&!j.deleted&&
-      j.templates?.some(t=>t.status==='queued'||t.status==='processing')&&!hasActiveMockupLease(j))
-      .sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)));
+    const jobs=await claimCandidates();
     for(const candidate of jobs){
      let claimed;
      try{claimed=await claimMockupWork(candidate.id,owner)}
      catch(error){if(/processing|lease|paused/i.test(String(error?.message)))continue;throw error}
      if(!claimed?.item)continue;
-     const template=await getMockupTemplate(claimed.item.id);
+     const stored=await getMockupTemplate(claimed.item.id);
+     // Known templates (e.g. mockup 19's layer "5") use the same layer the server verifies.
+     const known=knownMockupArtworkTarget(stored.name);
+     const template=stored.mapping?.path||!known?stored:{...stored,mapping:{path:known}};
      const key=mockupOutputKey(candidate.id,template.id);
      return send(200,{job:claimed.job,item:claimed.item,template,
        templateUrl:await signedArtworkUrl(template.key,3600),
@@ -141,7 +163,10 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    if(req.method==='POST'&&parts[2]==='inspect'){
     const body=await readJson(req),t=await getMockupTemplate(id);
     const classified=classifySmartObjects(body.objects,t);
-    const template=await updateMockupTemplate(id,{smartObjects:classified.objects});
+    // The same template is inspected on every render; only write when it changed.
+    const summary=list=>JSON.stringify((list||[]).map(o=>[o.path,o.name,!!o.visible]));
+    const template=summary(t.smartObjects)===summary(classified.objects)?t:
+     await updateMockupTemplate(id,{smartObjects:classified.objects});
     return send(200,{classification:classified,template}),true;
    }
    if(req.method==='POST'&&parts[2]==='preview'){
@@ -180,7 +205,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     job.artworkId=artworkId;job.sourceMasterKey=master.key;
     await putMockupJob(job);
     await copyArtworkObject(master.key,job.artworkKey);
-    const confirmed=await markMockupArtworkUploaded(job.id);
+    const confirmed=await markMockupArtworkUploaded(job.id);markBatchActive(job.id);
     // Persist the linkage for refresh/restart recovery and progress UI.
     manifest.mockupJobIds=[...new Set([...(manifest.mockupJobIds||[]),job.id])].slice(-30);
     await saveArtworkManifest(manifest);
@@ -193,11 +218,13 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    const id=parts[1];if(!isId(id))throw Error('Invalid batch ID.');
    if(req.method==='GET'&&parts.length===2)return send(200,{job:await getMockupJob(id)}),true;
    if(req.method==='POST'&&parts[2]==='artwork-confirm'){
-    return send(200,{job:await markMockupArtworkUploaded(id)}),true;
+    const job=await markMockupArtworkUploaded(id);markBatchActive(id);
+    return send(200,{job}),true;
    }
    if(req.method==='POST'&&parts[2]==='control'){
     const body=await readJson(req);
-    return send(200,{job:await controlMockupJob(id,str(body.action),ownerCheck(body))}),true;
+    const job=await controlMockupJob(id,str(body.action),ownerCheck(body));markBatchActive(id);
+    return send(200,{job}),true;
    }
    if(req.method==='POST'&&parts[2]==='claim'){
     const body=await readJson(req),owner=ownerCheck(body);

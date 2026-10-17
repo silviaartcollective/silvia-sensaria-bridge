@@ -46,7 +46,7 @@ const screen=(b,s)=>255-(255-b)*(255-s)/255;
 //   wall (gradient) → group "Frame" with a mask hiding the right strip of the art
 //   { artwork Smart Object (trapezoid), glare clipped to it (screen, 40%) }
 //   → shadow strip across the top (multiply, 60%).
-function frameScene({W=240,H=180,inconsistent=false}={}){
+function frameScene({W=240,H=180,shade=false,unrelated=false}={}){
  const quad=[[60,30],[180,40],[180,150],[60,160]];
  const old=[150,120,90];
  const wall=(x,y)=>[200-(y>>2),190,170+(x>>3)];
@@ -61,7 +61,8 @@ function frameScene({W=240,H=180,inconsistent=false}={}){
    c=a;
   }
   c=c.map(v=>lerp(v,multiply(v,60),shadow(y)));
-  if(inconsistent&&x>90&&x<150&&y>80&&y<130)c=[20,200,20];
+  if(shade&&inQuad(quad,x,y)&&y>=110&&y<130)c=c.map(v=>v*0.5);
+  if(unrelated&&inQuad(quad,x,y))c=[(x*37)%256,(y*53)%256,((x+y)*29)%256];
   return c;
  });
  const psd={width:W,height:H,imageData:composite,children:[
@@ -107,9 +108,10 @@ test('perspective artwork, clipped glare, group mask and shadow render on the PC
   const first=await processor.renderMockupOnPC({psdPath,artworkPath:artPath,outputPath:out,
    templateName:'frame.psd',fitMode:'cover',onStage:s=>stages.push(s)});
   assert.equal(first.needsMapping,false);
-  assert.equal(first.usedMapping,'1.0');
+  assert.equal(first.usedMapping,'1.1'); // Photoshop numbering: Frame is 2nd from top, art below Glare
   assert.equal(first.preparedFromCache,false);
   assert.ok(first.fidelity.meanPixelError<1,JSON.stringify(first.fidelity));
+  assert.ok(first.fidelity.correctedFraction<0.01,JSON.stringify(first.fidelity));
   assert.deepEqual(first.dimensions,{width:240,height:180});
   const {at}=await pixels(out);
   // The diagonals of the quad meet at the artwork's centre; step toward each corner.
@@ -133,10 +135,37 @@ test('perspective artwork, clipped glare, group mask and shadow render on the PC
  }finally{await fs.rm(dir,{recursive:true,force:true})}
 });
 
-test('a template the renderer cannot reproduce is rejected with the reason, never rendered wrong',needsReader,()=>{
- const psd=readBack(frameScene({inconsistent:true}).psd);
+test('effects the layers cannot explain (e.g. an inner shadow) are carried onto every new artwork',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  // The composite darkens a band inside the artwork by 50%, which no layer explains.
+  const scene=frameScene({shade:true});
+  const psdPath=path.join(dir,'shade.psd'),artPath=path.join(dir,'art.png'),out=path.join(dir,'out.jpg');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(scene.psd));
+  await quadrantArtwork(artPath);
+  const result=await processor.renderMockupOnPC({psdPath,artworkPath:artPath,outputPath:out,templateName:'shade.psd',fitMode:'cover'});
+  assert.ok(result.fidelity.correctedFraction>0.05,JSON.stringify(result.fidelity));
+  const {at}=await pixels(out);
+  const glare=(c,x)=>c.map(v=>lerp(v,screen(v,255),scene.glareAlpha(x)));
+  near(at(95,121),glare(QUADRANTS.bl,95).map(v=>v*0.5),12,'shaded bottom-left');
+  near(at(95,71),glare(QUADRANTS.tl,95),12,'unshaded top-left');
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
+});
+
+test('a PSD whose composite does not match its artwork layer at all is rejected, never rendered wrong',needsReader,()=>{
+ const psd=readBack(frameScene({unrelated:true}).psd);
  assert.throws(()=>native.prepareFromPsd(psd),
-  error=>error instanceof native.NativeMockupUnsupported&&/differs from the PSD/.test(error.message));
+  error=>error instanceof native.NativeMockupUnsupported&&/does not match its artwork Smart Object/.test(error.message));
+});
+
+test('16-bit PSD pixels are converted to 8 bits',needsReader,()=>{
+ const wide=v=>({width:1,height:1,data:new Uint16Array([v,v,v,65535])});
+ const psd={imageData:wide(65535),children:[{imageData:wide(32896),mask:{imageData:wide(0)},children:[{imageData:wide(256)}]}]};
+ native.normalizeDepth(psd);
+ assert.deepEqual([...psd.imageData.data],[255,255,255,255]);
+ assert.deepEqual([...psd.children[0].imageData.data],[128,128,128,255]);
+ assert.deepEqual([...psd.children[0].mask.imageData.data],[0,0,0,255]);
+ assert.deepEqual([...psd.children[0].children[0].imageData.data],[1,1,1,255]);
 });
 
 test('several visible Smart Objects ask for the artwork layer once, then use the saved choice',needsReader,()=>{
@@ -147,10 +176,16 @@ test('several visible Smart Objects ask for the artwork layer once, then use the
  const parsed=readBack(psd);
  const asked=native.prepareFromPsd(parsed);
  assert.equal(asked.needsMapping,true);
- assert.deepEqual(asked.objects.map(o=>o.path),['1.0','3']);
- const mapped=native.prepareFromPsd(parsed,{path:'1.0'});
+ assert.deepEqual(asked.objects.map(o=>o.path).sort(),['0','2.1']);
+ const mapped=native.prepareFromPsd(parsed,{path:'2.1'});
  assert.equal(mapped.needsMapping,false);
- assert.equal(mapped.usedMapping,'1.0');
+ assert.equal(mapped.usedMapping,'2.1');
+ // A choice saved by layer name (e.g. mockup 19's "5") also works.
+ assert.equal(native.prepareFromPsd(parsed,{path:'Your Art'}).usedMapping,'2.1');
+ // A stale saved choice asks for the layer again instead of failing the PSD.
+ const stale=native.prepareFromPsd(parsed,{path:'7'});
+ assert.equal(stale.needsMapping,true);
+ assert.match(stale.reason,/select the artwork layer again/);
 });
 
 test('a hidden Smart Object (like mockup 19\'s "mockup 1 (1)") is never chosen as the artwork',needsReader,()=>{
@@ -160,9 +195,9 @@ test('a hidden Smart Object (like mockup 19\'s "mockup 1 (1)") is never chosen a
  psd.linkedFiles.push({id:GUID2,name:'hidden.png',data:new Uint8Array([1])});
  const prepared=native.prepareFromPsd(readBack(psd));
  assert.equal(prepared.needsMapping,false);
- assert.equal(prepared.usedMapping,'1.0');
- assert.deepEqual(prepared.objects.map(o=>[o.path,o.visible]),[['1.0',true],['3',false]]);
- assert.throws(()=>native.prepareFromPsd(readBack(psd),{path:'3'}),/not found among visible layers/);
+ assert.equal(prepared.usedMapping,'2.1');
+ assert.deepEqual(prepared.objects.map(o=>[o.path,o.visible]).sort(),[['0',false],['2.1',true]]);
+ assert.equal(native.prepareFromPsd(readBack(psd),{path:'0'}).needsMapping,true);
 });
 
 test('ordinary Smart Objects (identity warp grid) are accepted; real warps and filters are not',needsReader,()=>{
@@ -188,18 +223,18 @@ test('homography maps the Smart Object corners exactly',needsReader,()=>{
  });
 });
 
-test('templates without a saved composite or with 16-bit colour are rejected clearly',needsReader,()=>{
+test('templates without a saved composite or with 32-bit colour are rejected clearly',needsReader,()=>{
  assert.throws(()=>native.prepareFromPsd({width:10,height:10,colorMode:3,bitsPerChannel:8,children:[]}),
   /Maximize PSD and PSB File Compatibility/);
- assert.throws(()=>native.prepareFromPsd({width:10,height:10,colorMode:3,bitsPerChannel:16,children:[]}),
-  /8-bit/);
+ assert.throws(()=>native.prepareFromPsd({width:10,height:10,colorMode:3,bitsPerChannel:32,children:[]}),
+  /32-bit/);
 });
 
 test('an unsupported template fails that PSD without pausing the batch',needsReader,async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
  try{
   const psdPath=path.join(dir,'bad.psd');
-  await fs.writeFile(psdPath,agPsd.writePsdBuffer(frameScene({inconsistent:true}).psd));
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(frameScene({unrelated:true}).psd));
   await quadrantArtwork(path.join(dir,'art.png'));
   await assert.rejects(processor.renderMockupOnPC({psdPath,artworkPath:path.join(dir,'art.png'),
    outputPath:path.join(dir,'out.jpg'),templateName:'bad.psd'}),
@@ -209,7 +244,7 @@ test('an unsupported template fails that PSD without pausing the batch',needsRea
  }finally{await fs.rm(dir,{recursive:true,force:true})}
 });
 
-test('a 12-megapixel template renders each new artwork in seconds once prepared',needsReader,async()=>{
+test('a 12-megapixel template renders each new artwork in about a second once prepared',needsReader,async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
  try{
   const W=4000,H=3000,quad=[[900,400],[3100,400],[3100,2700],[900,2700]];
@@ -233,7 +268,7 @@ test('a 12-megapixel template renders each new artwork in seconds once prepared'
   console.log('12 MP template: first render with preparation '+prepared+' ms, cached render '+render+' ms');
   assert.equal(result.preparedFromCache,true);
   assert.deepEqual(result.dimensions,{width:4000,height:3000});
-  assert.ok(render<8000,'cached render took '+render+' ms');
+  assert.ok(render<4000,'cached render took '+render+' ms');
  }finally{await fs.rm(dir,{recursive:true,force:true})}
 });
 
