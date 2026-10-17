@@ -643,6 +643,7 @@ function recordCropWorkerHeartbeat(input = {}) {
     mockups: Number.parseInt(String(input.version || cropWorkerHeartbeat.version || '0').split('.')[0],10)>=4,
     busy: input.busy === true,
     jobId: String(input.jobId || '').trim(),
+    activeApp: String(input.activeApp || '').trim().slice(0, 80),
     lastSeenAt: Date.now()
   };
   return cropWorkerHeartbeat;
@@ -661,6 +662,7 @@ function cropWorkerStatus() {
     mockups: online ? cropWorkerHeartbeat.mockups===true : false,
     busy: online ? cropWorkerHeartbeat.busy : false,
     jobId: online ? cropWorkerHeartbeat.jobId : '',
+    activeApp: online ? cropWorkerHeartbeat.activeApp || '' : '',
     lastSeenAt: cropWorkerHeartbeat.lastSeenAt
       ? new Date(cropWorkerHeartbeat.lastSeenAt).toISOString()
       : null

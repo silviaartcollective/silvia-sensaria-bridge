@@ -90,7 +90,9 @@ async function claimCandidates(){
   if(!openBatch(j)){activeBatches.ids.delete(id);continue}
   if(!j.paused&&!hasActiveMockupLease(j))jobs.push(j);
  }
- return jobs.sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)));
+ // Newest batch first: the listing being created now should not wait behind
+ // older batches that were queued while the worker was unavailable.
+ return jobs.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 // Download links go straight to R2 so full-size JPGs never count against the
 // Render service's outbound bandwidth.
