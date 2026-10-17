@@ -40,16 +40,18 @@ The **same running worker** processes two queues: production artwork crops and P
 - If a PSD has several visible Smart Objects, choose the artwork layer once in the Product Creator. The choice is saved with the template.
 
 **Template requirements:**
-- RGB, 8 bits/channel, saved with **Maximize PSD and PSB File Compatibility** turned on.
-- The artwork Smart Object uses Normal blending at 100% opacity.
-- The artwork Smart Object has no Warp transform and no Smart Filters.
+- RGB or grayscale, 8 or 16 bits/channel.
+- The artwork Smart Object uses Normal blending at 100% opacity, with no Warp transform (perspective is fine).
 
-Any other layers, adjustments and effects in the scene are fine.
+PSDs saved with **Maximize PSD and PSB File Compatibility** turned on are reproduced most faithfully, including effects and adjustment layers. Without it, Photoshop saves no usable preview, so the worker builds the scene from the layers. Layer effects (e.g. drop shadows) and adjustment layers are then left out.
+
+
+**Stopping the worker:** it runs hidden in the background, so there is no window to close. Run `stop-worker.cmd` (or end the Node.js process in Task Manager). Dashboards show it offline about 20 seconds later. Opening an admin page while it is offline asks Windows to start it again.
 
 **After pulling this update on the PC:**
-1. Wait for the current job to finish and stop the old worker.
+1. Wait for the current job to finish and run `stop-worker.cmd`.
 2. Update the single shared worker folder.
 3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
 4. Run `start-worker.cmd`.
 
-The dashboards should show **Crop + Mockup Worker v4.5.1**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+The dashboards should show **Crop + Mockup Worker v4.5.2**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.

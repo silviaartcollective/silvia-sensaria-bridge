@@ -607,7 +607,8 @@ function requireAdminApi(req, res) {
   return false;
 }
 
-const CROP_WORKER_HEARTBEAT_TTL_MS = 45 * 1000;
+// The worker checks in every 8 s; after 20 s of silence it is reported offline.
+const CROP_WORKER_HEARTBEAT_TTL_MS = 20 * 1000;
 let cropWorkerHeartbeat = {
   workerId: '',
   version: '',

@@ -160,8 +160,12 @@ export const applyHomography = (H, x, y) => {
 // Smart Objects; only a real deformation is unsupported.
 export function warpIsIdentity(warp) {
   if (!warp || !warp.style || warp.style === 'none') return true;
-  if (warp.style !== 'custom') return Math.abs(Number(warp.value || 0)) < 1e-6 &&
-    !Number(warp.perspective || 0) && !Number(warp.perspectiveOther || 0);
+  if (warp.style !== 'custom') {
+    // Preset warps (arc, cylinder, flag …) store their bend as `value` or `values`.
+    const values = Array.isArray(warp.values) ? warp.values : [warp.value];
+    return values.every(v => Math.abs(Number(v || 0)) < 1e-6) &&
+      !Number(warp.perspective || 0) && !Number(warp.perspectiveOther || 0);
+  }
   const points = warp.customEnvelopeWarp?.meshPoints;
   const bounds = warp.bounds;
   const u = Number(warp.uOrder || 4), v = Number(warp.vOrder || 4);
@@ -185,8 +189,6 @@ export function smartObjectGeometry(layer) {
   if (!Array.isArray(raw) || raw.length !== 8 || raw.some(v => !Number.isFinite(Number(v))))
     unsupported('Smart Object corner coordinates are missing.');
   if (!warpIsIdentity(info.warp)) unsupported('The artwork Smart Object uses a Warp transform, which the native renderer cannot reproduce.');
-  if (info.filter?.list?.some(f => f?.enabled !== false))
-    unsupported('The artwork Smart Object has Smart Filters, which the native renderer cannot reproduce.');
   const quad = [[+raw[0], +raw[1]], [+raw[2], +raw[3]], [+raw[4], +raw[5]], [+raw[6], +raw[7]]];
   const contentWidth = Number(info.width) || Math.hypot(quad[1][0] - quad[0][0], quad[1][1] - quad[0][1]);
   const contentHeight = Number(info.height) || Math.hypot(quad[3][0] - quad[0][0], quad[3][1] - quad[0][1]);
@@ -356,19 +358,76 @@ export function normalizeDepth(psd) {
   return psd;
 }
 
+// A composite that is one flat colour everywhere is Photoshop's placeholder for
+// a PSD saved without "Maximize PSD and PSB File Compatibility".
+export function compositeIsBlank(psd) {
+  const img = psd.imageData;
+  if (!img?.data || img.width !== psd.width || img.height !== psd.height) return true;
+  const d = img.data, n = img.width * img.height, step = Math.max(1, Math.floor(n / 60000));
+  for (let i = step; i < n; i += step) {
+    const p = i * 4;
+    if (d[p] !== d[0] || d[p + 1] !== d[1] || d[p + 2] !== d[2]) return false;
+  }
+  return true;
+}
+
+// Flattens the visible layers bottom→top onto white: blend modes, opacity,
+// fill, masks and clipping. Layer effects and adjustment layers are not drawn.
+export function flattenScene(psd, entries) {
+  const W = psd.width, H = psd.height, out = new Uint8ClampedArray(W * H * 4).fill(255);
+  for (const e of entries) {
+    if (!e.visible || e.adjustment) continue;
+    const img = e.layer.imageData;
+    if (!img?.data) continue;
+    const lx = Math.round(Number(e.layer.left || 0)), ly = Math.round(Number(e.layer.top || 0));
+    const left = Math.max(0, lx), top = Math.max(0, ly);
+    const box = { left, top, width: Math.min(W, lx + img.width) - left, height: Math.min(H, ly + img.height) - top };
+    if (box.width <= 0 || box.height <= 0) continue;
+    const rgba = cropLayerRGBA(e.layer, box), alpha = entryAlpha(e, box, rgba);
+    if (e.clipBase >= 0) {
+      const base = entries[e.clipBase];
+      if (!base.visible) continue;
+      const baseAlpha = entryAlpha(base, box, cropLayerRGBA(base.layer, box));
+      for (let i = 0; i < alpha.length; i++) alpha[i] *= baseAlpha[i];
+    }
+    const fn = blendFor(e.blend) || BLENDS.normal;
+    for (let y = 0; y < box.height; y++) for (let x = 0; x < box.width; x++) {
+      const i = y * box.width + x, a = alpha[i];
+      if (a <= 0) continue;
+      const p = ((box.top + y) * W + box.left + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        const b = out[p + c] / 255, s = rgba[i * 4 + c] / 255;
+        out[p + c] = Math.round(255 * (b * (1 - a) + fn(b, s) * a));
+      }
+    }
+  }
+  return { width: W, height: H, data: out };
+}
+function sceneApproximations(entries) {
+  const list = [];
+  for (const e of entries) {
+    if (!e.visible) continue;
+    if (e.adjustment) list.push('adjustment layer "' + e.name + '" not drawn');
+    else if (e.effects) list.push('effects on "' + e.name + '" not drawn');
+  }
+  return list.slice(0, 8);
+}
+
 // Builds the prepared template in memory from a parsed PSD (exported for tests).
 export function prepareFromPsd(psd, mapping = null) {
-  if (psd.colorMode !== 3) unsupported('Only RGB PSD templates are supported (this one is not RGB).');
+  if (psd.colorMode !== 3 && psd.colorMode !== 1)
+    unsupported('Only RGB or grayscale PSD templates are supported; convert this one to RGB in Photoshop.');
   if (psd.bitsPerChannel !== 8 && psd.bitsPerChannel !== 16)
     unsupported('32-bit PSD templates are not supported; convert it to 8 or 16 bits/channel in Photoshop.');
   normalizeDepth(psd);
   if (!(psd.width > 0 && psd.height > 0) || psd.width * psd.height > MAX_CANVAS_PIXELS)
     unsupported('PSD canvas size is outside the native limit (100 megapixels).');
-  const composite = psd.imageData;
-  if (!composite?.data || composite.width !== psd.width || composite.height !== psd.height)
-    unsupported('The PSD has no saved composite image. Re-save it in Photoshop with "Maximize PSD and PSB File Compatibility" turned on.');
-
   const { entries, notes } = flattenLayers(psd);
+  // Without "Maximize PSD and PSB File Compatibility" Photoshop saves a blank
+  // composite; build the scene from its layers instead.
+  const selfComposited = compositeIsBlank(psd);
+  if (selfComposited) psd.imageData = flattenScene(psd, entries);
+  const composite = psd.imageData;
   const selection = selectArtwork(psd, entries, mapping);
   if (selection.needsMapping)
     return { needsMapping: true, objects: selection.objects, usedMapping: null, reason: selection.reason };
@@ -380,6 +439,8 @@ export function prepareFromPsd(psd, mapping = null) {
     unsupported('The artwork layer opacity is below 100%; set it to 100% for native rendering.');
   const reasons = [...notes];
   if (art.effects) reasons.push('the artwork layer has layer effects');
+  // Ignored when the scene is built from layers: smart filters on the artwork.
+  if (art.layer.placedLayer?.filter?.list?.some(f => f?.enabled !== false)) reasons.push('the artwork has Smart Filters');
   const { quad, contentWidth, contentHeight } = smartObjectGeometry(art.layer);
   const H = homography(quad, [[0, 0], [contentWidth, 0], [contentWidth, contentHeight], [0, contentHeight]]);
 
@@ -466,7 +527,7 @@ export function prepareFromPsd(psd, mapping = null) {
   const mean = error / compared, outlierFraction = outliers / compared;
   // Corrections are for effects on top of the artwork. A scene that differs
   // almost everywhere means the placement itself is wrong.
-  if (mean > 60 && outlierFraction > 0.6)
+  if (!selfComposited && mean > 60 && outlierFraction > 0.6)
     unsupported('The PSD does not match its artwork Smart Object (mean difference ' + mean.toFixed(1) + ').' + why());
   let residual = null;
   if (corrected) {
@@ -484,7 +545,8 @@ export function prepareFromPsd(psd, mapping = null) {
     needsMapping: false, width: psd.width, height: psd.height, box, quad, contentWidth, contentHeight,
     coverage, above, residual, composite, objects: selection.objects, usedMapping: selection.pathId,
     fidelity: { meanPixelError: Number(mean.toFixed(3)), outlierFraction: Number(outlierFraction.toFixed(5)),
-      comparedPixels: compared, correctedFraction: Number((corrected / compared).toFixed(5)) }
+      comparedPixels: compared, correctedFraction: Number((corrected / compared).toFixed(5)),
+      ...(selfComposited ? { selfComposited: true, approximations: sceneApproximations(entries) } : {}) }
   };
 }
 
