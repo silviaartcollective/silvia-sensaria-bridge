@@ -42,8 +42,10 @@ export function validateMappingPath(path){
  return value;
 }
 export function classifySmartObjects(list,template){
- const objects=(Array.isArray(list)?list:[]).filter(x=>x&&x.kind==='smart'&&x.visible!==false&&typeof x.path==='string')
-    .map(x=>({name:limitText(x.name,160),path:limitText(x.path,400),visible:true}));
+ const visible=(Array.isArray(list)?list:[]).filter(x=>x&&x.kind==='smart'&&x.visible!==false&&typeof x.path==='string');
+ // `kind` is kept: the Product Creator's artwork-layer picker lists smart objects only.
+ const objects=visible.map(x=>({name:limitText(x.name,160),path:limitText(x.path,400),visible:true,kind:'smart'}));
+ const suggested=visible.filter(x=>x.suggested===true);
  const expected=template?.mapping?.path||knownMockupArtworkTarget(template?.name);
  if(expected){
    const selected=objects.find(x=>x.path===expected||x.name===expected);
@@ -51,6 +53,9 @@ export function classifySmartObjects(list,template){
    return {status:'needs_mapping',reason:'Saved artwork Smart Object not found or hidden.',objects};
  }
  if(objects.length===1)return {status:'mapped',path:objects[0].path,objects};
+ // The PC worker picks the artwork layer only when it is clear (placeholder
+ // name, or the only layer that is neither a background nor a frame ring).
+ if(suggested.length===1)return {status:'mapped',path:limitText(suggested[0].path,400),objects,suggested:true};
  return {status:'needs_mapping',reason:objects.length?'Multiple visible Smart Objects; select the artwork layer.':'No visible editable Smart Objects detected.',objects};
 }
 // Lists every matching key (cheap: 1000 per request), then reads only the most
