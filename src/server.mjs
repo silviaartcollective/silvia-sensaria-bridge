@@ -5020,7 +5020,7 @@ server.headersTimeout = 120_000;
 // PSD completion callbacks existed. No repeated scans or duplicate uploads.
 async function recoverRecentGeneratedJpgs(){
   const threshold=Date.now()-72*60*60*1000;
-  const jobs=await listMockupJobs();
+  const jobs=await listMockupJobs(100);
   const recent=jobs.filter(job=>job.artworkId&&job.sourceMasterKey&&
     Date.parse(job.updatedAt||job.createdAt||'')>=threshold&&
     job.templates?.some(item=>item.status==='completed'&&item.outputKey));

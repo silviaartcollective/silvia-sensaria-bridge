@@ -28,16 +28,25 @@ export function r2Config() {
   };
 }
 
+// One shared client per configuration: it keeps connections to R2 open instead
+// of a new TLS handshake (and socket pool) for every request.
+let sharedClient = null;
 export function r2Client() {
   const config = r2Config();
-  return new S3Client({
+  const key = [config.endpoint, config.region, config.accessKeyId, config.secretAccessKey].join('|');
+  if (sharedClient?.key === key) return sharedClient.client;
+  const client = new S3Client({
     region: config.region,
     endpoint: config.endpoint,
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey
-    }
+    },
+    maxAttempts: 4,
+    requestHandler: { connectionTimeout: 10_000, requestTimeout: 120_000 }
   });
+  sharedClient = { key, client };
+  return client;
 }
 
 export async function checkR2Connection() {
