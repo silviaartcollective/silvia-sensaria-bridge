@@ -55,7 +55,7 @@ function setSelected(id,itemId,checked){
  if(checked===selection.defaultSelected)selection.exceptions.delete(itemId);
  else selection.exceptions.add(itemId);
 }
-let lastStatus='';
+let lastStatus='',lastWorker={};
 function message(text,warning=false){
  lastStatus=String(text);
  const element=$('mg-progress');element.textContent=lastStatus;element.classList.toggle('warn',warning);
@@ -393,6 +393,7 @@ async function workerStatus(){
  try{
   const response=await fetch('/api/crop-worker/status',{cache:'no-store'});
   const data=await response.json(),worker=data.worker||{};
+  lastWorker=worker;
   const version=String(worker.version||'0').split('.').map(Number);
   const fixed=worker.online&&worker.mockups===true&&
    (version[0]>4||(version[0]===4&&version[1]>=5));
@@ -476,7 +477,13 @@ async function showJob(id,{quiet=false}={}){
  else if(job.status==='completed')message('All '+count+' mockups generated on the PC. Select your Etsy images.');
  else if(job.paused)message('Paused after current PSD · '+count+'/'+job.templates.length+' ready');
  else if(failed.length)message(failed.length+' mockups need attention · '+count+'/'+job.templates.length+' ready',true);
- else message('Waiting for shared PC worker · '+count+'/'+job.templates.length+' ready');
+ else{
+  // Say why this batch is waiting when the worker is busy elsewhere.
+  const w=lastWorker,elsewhere=w.online&&w.busy&&w.jobId!==job.id;
+  message((elsewhere
+   ?(w.jobId?'PC worker is finishing another job first':'PC worker is busy with '+(w.activeApp||'another shop')+'; this batch is next')
+   :'Waiting for shared PC worker')+' · '+count+'/'+job.templates.length+' ready');
+ }
  $('mg-generate').disabled=preparing;
  $('mg-pause').disabled=!job||job.status==='completed'||job.paused;
  if(!quiet||failed.some(t=>t.status==='needs_mapping'))await mappingPrompt();

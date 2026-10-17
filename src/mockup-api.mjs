@@ -80,7 +80,7 @@ const openBatch=j=>!!j&&j.artworkUploaded&&!j.deleted&&
 function markBatchActive(id){activeBatches.ids?.add(id)}
 async function claimCandidates(){
  if(!activeBatches.ids||Date.now()-activeBatches.listedAt>10*60*1000){
-  const listedAt=Date.now(),all=await listMockupJobs();
+  const listedAt=Date.now(),all=await listMockupJobs(300);
   activeBatches.ids=new Set(all.filter(openBatch).map(j=>j.id));activeBatches.listedAt=listedAt;
  }
  const jobs=[];
@@ -90,7 +90,9 @@ async function claimCandidates(){
   if(!openBatch(j)){activeBatches.ids.delete(id);continue}
   if(!j.paused&&!hasActiveMockupLease(j))jobs.push(j);
  }
- return jobs.sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)));
+ // Newest batch first: the listing being created now should not wait behind
+ // older batches that were queued while the worker was unavailable.
+ return jobs.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 // Download links go straight to R2 so full-size JPGs never count against the
 // Render service's outbound bandwidth.
@@ -101,6 +103,8 @@ async function redirectToObject(res,key,name){
  res.writeHead(302,{location:url,'cache-control':'no-store'});res.end();
 }
 function makeError(error){
+ if(error?.name==='TimeoutError'||/timed? ?out/i.test(String(error?.message||'')))
+  return {ok:false,error:'Cloudflare R2 did not respond in time. This refreshes automatically; retry if it persists.'};
  const msg=String(error?.message||error||'Unexpected error');
  return {ok:false,error:msg.slice(0,450)};
 }
@@ -187,7 +191,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    if(req.method==='DELETE'&&parts.length===2)return send(200,await deleteMockupTemplate(id)),true;
   }
   if(parts[0]==='jobs'){
-   if(req.method==='GET'&&parts.length===1)return send(200,{jobs:await listMockupJobs()}),true;
+   if(req.method==='GET'&&parts.length===1)return send(200,{jobs:await listMockupJobs(40)}),true;
    // Queue from the already-uploaded R2 master instead of uploading it twice.
    if(req.method==='POST'&&parts.length===2&&parts[1]==='from-artwork'){
     const body=await readJson(req),artworkId=String(body.artworkId||'');

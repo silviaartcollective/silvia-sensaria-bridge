@@ -643,6 +643,7 @@ function recordCropWorkerHeartbeat(input = {}) {
     mockups: Number.parseInt(String(input.version || cropWorkerHeartbeat.version || '0').split('.')[0],10)>=4,
     busy: input.busy === true,
     jobId: String(input.jobId || '').trim(),
+    activeApp: String(input.activeApp || '').trim().slice(0, 80),
     lastSeenAt: Date.now()
   };
   return cropWorkerHeartbeat;
@@ -661,6 +662,7 @@ function cropWorkerStatus() {
     mockups: online ? cropWorkerHeartbeat.mockups===true : false,
     busy: online ? cropWorkerHeartbeat.busy : false,
     jobId: online ? cropWorkerHeartbeat.jobId : '',
+    activeApp: online ? cropWorkerHeartbeat.activeApp || '' : '',
     lastSeenAt: cropWorkerHeartbeat.lastSeenAt
       ? new Date(cropWorkerHeartbeat.lastSeenAt).toISOString()
       : null
@@ -5020,7 +5022,7 @@ server.headersTimeout = 120_000;
 // PSD completion callbacks existed. No repeated scans or duplicate uploads.
 async function recoverRecentGeneratedJpgs(){
   const threshold=Date.now()-72*60*60*1000;
-  const jobs=await listMockupJobs();
+  const jobs=await listMockupJobs(100);
   const recent=jobs.filter(job=>job.artworkId&&job.sourceMasterKey&&
     Date.parse(job.updatedAt||job.createdAt||'')>=threshold&&
     job.templates?.some(item=>item.status==='completed'&&item.outputKey));
