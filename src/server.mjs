@@ -560,7 +560,7 @@ async function converterListingRows(session) {
 }
 
 function sendJson(res, status, value) {
-  const body = JSON.stringify(value, null, 2);
+  const body = JSON.stringify(value);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(body),
