@@ -34,9 +34,12 @@ let activeJob = null;
 let heartbeatInFlight = false;
 const mockupOwner = crypto.randomUUID();
 const mockupPollAt = new Map(),mockupUnsupported=new Map(); // Retry temporarily unavailable PSD endpoints.
-// An idle shop's mockup queue is checked at most this often. While a batch has
-// queued PSDs the next one is claimed immediately after the previous finishes.
+// Each poll is outbound bandwidth on every shop's Render service. While a batch
+// has queued PSDs the next one is claimed immediately; otherwise queues are
+// checked every 5 s for a minute after the last job, then every 15 s.
 const MOCKUP_IDLE_POLL_MS = 5000;
+const IDLE_BACKOFF_AFTER_MS = 60000, IDLE_POLL_MS = 15000;
+const idlePollMs = base => Date.now() - lastWorkAt > IDLE_BACKOFF_AFTER_MS ? Math.max(base, IDLE_POLL_MS) : base;
 let preferMockupNext=false; // A crop backlog must not starve all pending PSD jobs.
 
 function sleep(ms) {
@@ -369,7 +372,7 @@ async function pollOnce(){
       }else{
       for(const app of cycle){
         if(stopping||(mockupUnsupported.get(app.appUrl)||0)>Date.now())continue;
-        if(Date.now()-(mockupPollAt.get(app.appUrl)||0)<MOCKUP_IDLE_POLL_MS)continue;
+        if(Date.now()-(mockupPollAt.get(app.appUrl)||0)<idlePollMs(MOCKUP_IDLE_POLL_MS))continue;
         mockupPollAt.set(app.appUrl,Date.now());
         try{
           const api=clientFor(app);
@@ -415,7 +418,7 @@ async function main(){
         console.log('Shared crop worker exiting after explicitly configured idle limit.');
         break;
       }
-      await sleep(POLL_INTERVAL_MS);
+      await sleep(idlePollMs(POLL_INTERVAL_MS));
     }
   }finally{
     clearInterval(ticker);
