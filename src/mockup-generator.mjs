@@ -53,14 +53,19 @@ export function classifySmartObjects(list,template){
  if(objects.length===1)return {status:'mapped',path:objects[0].path,objects};
  return {status:'needs_mapping',reason:objects.length?'Multiple visible Smart Objects; select the artwork layer.':'No visible editable Smart Objects detected.',objects};
 }
+// Lists every matching key (cheap: 1000 per request), then reads only the most
+// recently modified `limit` records. R2 lists keys alphabetically, so stopping
+// the listing early returned a random subset and every record was then read.
 async function listJSON(prefix,regex,limit=1000) {
  const client=r2Client(),bucket=r2Config().bucket;
- const keys=[];let marker;
+ const found=[];let marker;
  do {
    const data=await client.send(new ListObjectsV2Command({Bucket:bucket,Prefix:prefix,ContinuationToken:marker,MaxKeys:1000}));
-   for(const o of data.Contents||[])if(regex.test(o.Key||'')){keys.push(o.Key);if(keys.length>=limit)break}
+   for(const o of data.Contents||[])if(regex.test(o.Key||''))found.push(o);
    marker=data.IsTruncated?data.NextContinuationToken:null;
- }while(marker&&keys.length<limit);
+ }while(marker);
+ const keys=found.sort((a,b)=>new Date(b.LastModified||0)-new Date(a.LastModified||0))
+  .slice(0,limit).map(o=>o.Key);
  const results=[];for(let i=0;i<keys.length;i+=8){
   results.push(...(await Promise.all(keys.slice(i,i+8).map(async key=>optional(key)))).filter(Boolean));
  }
@@ -114,8 +119,8 @@ export async function deleteMockupTemplate(id){
 export async function registerMockupTemplatePreview(id,key){
  const r=await getMockupTemplate(id);r.previewKey=key;r.updatedAt=iso();await putJsonObject(templateKey(id),r);return r;
 }
-export async function listMockupJobs(){
- const records=await listJSON(ROOT+'/jobs/',/\/meta\.json$/,1000);
+export async function listMockupJobs(limit=1000){
+ const records=await listJSON(ROOT+'/jobs/',/\/meta\.json$/,limit);
  return records.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 export async function getMockupJob(id){
