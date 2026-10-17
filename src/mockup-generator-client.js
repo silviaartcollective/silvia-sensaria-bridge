@@ -441,7 +441,8 @@ async function mappingPrompt(){
   await loadTemplates();
   template=templates.find(t=>t.id===blocked.id);
  }
- const objects=(template?.smartObjects||[]).filter(t=>t.kind==='smart'&&t.visible);
+ // Older saved templates stored their smart objects without `kind`.
+ const objects=(template?.smartObjects||[]).filter(t=>(t.kind==='smart'||!t.kind)&&t.visible);
  if(!objects.length){box.hidden=true;return}
  box.hidden=false;
  $('mg-map-file').textContent=blocked.name+' — select the artwork Smart Object (hidden layers remain hidden).';
@@ -557,7 +558,7 @@ async function saveMapping(){
  if(!blocked)throw Error('No artwork layer needs mapping.');
  const path=$('mg-map-select').value;
  const template=templates.find(t=>t.id===blocked.id);
- if(!template?.smartObjects?.some(x=>x.kind==='smart'&&x.visible&&x.path===path))
+ if(!template?.smartObjects?.some(x=>(x.kind==='smart'||!x.kind)&&x.visible&&x.path===path))
   throw Error('Choose a visible artwork Smart Object.');
  await api('templates/'+blocked.id+'/update','POST',{mapping:{path}});
  await loadTemplates();

@@ -174,9 +174,13 @@ test('several visible Smart Objects ask for the artwork layer once, then use the
   placedLayer:{id:GUID2,type:'raster',transform:[0,0,20,0,20,20,0,20],width:20,height:20}});
  psd.linkedFiles.push({id:GUID2,name:'logo.png',data:new Uint8Array([1])});
  const parsed=readBack(psd);
- const asked=native.prepareFromPsd(parsed);
+ // "Your Art" is named like a placeholder, so it is picked without asking.
+ const picked=native.prepareFromPsd(parsed);
+ assert.equal(picked.usedMapping,'2.1');
+ assert.deepEqual(picked.objects.map(o=>o.path).sort(),['0','2.1']);
+ const renamed=readBack(psd);renamed.children[1].children[0].name='Layer 7'; // the artwork (ag-psd lists layers bottom first)
+ const asked=native.prepareFromPsd(renamed);
  assert.equal(asked.needsMapping,true);
- assert.deepEqual(asked.objects.map(o=>o.path).sort(),['0','2.1']);
  const mapped=native.prepareFromPsd(parsed,{path:'2.1'});
  assert.equal(mapped.needsMapping,false);
  assert.equal(mapped.usedMapping,'2.1');
@@ -318,4 +322,39 @@ test('the worker claims the next queued PSD immediately instead of waiting betwe
  assert.match(source,/mockupPollAt\.delete\(app\.appUrl\)/);
  assert.match(source,/if\(await pollOnce\(\)\)continue;/);
  assert.doesNotMatch(source,/<12000/);
+});
+
+test('with several smart objects the worker picks the artwork when it is clear, and the server accepts it',needsReader,async()=>{
+ const {classifySmartObjects}=await import('../src/mockup-generator.mjs');
+ const W=200,H=160,G=['1a2b3c4d-9391-11ec-b4f1-c15674f50bc4','2a2b3c4d-9391-11ec-b4f1-c15674f50bc4','3a2b3c4d-9391-11ec-b4f1-c15674f50bc4'];
+ const ring=(x,y)=>x<6||y<6||x>=94||y>=114?[20,20,20,255]:[0,0,0,0];
+ const scene=names=>({width:W,height:H,imageData:image(W,H,(x,y)=>x>=50&&x<150&&y>=20&&y<140?(x<56||y<26||x>=144||y>=134?[20,20,20]:[150,120,90]):[200,190,180]),
+  children:[
+   {name:names[0],left:0,top:0,right:W,bottom:H,imageData:image(W,H,()=>[200,190,180,255]),
+    placedLayer:{id:G[0],type:'raster',transform:[0,0,W,0,W,H,0,H],width:W,height:H}},
+   {name:names[1],left:50,top:20,right:150,bottom:140,imageData:image(100,120,()=>[150,120,90,255]),
+    placedLayer:{id:G[1],type:'raster',transform:[50,20,150,20,150,140,50,140],width:100,height:120}},
+   {name:names[2],left:50,top:20,right:150,bottom:140,imageData:image(100,120,ring),
+    placedLayer:{id:G[2],type:'raster',transform:[50,20,150,20,150,140,50,140],width:100,height:120}}
+  ],linkedFiles:G.map(id=>({id,name:id+'.png',data:new Uint8Array([1])}))});
+ // Background photo (full canvas) and frame ring are skipped: the middle layer is the artwork.
+ const prepared=native.prepareFromPsd(readBack(scene(['Layer 1','Layer 2','Layer 3'])));
+ assert.equal(prepared.needsMapping,false);
+ assert.equal(prepared.usedMapping,'1');
+ assert.equal(prepared.objects.find(o=>o.path==='1').suggested,true);
+ const classified=classifySmartObjects(prepared.objects,{name:'Black.psd'});
+ assert.equal(classified.status,'mapped');
+ assert.equal(classified.path,'1');
+ assert.ok(classified.objects.every(o=>o.kind==='smart'),'the layer picker needs kind');
+ // A placeholder name wins.
+ assert.equal(native.prepareFromPsd(readBack(scene(['Room','Frame','Your Design Here']))).usedMapping,'0');
+ // Two equally plausible layers: ask.
+ const two=scene(['A','B','C']);two.children[2].imageData=image(100,120,()=>[150,120,90,255]);
+ assert.equal(native.prepareFromPsd(readBack(two)).needsMapping,true);
+});
+
+test('the artwork-layer picker also lists layers saved before `kind` was stored',()=>{
+ const client=readFileSync(new URL('../src/mockup-generator-client.js',import.meta.url),'utf8');
+ assert.match(client,/filter\(t=>\(t\.kind==='smart'\|\|!t\.kind\)&&t\.visible\)/);
+ assert.match(client,/some\(x=>\(x\.kind==='smart'\|\|!x\.kind\)&&x\.visible&&x\.path===path\)/);
 });
