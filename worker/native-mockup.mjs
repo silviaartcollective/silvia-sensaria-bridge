@@ -19,7 +19,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import sharp from 'sharp';
 
-const PREP_VERSION = 3;
+const PREP_VERSION = 4;
 const MAX_CANVAS_PIXELS = 100_000_000;
 const OUTPUT_MAX_PIXELS = 24_000_000;
 const MAX_FILE_BYTES = 1_500 * 1024 * 1024;
@@ -51,13 +51,18 @@ async function loadAgPsd() {
   return agPsdPromise;
 }
 
-// Smart Object paths: indexes into ag-psd's `children` arrays joined with "."
-// (unchanged format, so mappings saved by earlier worker versions stay valid).
+// Layer paths count from the TOP of each group, joined with "." — the numbering
+// Photoshop and Photopea use, so artwork-layer choices saved by earlier worker
+// versions keep pointing at the same layer. (ag-psd lists layers bottom first.)
+export const layerPath = (prefix, index, count) => {
+  const id = String(count - 1 - index);
+  return prefix ? prefix + '.' + id : id;
+};
 export function nativeSmartObjects(psd) {
   const objects = [];
   const visit = (layers, prefix = '', visible = true) => {
-    (layers || []).forEach((layer, index) => {
-      const id = prefix ? prefix + '.' + index : String(index);
+    (layers || []).forEach((layer, index, all) => {
+      const id = layerPath(prefix, index, all.length);
       const shown = visible && layer.visible !== false && layer.hidden !== true;
       if (layer.placedLayer) objects.push({ path: id, name: String(layer.name || 'Smart Object'), kind: 'smart', visible: shown });
       if (Array.isArray(layer.children)) visit(layer.children, id, shown);
@@ -82,8 +87,8 @@ export function flattenLayers(psd) {
   const entries = [], notes = [];
   const walk = (children, prefix, ctx) => {
     let base = -1;
-    (children || []).forEach((layer, index) => {
-      const id = prefix ? prefix + '.' + index : String(index);
+    (children || []).forEach((layer, index, all) => {
+      const id = layerPath(prefix, index, all.length);
       const visible = ctx.visible && layer.hidden !== true && layer.visible !== false;
       const opacity = Number(layer.opacity ?? 1);
       if (Array.isArray(layer.children)) {
@@ -278,7 +283,7 @@ function packAbove(name, blend, rgba, alpha, clipToArt, box) {
 // Applies the prepared above-artwork layers to an opaque colour (0..1 floats)
 // at artwork-box pixel (x, y). The artwork's own coverage is applied afterwards
 // by the caller, so layers clipped to the artwork use only their own alpha.
-function applyAbove(above, x, y, r, g, b) {
+function applyAbove(above, x, y, r, g, b, out) {
   for (const layer of above) {
     const lx = x - layer.sub.x, ly = y - layer.sub.y;
     if (lx < 0 || ly < 0 || lx >= layer.sub.width || ly >= layer.sub.height) continue;
@@ -291,7 +296,8 @@ function applyAbove(above, x, y, r, g, b) {
     g = g * (1 - a) + blend(g, sg) * a;
     b = b * (1 - a) + blend(b, sb) * a;
   }
-  return [r, g, b];
+  out[0] = r; out[1] = g; out[2] = b;
+  return out;
 }
 
 // Fraction of each artwork-box pixel inside the Smart Object's corners: exact
@@ -316,36 +322,46 @@ function coverageFor(H, contentWidth, contentHeight, box) {
   return out;
 }
 
-function sampleBilinear(art, width, height, u, v) {
-  const x = Math.min(width - 1, Math.max(0, u - 0.5)), y = Math.min(height - 1, Math.max(0, v - 0.5));
-  const x0 = Math.floor(x), y0 = Math.floor(y), x1 = Math.min(width - 1, x0 + 1), y1 = Math.min(height - 1, y0 + 1);
-  const fx = x - x0, fy = y - y0, out = [0, 0, 0];
-  for (let c = 0; c < 3; c++) {
-    const top = art[(y0 * width + x0) * 3 + c] * (1 - fx) + art[(y0 * width + x1) * 3 + c] * fx;
-    const bottom = art[(y1 * width + x0) * 3 + c] * (1 - fx) + art[(y1 * width + x1) * 3 + c] * fx;
-    out[c] = (top * (1 - fy) + bottom * fy) / 255;
-  }
-  return out;
-}
-
 // --------------------------------------------------------------- preparation
 function selectArtwork(psd, entries, mapping) {
   const objects = nativeSmartObjects(psd);
   const visible = objects.filter(o => o.visible);
   const wanted = mapping?.path != null ? String(mapping.path) : null;
-  if (wanted != null && !visible.some(o => o.path === wanted))
-    unsupported('The saved artwork Smart Object was not found among visible layers in this PSD.');
-  if (wanted == null && visible.length !== 1) return { objects, needsMapping: true };
-  const pathId = wanted ?? visible[0].path;
+  const chosen = wanted != null
+    ? visible.find(o => o.path === wanted) || visible.find(o => o.name === wanted)
+    : visible.length === 1 ? visible[0] : null;
+  if (!chosen) return { objects, needsMapping: true, reason: wanted != null
+    ? 'The saved artwork Smart Object was not found among visible layers; select the artwork layer again.'
+    : visible.length ? 'This PSD has several visible Smart Objects. Select the artwork layer.'
+      : 'This PSD has no visible Smart Object to place the artwork in.' };
+  const pathId = chosen.path;
   const index = entries.findIndex(e => e.path === pathId);
   if (index < 0) unsupported('The artwork Smart Object could not be located in the layer stack.');
   return { objects, index, pathId };
 }
 
+// 16-bit PSDs are read as 16-bit pixel arrays; everything else works in 8 bits.
+export function normalizeDepth(psd) {
+  const fix = img => {
+    if (!(img?.data instanceof Uint16Array)) return;
+    const data = new Uint8ClampedArray(img.data.length);
+    for (let i = 0; i < data.length; i++) data[i] = img.data[i] >>> 8;
+    img.data = data;
+  };
+  const walk = layers => (layers || []).forEach(layer => {
+    fix(layer.imageData); fix(layer.mask?.imageData); fix(layer.realMask?.imageData);
+    walk(layer.children);
+  });
+  fix(psd.imageData); walk(psd.children);
+  return psd;
+}
+
 // Builds the prepared template in memory from a parsed PSD (exported for tests).
 export function prepareFromPsd(psd, mapping = null) {
   if (psd.colorMode !== 3) unsupported('Only RGB PSD templates are supported (this one is not RGB).');
-  if (psd.bitsPerChannel !== 8) unsupported('Only 8-bit PSD templates are supported; convert it to 8 bits/channel in Photoshop.');
+  if (psd.bitsPerChannel !== 8 && psd.bitsPerChannel !== 16)
+    unsupported('32-bit PSD templates are not supported; convert it to 8 or 16 bits/channel in Photoshop.');
+  normalizeDepth(psd);
   if (!(psd.width > 0 && psd.height > 0) || psd.width * psd.height > MAX_CANVAS_PIXELS)
     unsupported('PSD canvas size is outside the native limit (100 megapixels).');
   const composite = psd.imageData;
@@ -355,8 +371,7 @@ export function prepareFromPsd(psd, mapping = null) {
   const { entries, notes } = flattenLayers(psd);
   const selection = selectArtwork(psd, entries, mapping);
   if (selection.needsMapping)
-    return { needsMapping: true, objects: selection.objects, usedMapping: null,
-      reason: 'This PSD has several visible Smart Objects. Select the artwork layer.' };
+    return { needsMapping: true, objects: selection.objects, usedMapping: null, reason: selection.reason };
   const art = entries[selection.index];
   if (!art.visible) unsupported('The artwork Smart Object is hidden.');
   if (art.blend !== 'normal' && art.blend !== 'pass through')
@@ -411,39 +426,71 @@ export function prepareFromPsd(psd, mapping = null) {
   }
 
   // Fidelity: rebuild the artwork area with the PSD's own Smart Object pixels
-  // and compare it with Photoshop's composite.
+  // and compare it with Photoshop's composite. Whatever the layers above cannot
+  // explain (layer effects such as inner shadows, adjustment layers, unusual
+  // blending) is kept as a per-pixel correction and applied to every artwork.
   const artPixels = cropLayerRGBA(art.layer, box);
-  let compared = 0, error = 0, outliers = 0, rasterOutside = 0, rasterTotal = 0;
+  const N = box.width * box.height, out = new Float64Array(3);
+  const mul = new Uint8Array(N * 3).fill(128), add = new Uint8Array(N * 3).fill(128);
+  let compared = 0, error = 0, outliers = 0, rasterOutside = 0, rasterTotal = 0, corrected = 0;
+  let cx0 = box.width, cy0 = box.height, cx1 = -1, cy1 = -1;
   for (let y = 0; y < box.height; y++) for (let x = 0; x < box.width; x++) {
     const i = y * box.width + x;
     const rasterAlpha = artPixels[i * 4 + 3] / 255;
     if (rasterAlpha > 0.5) { rasterTotal++; if (quadCoverage[i] < 0.5) rasterOutside++; }
     const visibleAlpha = rasterAlpha * artMasks[i] * (clipAlpha ? clipAlpha[i] : 1);
     if (visibleAlpha < 0.99 || coverage[i] < 252) continue;
-    const [r, g, b] = applyAbove(above, x, y, artPixels[i * 4] / 255, artPixels[i * 4 + 1] / 255, artPixels[i * 4 + 2] / 255);
+    applyAbove(above, x, y, artPixels[i * 4] / 255, artPixels[i * 4 + 1] / 255, artPixels[i * 4 + 2] / 255, out);
     const c = ((box.top + y) * psd.width + box.left + x) * 4;
-    const delta = (Math.abs(r * 255 - composite.data[c]) + Math.abs(g * 255 - composite.data[c + 1]) + Math.abs(b * 255 - composite.data[c + 2])) / 3;
-    compared++; error += delta; if (delta > 24) outliers++;
+    let delta = 0, needs = false;
+    for (let ch = 0; ch < 3; ch++) {
+      const d = Math.abs(out[ch] * 255 - composite.data[c + ch]);
+      delta += d; if (d > 2) needs = true;
+    }
+    delta /= 3; compared++; error += delta; if (delta > 24) outliers++;
+    if (!needs) continue;
+    for (let ch = 0; ch < 3; ch++) {
+      const predicted = out[ch] * 255, target = composite.data[c + ch];
+      const m = predicted >= 24 ? Math.min(255, Math.round(128 * target / predicted)) : 128;
+      mul[i * 3 + ch] = m;
+      add[i * 3 + ch] = Math.max(0, Math.min(255, Math.round(target - predicted * m / 128) + 128));
+    }
+    corrected++;
+    if (x < cx0) cx0 = x; if (x > cx1) cx1 = x; if (y < cy0) cy0 = y; if (y > cy1) cy1 = y;
   }
   const why = () => reasons.length ? ' Likely cause: ' + [...new Set(reasons)].slice(0, 3).join('; ') + '.' : '';
   if (rasterTotal && rasterOutside / rasterTotal > 0.02)
     unsupported('The Smart Object pixels fall outside its corner points (' + (100 * rasterOutside / rasterTotal).toFixed(1) + '%).');
-  if (compared < Math.max(64, box.width * box.height * 0.05))
-    unsupported('Too little of the artwork area is visible to verify the template natively.' + why());
+  if (compared < Math.max(64, N * 0.05))
+    unsupported('Too little of the artwork area is visible to verify the template.' + why());
   const mean = error / compared, outlierFraction = outliers / compared;
-  if (mean > 3 || outlierFraction > 0.02)
-    unsupported('Native result differs from the PSD (mean error ' + mean.toFixed(2) + ', ' + (outlierFraction * 100).toFixed(2) + '% of pixels).' + why());
+  // Corrections are for effects on top of the artwork. A scene that differs
+  // almost everywhere means the placement itself is wrong.
+  if (mean > 60 && outlierFraction > 0.6)
+    unsupported('The PSD does not match its artwork Smart Object (mean difference ' + mean.toFixed(1) + ').' + why());
+  let residual = null;
+  if (corrected) {
+    const sub = { x: cx0, y: cy0, width: cx1 - cx0 + 1, height: cy1 - cy0 + 1 };
+    const subMul = new Uint8Array(sub.width * sub.height * 3), subAdd = new Uint8Array(sub.width * sub.height * 3);
+    for (let y = 0; y < sub.height; y++) {
+      const from = ((sub.y + y) * box.width + sub.x) * 3, to = y * sub.width * 3;
+      subMul.set(mul.subarray(from, from + sub.width * 3), to);
+      subAdd.set(add.subarray(from, from + sub.width * 3), to);
+    }
+    residual = { sub, mul: subMul, add: subAdd };
+  }
 
   return {
     needsMapping: false, width: psd.width, height: psd.height, box, quad, contentWidth, contentHeight,
-    coverage, above, composite, objects: selection.objects, usedMapping: selection.pathId,
-    fidelity: { meanPixelError: Number(mean.toFixed(3)), outlierFraction: Number(outlierFraction.toFixed(5)), comparedPixels: compared }
+    coverage, above, residual, composite, objects: selection.objects, usedMapping: selection.pathId,
+    fidelity: { meanPixelError: Number(mean.toFixed(3)), outlierFraction: Number(outlierFraction.toFixed(5)),
+      comparedPixels: compared, correctedFraction: Number((corrected / compared).toFixed(5)) }
   };
 }
 
 export async function prepareNativePsd({ psdPath, mapping = null, onStage = async () => {} }) {
   const stat = await fs.stat(psdPath);
-  if (stat.size > MAX_FILE_BYTES) unsupported('PSD is larger than the 1.5 GB native limit.');
+  if (stat.size > MAX_FILE_BYTES) unsupported('PSD is larger than the 1.5 GB limit.');
   const hash = crypto.createHash('sha256').update(JSON.stringify([
     path.basename(psdPath), stat.size, stat.mtimeMs, mapping?.path ?? '', PREP_VERSION
   ])).digest('hex');
@@ -466,18 +513,19 @@ export async function prepareNativePsd({ psdPath, mapping = null, onStage = asyn
       totalMemoryLimit: 3 * 1024 * 1024 * 1024
     });
   } catch (error) {
-    unsupported('PSD could not be read natively: ' + String(error?.message || error).slice(0, 160));
+    unsupported('PSD could not be read: ' + String(error?.message || error).slice(0, 160));
   }
-  await onStage('Verifying the template against the PSD\'s saved composite');
+  await onStage('Checking the template against the PSD\'s saved composite');
   const prepared = prepareFromPsd(psd, mapping);
   if (prepared.needsMapping) return prepared;
 
   await fs.rm(folder, { recursive: true, force: true });
   await fs.mkdir(folder, { recursive: true });
   const c = prepared.composite;
+  // Near-lossless JPEG: decodes many times faster than PNG on every render.
   await sharp(Buffer.from(c.data.buffer, c.data.byteOffset, c.data.byteLength),
     { raw: { width: prepared.width, height: prepared.height, channels: 4 }, limitInputPixels: false })
-    .removeAlpha().png({ compressionLevel: 1 }).toFile(path.join(folder, 'composite.png'));
+    .removeAlpha().jpeg({ quality: 100, chromaSubsampling: '4:4:4' }).toFile(path.join(folder, 'composite.jpg'));
   await fs.writeFile(path.join(folder, 'coverage.u8'), prepared.coverage);
   const above = [];
   for (let n = 0; n < prepared.above.length; n++) {
@@ -486,10 +534,15 @@ export async function prepareNativePsd({ psdPath, mapping = null, onStage = asyn
     await fs.writeFile(path.join(folder, 'above-' + n + '.a'), layer.a);
     above.push({ name: layer.name, blend: layer.blend, clipToArt: layer.clipToArt, sub: layer.sub });
   }
+  if (prepared.residual) {
+    await fs.writeFile(path.join(folder, 'residual.mul'), prepared.residual.mul);
+    await fs.writeFile(path.join(folder, 'residual.add'), prepared.residual.add);
+  }
   const manifest = {
     version: PREP_VERSION, psdBytes: stat.size, width: prepared.width, height: prepared.height,
     box: prepared.box, quad: prepared.quad, contentWidth: prepared.contentWidth, contentHeight: prepared.contentHeight,
-    above, objects: prepared.objects, usedMapping: prepared.usedMapping, fidelity: prepared.fidelity
+    above, residual: prepared.residual ? { sub: prepared.residual.sub } : null,
+    objects: prepared.objects, usedMapping: prepared.usedMapping, fidelity: prepared.fidelity
   };
   await fs.writeFile(manifestPath + '.tmp', JSON.stringify(manifest));
   await fs.rename(manifestPath + '.tmp', manifestPath);
@@ -513,8 +566,11 @@ async function prunePrepared(keep) {
 }
 
 // ------------------------------------------------------------------ render
+// The small per-template data stays in memory between renders.
+const preparedMemory = new Map();
 async function loadPrepared(prepared) {
   const { folder } = prepared;
+  if (preparedMemory.has(folder)) return preparedMemory.get(folder);
   const coverage = new Uint8Array(await fs.readFile(path.join(folder, 'coverage.u8')));
   const above = [];
   for (let i = 0; i < prepared.above.length; i++) {
@@ -523,52 +579,101 @@ async function loadPrepared(prepared) {
       rgb: new Uint8Array(await fs.readFile(path.join(folder, 'above-' + i + '.rgb'))),
       a: new Uint8Array(await fs.readFile(path.join(folder, 'above-' + i + '.a'))) });
   }
-  const base = await sharp(path.join(folder, 'composite.png'), { limitInputPixels: false }).removeAlpha().raw().toBuffer();
-  return { coverage, above, base };
+  const residual = prepared.residual ? { sub: prepared.residual.sub,
+    mul: new Uint8Array(await fs.readFile(path.join(folder, 'residual.mul'))),
+    add: new Uint8Array(await fs.readFile(path.join(folder, 'residual.add'))) } : null;
+  const loaded = { coverage, above, residual };
+  preparedMemory.set(folder, loaded);
+  while (preparedMemory.size > 24) preparedMemory.delete(preparedMemory.keys().next().value);
+  return loaded;
 }
 
-// Pure compositing step (exported for tests): writes the warped artwork and the
-// layers above it into `base` (RGB, full canvas) inside the artwork box.
-export function compositeArtwork({ base, width, box, quad, coverage, above, art, artWidth, artHeight }) {
-  const Hi = homography(quad, [[0, 0], [artWidth, 0], [artWidth, artHeight], [0, artHeight]]);
-  for (let y = 0; y < box.height; y++) for (let x = 0; x < box.width; x++) {
-    const i = y * box.width + x, c = coverage[i] / 255;
-    if (c <= 0) continue;
-    const [u, v] = applyHomography(Hi, box.left + x + 0.5, box.top + y + 0.5);
-    const [sr, sg, sb] = sampleBilinear(art, artWidth, artHeight, u, v);
-    const [r, g, b] = applyAbove(above, x, y, sr, sg, sb);
-    const p = ((box.top + y) * width + box.left + x) * 3;
-    base[p] = Math.round(base[p] * (1 - c) + r * 255 * c);
-    base[p + 1] = Math.round(base[p + 1] * (1 - c) + g * 255 * c);
-    base[p + 2] = Math.round(base[p + 2] * (1 - c) + b * 255 * c);
+// The master artwork is decoded once and reused for every template in a batch.
+let artworkMemory = null;
+const ARTWORK_MAX_SIDE = 6000;
+async function decodedArtwork(artworkPath) {
+  const info = await fs.stat(artworkPath);
+  const key = artworkPath + '|' + info.size + '|' + info.mtimeMs;
+  if (artworkMemory?.key === key) return artworkMemory;
+  const { data, info: raw } = await sharp(artworkPath, { limitInputPixels: false }).rotate()
+    .resize(ARTWORK_MAX_SIDE, ARTWORK_MAX_SIDE, { fit: 'inside', withoutEnlargement: true })
+    .flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  artworkMemory = { key, data, width: raw.width, height: raw.height };
+  return artworkMemory;
+}
+
+// Pure compositing step (exported for tests): the artwork warped into the
+// Smart Object corners, with the layers above and the correction applied, as an
+// RGBA patch over the artwork box whose alpha is the artwork's coverage.
+export function renderArtworkPatch({ box, quad, coverage, above, residual = null, art, artWidth, artHeight }) {
+  const [h0, h1, h2, h3, h4, h5, h6, h7, h8] =
+    homography(quad, [[0, 0], [artWidth, 0], [artWidth, artHeight], [0, artHeight]]);
+  const patch = new Uint8ClampedArray(box.width * box.height * 4), out = new Float64Array(3);
+  const maxX = artWidth - 1, maxY = artHeight - 1, rowBytes = artWidth * 3;
+  const rs = residual?.sub;
+  for (let y = 0; y < box.height; y++) {
+    const py = box.top + y + 0.5;
+    for (let x = 0; x < box.width; x++) {
+      const i = y * box.width + x, cov = coverage[i];
+      if (!cov) continue;
+      const px = box.left + x + 0.5, w = h6 * px + h7 * py + h8;
+      let u = (h0 * px + h1 * py + h2) / w - 0.5, v = (h3 * px + h4 * py + h5) / w - 0.5;
+      u = u < 0 ? 0 : u > maxX ? maxX : u; v = v < 0 ? 0 : v > maxY ? maxY : v;
+      const x0 = u | 0, y0 = v | 0, x1 = x0 < maxX ? x0 + 1 : x0, y1 = y0 < maxY ? y0 + 1 : y0;
+      const fx = u - x0, fy = v - y0;
+      const a = y0 * rowBytes + x0 * 3, b = y0 * rowBytes + x1 * 3, c = y1 * rowBytes + x0 * 3, d = y1 * rowBytes + x1 * 3;
+      let r = (art[a] * (1 - fx) + art[b] * fx) * (1 - fy) + (art[c] * (1 - fx) + art[d] * fx) * fy;
+      let g = (art[a + 1] * (1 - fx) + art[b + 1] * fx) * (1 - fy) + (art[c + 1] * (1 - fx) + art[d + 1] * fx) * fy;
+      let bl = (art[a + 2] * (1 - fx) + art[b + 2] * fx) * (1 - fy) + (art[c + 2] * (1 - fx) + art[d + 2] * fx) * fy;
+      if (above.length) {
+        applyAbove(above, x, y, r / 255, g / 255, bl / 255, out);
+        r = out[0] * 255; g = out[1] * 255; bl = out[2] * 255;
+      }
+      if (rs) {
+        const lx = x - rs.x, ly = y - rs.y;
+        if (lx >= 0 && ly >= 0 && lx < rs.width && ly < rs.height) {
+          const j = (ly * rs.width + lx) * 3;
+          r = r * residual.mul[j] / 128 + residual.add[j] - 128;
+          g = g * residual.mul[j + 1] / 128 + residual.add[j + 1] - 128;
+          bl = bl * residual.mul[j + 2] / 128 + residual.add[j + 2] - 128;
+        }
+      }
+      const p = i * 4;
+      patch[p] = r; patch[p + 1] = g; patch[p + 2] = bl; patch[p + 3] = cov;
+    }
   }
-  return base;
+  return patch;
 }
 
 export async function renderPreparedMockup({ prepared, artworkPath, outputPath, fitMode = 'contain' }) {
-  const { box, quad, contentWidth, contentHeight, width, height } = prepared;
-  const { coverage, above, base } = await loadPrepared(prepared);
+  const { box, quad, contentWidth, contentHeight, width, height, folder } = prepared;
+  const [{ coverage, above, residual }, source] = await Promise.all([loadPrepared(prepared), decodedArtwork(artworkPath)]);
   // Resample the artwork only as finely as the placement needs.
   const side = Math.max(...quad.map((p, i) => Math.hypot(quad[(i + 1) % 4][0] - p[0], quad[(i + 1) % 4][1] - p[1])));
   const scale = Math.min(1, (side * 1.25) / Math.max(contentWidth, contentHeight));
   const artWidth = Math.max(2, Math.round(contentWidth * scale)), artHeight = Math.max(2, Math.round(contentHeight * scale));
-  const art = await sharp(artworkPath, { limitInputPixels: false }).rotate()
+  const art = await sharp(source.data, { raw: { width: source.width, height: source.height, channels: 3 } })
     .resize(artWidth, artHeight, { fit: fitMode === 'cover' ? 'cover' : 'contain', background: { r: 255, g: 255, b: 255, alpha: 1 } })
     .flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer();
-  compositeArtwork({ base, width, box, quad, coverage, above, art, artWidth, artHeight });
-  let image = sharp(base, { raw: { width, height, channels: 3 }, limitInputPixels: false });
-  if (width * height > OUTPUT_MAX_PIXELS) {
-    const ratio = Math.sqrt(OUTPUT_MAX_PIXELS / (width * height));
-    image = image.resize(Math.floor(width * ratio), Math.floor(height * ratio), { kernel: 'lanczos3' });
-  }
-  return image.jpeg({ quality: 92, chromaSubsampling: '4:4:4' }).toFile(outputPath);
+  const patch = renderArtworkPatch({ box, quad, coverage, above, residual, art, artWidth, artHeight });
+  const overlay = { input: Buffer.from(patch.buffer, patch.byteOffset, patch.byteLength),
+    raw: { width: box.width, height: box.height, channels: 4 }, left: box.left, top: box.top };
+  const base = sharp(path.join(folder, 'composite.jpg'), { limitInputPixels: false }).composite([overlay]);
+  const jpeg = { quality: 92, chromaSubsampling: '4:4:4' };
+  if (width * height <= OUTPUT_MAX_PIXELS) return base.jpeg(jpeg).toFile(outputPath);
+  // sharp resizes before compositing within one pipeline, so downscale separately.
+  const ratio = Math.sqrt(OUTPUT_MAX_PIXELS / (width * height));
+  const full = await base.raw().toBuffer({ resolveWithObject: true });
+  return sharp(full.data, { raw: full.info, limitInputPixels: false })
+    .resize(Math.floor(width * ratio), Math.floor(height * ratio), { kernel: 'lanczos3' })
+    .jpeg(jpeg).toFile(outputPath);
 }
 
 export async function renderMockupNative({ psdPath, artworkPath, outputPath, mapping = null, fitMode = 'contain', onStage = async () => {} }) {
   const started = Date.now();
   const prepared = await prepareNativePsd({ psdPath, mapping, onStage });
   if (prepared.needsMapping) return { engine: 'native', needsMapping: true, objects: prepared.objects, usedMapping: null, reason: prepared.reason };
-  await onStage(prepared.preparedFromCache ? 'Rendering mockup on PC (template already prepared)' : 'Template verified; rendering mockup on PC');
+  await onStage(prepared.preparedFromCache ? 'Rendering mockup on PC (template already prepared)' : 'Template checked; rendering mockup on PC');
   const result = await renderPreparedMockup({ prepared, artworkPath, outputPath, fitMode });
   return {
     engine: 'native', objects: prepared.objects, usedMapping: prepared.usedMapping, needsMapping: false,

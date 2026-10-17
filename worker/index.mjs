@@ -245,14 +245,15 @@ async function processPSDJob(app,claim){
   if(alive)void queue(()=>api.mockupHeartbeat(id,mockupOwner)).catch(error=>
     console.error('['+app.name+'] PSD lease renewal failed:',error.message));
  },20000);
- let lastStageWriteAt=0;
+ let lastStageWriteAt=Date.now();
  const stage=value=>{
   console.log('['+app.name+'] '+claim.item.name+': '+value);
   const now=Date.now();
   // One remote progress write can require a complete R2 JSON round trip,
   // so stage updates closer than 2.5 s apart stay local.
-  if(now-lastStageWriteAt<2500&&!/Uploading and verifying|PSD completed|failed/i.test(value))
-   return Promise.resolve();
+  // A cached template renders in about a second, so short items send no
+  // progress writes at all; completion is reported separately.
+  if(now-lastStageWriteAt<2500)return Promise.resolve();
   lastStageWriteAt=now;
   // Progress writes are advisory; R2 latency must not hold up rendering.
   // Completion/failure still awaits the same write queue in order.
