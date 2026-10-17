@@ -200,7 +200,7 @@ test('a hidden Smart Object (like mockup 19\'s "mockup 1 (1)") is never chosen a
  assert.equal(native.prepareFromPsd(readBack(psd),{path:'0'}).needsMapping,true);
 });
 
-test('ordinary Smart Objects (identity warp grid) are accepted; real warps and filters are not',needsReader,()=>{
+test('ordinary Smart Objects (identity warp grid) are accepted; real warps are not',needsReader,()=>{
  const grid=(dx=0)=>({style:'custom',uOrder:4,vOrder:4,
   bounds:{left:{value:0},top:{value:0},right:{value:300},bottom:{value:300}},
   customEnvelopeWarp:{meshPoints:Array.from({length:16},(_,i)=>({x:(i%4)*100+(i===5?dx:0),y:Math.floor(i/4)*100}))}});
@@ -208,10 +208,14 @@ test('ordinary Smart Objects (identity warp grid) are accepted; real warps and f
  assert.equal(native.warpIsIdentity(undefined),true);
  assert.equal(native.warpIsIdentity(grid(40)),false);
  assert.equal(native.warpIsIdentity({style:'arc',value:30}),false);
+ // Real Photoshop cylinder warps store their bend in `values`.
+ assert.equal(native.warpIsIdentity({style:'cylinder',values:[0,25]}),false);
+ assert.equal(native.warpIsIdentity({style:'cylinder',values:[0,0]}),true);
  const layer=extra=>({placedLayer:{transform:[0,0,10,0,10,10,0,10],width:10,height:10,...extra}});
  assert.ok(native.smartObjectGeometry(layer({warp:grid()})));
  assert.throws(()=>native.smartObjectGeometry(layer({warp:grid(40)})),/Warp/);
- assert.throws(()=>native.smartObjectGeometry(layer({filter:{list:[{enabled:true}]}})),/Smart Filters/);
+ // Smart filters on the artwork are ignored rather than failing the template.
+ assert.ok(native.smartObjectGeometry(layer({filter:{list:[{enabled:true}]}})));
 });
 
 test('homography maps the Smart Object corners exactly',needsReader,()=>{
@@ -223,11 +227,36 @@ test('homography maps the Smart Object corners exactly',needsReader,()=>{
  });
 });
 
-test('templates without a saved composite or with 32-bit colour are rejected clearly',needsReader,()=>{
- assert.throws(()=>native.prepareFromPsd({width:10,height:10,colorMode:3,bitsPerChannel:8,children:[]}),
-  /Maximize PSD and PSB File Compatibility/);
- assert.throws(()=>native.prepareFromPsd({width:10,height:10,colorMode:3,bitsPerChannel:32,children:[]}),
-  /32-bit/);
+test('32-bit and CMYK templates are rejected clearly',needsReader,()=>{
+ assert.throws(()=>native.prepareFromPsd({width:10,height:10,colorMode:3,bitsPerChannel:32,children:[]}),/32-bit/);
+ assert.throws(()=>native.prepareFromPsd({width:10,height:10,colorMode:4,bitsPerChannel:8,children:[]}),/RGB or grayscale/);
+});
+
+test('a PSD saved without "Maximize compatibility" (blank composite) is built from its layers',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const scene=frameScene();
+  scene.psd.imageData=image(240,180,()=>[255,255,255]); // Photoshop's blank placeholder
+  const psdPath=path.join(dir,'nocompat.psd'),artPath=path.join(dir,'art.png'),out=path.join(dir,'out.jpg');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(scene.psd));
+  await quadrantArtwork(artPath);
+  const result=await processor.renderMockupOnPC({psdPath,artworkPath:artPath,outputPath:out,templateName:'nocompat.psd',fitMode:'cover'});
+  assert.equal(result.fidelity.selfComposited,true);
+  const {at}=await pixels(out);
+  const glare=(c,x)=>c.map(v=>lerp(v,screen(v,255),scene.glareAlpha(x)));
+  const shade=(c,y)=>c.map(v=>lerp(v,multiply(v,60),scene.shadow(y)));
+  near(at(95,71),glare(QUADRANTS.tl,95),12,'artwork with glare');
+  near(at(145,121),QUADRANTS.br,12,'artwork without glare');
+  near(at(20,100),scene.wall(20,100),8,'wall rebuilt from layers');
+  near(at(20,20),shade(scene.wall(20,20),20),8,'shadow over wall rebuilt from layers');
+  near(at(175,100),scene.wall(175,100),8,'group mask hides the art strip');
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
+});
+
+test('blank-composite detection only triggers on a single flat colour',needsReader,()=>{
+ assert.equal(native.compositeIsBlank({width:4,height:4,imageData:image(4,4,()=>[255,255,255])}),true);
+ assert.equal(native.compositeIsBlank({width:4,height:4}),true);
+ assert.equal(native.compositeIsBlank({width:4,height:4,imageData:image(4,4,(x)=>x?[255,255,255]:[0,0,0])}),false);
 });
 
 test('an unsupported template fails that PSD without pausing the batch',needsReader,async()=>{

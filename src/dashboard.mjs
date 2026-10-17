@@ -137,14 +137,16 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
    try{const r=await fetch('/api/crop-worker/status',{cache:'no-store'}),d=await r.json();
      if(!r.ok||!d.ok)throw Error('unavailable');
      const w=d.worker||{};
-     el.textContent=w.online?(w.busy?'Connected · processing a crop job':'Connected · idle')+
-       ' · '+(w.workerId||'PC workstation') :
+     const seen=Date.parse(w.lastSeenAt||'');
+     const ago=Number.isFinite(seen)?' · last check-in '+Math.max(0,Math.round((Date.now()-seen)/1000))+'s ago':'';
+     el.textContent=w.online?(w.busy?'Connected · processing'+(w.activeApp?' for '+w.activeApp:''):'Connected · idle')+
+       ' · v'+(w.version||'?')+' · '+(w.workerId||'PC workstation')+ago :
        w.configured?'Offline · Start the PC crop worker':'Not configured · Set CROP_WORKER_TOKEN in Render';
      el.style.color=w.online?'#477153':'#a46b3d';
    }catch{el.textContent='Could not read crop worker status';}
   }
   await checkCropWorker();
-  setInterval(checkCropWorker,12000);
+  setInterval(()=>{if(!document.hidden)void checkCropWorker()},12000);
   const t=document.getElementById('etsy-title'),s=document.getElementById('etsy-status');
   try{const r=await fetch('/etsy/status',{cache:'no-store'}),d=await r.json();if(r.ok&&d.connected){t.textContent=d.shopName||'Connected';s.className='status';s.innerHTML='<span class="s-dot"></span><span>Connected · Shop ID '+String(d.shopId||'')+'</span>'}else throw new Error()}catch{t.textContent='Needs attention';s.className='status warn';s.innerHTML='<span class="s-dot"></span><span>Etsy connection check failed</span>'}
 

@@ -476,7 +476,12 @@ async function showJob(id,{quiet=false}={}){
  }
  else if(job.status==='completed')message('All '+count+' mockups generated on the PC. Select your Etsy images.');
  else if(job.paused)message('Paused after current PSD · '+count+'/'+job.templates.length+' ready');
- else if(failed.length)message(failed.length+' mockups need attention · '+count+'/'+job.templates.length+' ready',true);
+ else if(failed.length){
+  // Show why, not just how many, so the reason is visible without expanding the list.
+  const first=failed[0];
+  message(failed.length+' mockups need attention · '+count+'/'+job.templates.length+' ready · '+
+   first.name+': '+(first.status==='needs_mapping'?'choose the artwork layer':first.error||'failed'),true);
+ }
  else{
   // Say why this batch is waiting when the worker is busy elsewhere.
   const w=lastWorker,elsewhere=w.online&&w.busy&&w.jobId!==job.id;
