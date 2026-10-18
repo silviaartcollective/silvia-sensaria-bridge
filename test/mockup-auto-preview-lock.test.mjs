@@ -14,8 +14,11 @@ test('PSD generation is optional and preview checkboxes attach selected images',
  assert.ok(!client.includes('maybeAutoStart'));
  assert.ok(client.includes("['mg-generate',()=>createJob()]"));
  assert.ok(client.includes('const firstSlots=j=>'));
- assert.ok(client.includes('selected.slice(0,ETSY_MOCKUP_SLOTS)'));
- assert.ok(client.includes("$('mockup_files').files=dt.files"));
+ // Apply opens the photo organizer; generated JPGs go to Etsy server to server,
+ // never back through the browser.
+ assert.ok(client.includes('.slice(0,ETSY_MOCKUP_SLOTS)'));
+ assert.ok(client.includes('await openOrganizer(batchId,'));
+ assert.ok(!client.includes("$('mockup_files').files=dt.files"));
  assert.ok(!client.includes('event.stopImmediatePropagation()'));
 });
 test('worker lease expires after two minutes with legacy browser lock recovery',()=>{

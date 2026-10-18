@@ -20,8 +20,11 @@ test('selected finished JPGs attach only after Apply and browser never renders P
  const client=read('src/mockup-generator-client.js');
  assert.doesNotThrow(()=>new vm.Script(client));
  assert.ok(client.includes("const art=$('master_file').files?.[0]"));
- assert.ok(client.includes('selected.slice(0,ETSY_MOCKUP_SLOTS)'));
- assert.ok(client.includes("$('mockup_files').files=dt.files"));
+ // Apply opens the photo organizer; generated JPGs go to Etsy server to server,
+ // never back through the browser.
+ assert.ok(client.includes('.slice(0,ETSY_MOCKUP_SLOTS)'));
+ assert.ok(client.includes('await openOrganizer(batchId,'));
+ assert.ok(!client.includes("$('mockup_files').files=dt.files"));
  assert.ok(!client.includes('stopImmediatePropagation()')); // Drafts must not wait for PSD generation.
  assert.ok(client.includes('initialLoad'));
  assert.ok(!client.includes('placedLayerEditContents'));
