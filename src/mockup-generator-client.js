@@ -42,23 +42,18 @@ async function inspectArtworkOrientation(file){
 }
 
 // Etsy allows 20 photos: the master artwork and 3 preset photos leave 16 for
-// mockups. Every compatible template is generated; the first 16 finished JPGs
-// are ticked for the listing until the customer changes the choice.
+// mockups. Every compatible template is generated and nothing is ticked until
+// the customer picks; "Select first 16" ticks the first 16 finished JPGs.
 const ETSY_MOCKUP_SLOTS=16;
 const selectionByJob=new Map();
 const selectionFor=id=>{
- if(!selectionByJob.has(id))selectionByJob.set(id,{touched:false,chosen:new Set()});
+ if(!selectionByJob.has(id))selectionByJob.set(id,{chosen:new Set()});
  return selectionByJob.get(id);
 };
-const defaultSelection=j=>new Set(j.templates.filter(t=>t.status==='completed').slice(0,ETSY_MOCKUP_SLOTS).map(t=>t.id));
-const isSelected=(id,itemId)=>{
- const selection=selectionFor(id);
- if(selection.touched)return selection.chosen.has(itemId);
- return job?.id===id&&defaultSelection(job).has(itemId);
-};
+const firstSlots=j=>new Set(j.templates.filter(t=>t.status==='completed').slice(0,ETSY_MOCKUP_SLOTS).map(t=>t.id));
+const isSelected=(id,itemId)=>selectionFor(id).chosen.has(itemId);
 function setSelected(id,itemId,checked){
  const selection=selectionFor(id);
- if(!selection.touched&&job?.id===id){selection.chosen=defaultSelection(job);selection.touched=true}
  if(checked&&!selection.chosen.has(itemId)&&selection.chosen.size>=ETSY_MOCKUP_SLOTS){
   message('Etsy has room for '+ETSY_MOCKUP_SLOTS+' mockups next to the master artwork and 3 preset photos. Untick one first.',true);
   return false;
@@ -637,10 +632,10 @@ $('mg-select-seven').addEventListener('click',selectSeven);
 $('mg-select-seventeen').addEventListener('click',selectAllCompatible);
 $('mg-clear-templates').addEventListener('click',clearTemplates);
 $('mg-select-all').addEventListener('click',()=>{
- if(!job)return;selectionByJob.set(job.id,{touched:true,chosen:defaultSelection(job)});selectionChanged();
+ if(!job)return;selectionByJob.set(job.id,{chosen:firstSlots(job)});selectionChanged();
 });
 $('mg-deselect-all').addEventListener('click',()=>{
- if(!job)return;selectionByJob.set(job.id,{touched:true,chosen:new Set()});selectionChanged();
+ if(!job)return;selectionByJob.set(job.id,{chosen:new Set()});selectionChanged();
 });
 $('mg-apply-selected').addEventListener('click',()=>act(useResults));
 for(const [id,method] of [

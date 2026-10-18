@@ -54,7 +54,7 @@ test('a waiting batch says when the PC worker is busy elsewhere',()=>{
  assert.match(server,/activeApp: online \? cropWorkerHeartbeat\.activeApp/);
 });
 
-test('every compatible template is generated and the first 16 are ticked for Etsy',async()=>{
+test('every compatible template is generated; nothing is ticked until picked, at most 16',async()=>{
  const vm=await import('node:vm');
  const client=read('src/mockup-generator-client.js');
  assert.match(client,/const ETSY_MOCKUP_SLOTS=16;/);
@@ -62,10 +62,12 @@ test('every compatible template is generated and the first 16 are ticked for Ets
  // Run the selection model on its own.
  const start=client.indexOf('const ETSY_MOCKUP_SLOTS=16;'),end=client.indexOf('let lastStatus=');
  const context={job:null,messages:[],message(text){context.messages.push(text)}};
- vm.runInNewContext(client.slice(start,end)+';this.api={isSelected,setSelected,selectionByJob,defaultSelection};',context);
- const {isSelected,setSelected}=context.api;
+ vm.runInNewContext(client.slice(start,end)+';this.api={isSelected,setSelected,selectionByJob,firstSlots};',context);
+ const {isSelected,setSelected,selectionByJob,firstSlots}=context.api;
  context.job={id:'b',templates:Array.from({length:28},(_,i)=>({id:'t'+i,status:'completed'}))};
  const ticked=()=>context.job.templates.filter(t=>isSelected('b',t.id)).length;
+ assert.equal(ticked(),0,'previews start unticked');
+ selectionByJob.set('b',{chosen:firstSlots(context.job)}); // "Select first 16"
  assert.equal(ticked(),16);
  assert.equal(isSelected('b','t20'),false);
  assert.equal(setSelected('b','t20',true),false,'a 17th mockup does not fit');
@@ -74,4 +76,26 @@ test('every compatible template is generated and the first 16 are ticked for Ets
  assert.equal(setSelected('b','t20',true),true,'swapping one in works');
  assert.equal(ticked(),16);
  assert.equal(isSelected('b','t20'),true);
+});
+
+test('completion reads only the JPEG header; dimensions come from its frame marker',async()=>{
+ const {jpegDimensions,mockupPreviewKey}=await import('../src/mockup-generator.mjs');
+ const sharp=(await import('sharp')).default;
+ const jpg=await sharp({create:{width:1234,height:567,channels:3,background:'#808080'}}).withMetadata({icc:'srgb'}).jpeg().toBuffer();
+ assert.deepEqual(jpegDimensions(jpg),{width:1234,height:567});
+ assert.deepEqual(jpegDimensions(jpg.subarray(0,Math.min(jpg.length,131072))),{width:1234,height:567});
+ assert.equal(jpegDimensions(Buffer.from('not a jpeg')),null);
+ assert.equal(mockupPreviewKey('a/b/c.jpg'),'a/b/c.preview.jpg');
+ const api=read('src/mockup-api.mjs');
+ assert.match(api,/const start=await getArtworkObjectStart\(key\);/);
+ assert.doesNotMatch(api,/data\.body\.length>60\*1024\*1024/);
+});
+
+test('the worker claims as many PSDs as it has free threads and uploads a preview with each JPG',()=>{
+ const worker=read('worker/index.mjs'),api=read('src/mockup-api.mjs');
+ assert.match(worker,/claimMockups\(RENDER_THREADS-running\.size\)/);
+ assert.match(worker,/claim\.output\.previewUploadUrl\?sharp\(outputPath\)\.resize\(900,900/);
+ assert.match(worker,/confirmedLayers\.get\(layerKey\)/);
+ assert.match(api,/claimMockupWork\(candidate\.id,owner,limit\)/);
+ assert.match(api,/d\.previewKey\?\(await getArtworkObject\(d\.previewKey\)\)\.body/);
 });

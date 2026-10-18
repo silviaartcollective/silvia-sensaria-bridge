@@ -101,6 +101,17 @@ export async function signedArtworkUrl(key, expiresIn = 60 * 60) {
   );
 }
 
+// The first `bytes` of an object plus its total size, without downloading it all.
+export async function getArtworkObjectStart(key, bytes = 131072) {
+  const config = r2Config();
+  const result = await r2Client().send(new GetObjectCommand({
+    Bucket: config.bucket, Key: key, Range: 'bytes=0-' + (bytes - 1)
+  }));
+  const body = Buffer.from(await result.Body.transformToByteArray());
+  const total = Number(String(result.ContentRange || '').split('/')[1]) || result.ContentLength || body.length;
+  return { body, totalSize: total };
+}
+
 export async function getArtworkObject(key) {
   const config = r2Config();
   const client = r2Client();

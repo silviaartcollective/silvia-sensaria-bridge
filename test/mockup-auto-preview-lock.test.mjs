@@ -13,7 +13,7 @@ test('PSD generation is optional and preview checkboxes attach selected images',
  assert.ok(!html.includes('id="mg-editor"'));
  assert.ok(!client.includes('maybeAutoStart'));
  assert.ok(client.includes("['mg-generate',()=>createJob()]"));
- assert.ok(client.includes('const defaultSelection=j=>'));
+ assert.ok(client.includes('const firstSlots=j=>'));
  assert.ok(client.includes('selected.slice(0,ETSY_MOCKUP_SLOTS)'));
  assert.ok(client.includes("$('mockup_files').files=dt.files"));
  assert.ok(!client.includes('event.stopImmediatePropagation()'));
@@ -29,7 +29,7 @@ test('worker lease expires after two minutes with legacy browser lock recovery',
 test('private thumbnail API and worker-only claim route are present',()=>{
  const api=read('mockup-api.mjs');
  assert.ok(api.includes("parts[2]==='thumbnail'"));
- assert.ok(api.includes('resize(320,320'));
+ assert.ok(api.includes('resize(720,720'));
  assert.ok(api.includes("parts[0]==='worker'"));
  assert.ok(api.includes('workerAuthorized(req)'));
  assert.ok(api.includes('updateMockupItemProgress'));

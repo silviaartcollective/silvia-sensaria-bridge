@@ -327,11 +327,18 @@ function coverageFor(H, contentWidth, contentHeight, box) {
 // --------------------------------------------------------------- preparation
 // Names mockup makers give the artwork placeholder.
 const ARTWORK_NAME = /\b(your|place|insert|put|add|paste)\b.*\b(design|art|artwork|image|picture|photo|poster|print|here)\b|^\s*(artwork|art|design|image|picture|photo|poster|print|painting)\s*\d*\s*$|replace|double.?click|edit\s*(me|here)|smart\s*object\s*here/i;
+// Names of smart objects that decorate the scene rather than hold the artwork.
+const DECORATION_NAME = /texture|paper|grain|noise|overlay|shadow|light|glare|reflect|gloss|dust|scratch|frame|border|background|\bbg\b|wall|room|floor|plant|vase|logo|watermark/i;
 const quadArea = q => Math.abs(q.reduce((sum, p, i) => sum + p[0] * q[(i + 1) % 4][1] - q[(i + 1) % 4][0] * p[1], 0)) / 2;
 
 // With several visible Smart Objects, picks the artwork only when that is
-// clear: one is named like an artwork placeholder, or exactly one is neither a
-// full-canvas background nor a frame-like ring (mostly empty inside).
+// clear, in this order:
+//  1. exactly one is named like an artwork placeholder;
+//  2. exactly one is neither a full-canvas background nor a frame-like ring
+//     (mostly empty inside);
+//  3. of those, exactly one is not named like a decoration (paper texture,
+//     shadow, glare …);
+//  4. of those, exactly one uses Normal blending (textures usually multiply).
 export function guessArtworkLayer(psd, entries, visible) {
   const named = visible.filter(o => ARTWORK_NAME.test(o.name));
   if (named.length === 1) return named[0];
@@ -347,7 +354,12 @@ export function guessArtworkLayer(psd, entries, visible) {
     for (let i = 3; i < img.data.length; i += 4) if (img.data[i] > 128) filled++;
     return filled / area >= 0.6;
   });
-  return plausible.length === 1 ? plausible[0] : null;
+  if (plausible.length === 1) return plausible[0];
+  const plain = plausible.filter(o => !DECORATION_NAME.test(o.name));
+  if (plain.length === 1) return plain[0];
+  const pool = plain.length ? plain : plausible;
+  const normal = pool.filter(o => ['normal', 'pass through'].includes(entries.find(e => e.path === o.path)?.blend));
+  return normal.length === 1 ? normal[0] : null;
 }
 
 function selectArtwork(psd, entries, mapping) {

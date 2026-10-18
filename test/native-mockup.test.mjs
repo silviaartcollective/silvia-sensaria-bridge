@@ -179,6 +179,9 @@ test('several visible Smart Objects ask for the artwork layer once, then use the
  assert.equal(picked.usedMapping,'2.1');
  assert.deepEqual(picked.objects.map(o=>o.path).sort(),['0','2.1']);
  const renamed=readBack(psd);renamed.children[1].children[0].name='Layer 7'; // the artwork (ag-psd lists layers bottom first)
+ // "Logo" is named like a decoration, so the other layer is the artwork.
+ assert.equal(native.prepareFromPsd(renamed).usedMapping,'2.1');
+ renamed.children[3].name='Layer 9';
  const asked=native.prepareFromPsd(renamed);
  assert.equal(asked.needsMapping,true);
  const mapped=native.prepareFromPsd(parsed,{path:'2.1'});
@@ -441,4 +444,17 @@ test('a layer with an out-of-range secondary mask (canvas 2.psd) no longer fails
   const result=await processor.renderMockupOnPC({psdPath,artworkPath:art,outputPath:out,templateName:'canvas 2.psd'});
   assert.deepEqual(result.dimensions,{width:240,height:180});
  }finally{await fs.rm(dir,{recursive:true,force:true})}
+});
+
+test('a paper-texture smart object over the artwork is not mistaken for it (mockup 11.psd)',needsReader,()=>{
+ const {psd}=frameScene();
+ const art=psd.children[1].children[0];art.name='Layer 4';
+ // Same size as the artwork, multiplied over it, named like the real template's layer.
+ psd.children.push({name:'imgbin_paper-texture-png',blendMode:'multiply',left:60,top:30,right:180,bottom:160,
+  imageData:image(120,130,()=>[240,235,225,255]),
+  placedLayer:{id:GUID2,type:'raster',transform:[60,30,180,30,180,160,60,160],width:120,height:130}});
+ psd.linkedFiles.push({id:GUID2,name:'paper.png',data:new Uint8Array([1])});
+ const prepared=native.prepareFromPsd(readBack(psd));
+ assert.equal(prepared.needsMapping,false);
+ assert.equal(prepared.usedMapping,'2.1');
 });
