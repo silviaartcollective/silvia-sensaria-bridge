@@ -267,7 +267,7 @@ function photoTile(id){
  const tile=organizer.tiles.get(id)||{label:id};
  const node=create('div','',{class:'mg-org-tile',role:'listitem',tabindex:'0',title:tile.label||''});
  const src=tile.thumb||(tile.kind==='master'?localMasterPreview():'');
- if(src)node.append(create('img','',{src,alt:'',loading:'lazy',draggable:'false'}));
+ if(src)node.append(create('img','',{src,alt:'',loading:'lazy',decoding:'async',draggable:'false'}));
  else node.append(create('div',tile.label||'Photo',{class:'mg-org-blank'}));
  node.append(create('b','Featured',{class:'mg-org-badge'}),create('span',tile.label||'',{class:'mg-org-caption'}));
  node.addEventListener('pointerdown',event=>pressTile(event,id,node));
@@ -355,72 +355,109 @@ function keyMove(event,id){
  if(moveTo(id,target))announce(id);
  tileNodes.get(id).focus({preventScroll:false});
 }
-// A press becomes a drag once the pointer moves a few pixels.
+// A press becomes a drag once the pointer moves a few pixels. While dragging
+// nothing in the page is measured or re-laid out: the photo follows the
+// pointer as its own layer, and the other tiles slide to their new spots with
+// transforms, from spot positions measured once when the drag starts. At most
+// one update runs per frame. The tiles take their new order in the page on drop.
 function pressTile(event,id,node){
  if(!organizer||drag||event.button!==0)return;
- drag={id,node,pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,active:false,
-  start:[...organizer.order]};
+ drag={id,node,pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,x:event.clientX,y:event.clientY,
+  active:false,frame:0,start:[...organizer.order]};
  window.addEventListener('pointermove',dragMove);
  window.addEventListener('pointerup',dragEnd);
  window.addEventListener('pointercancel',dragEnd);
 }
-function startDrag(event){
- const {node}=drag,rect=node.getBoundingClientRect();
- drag.active=true;drag.offsetX=event.clientX-rect.left;drag.offsetY=event.clientY-rect.top;
+function startDrag(){
+ const list=$('mg-org-list'),{node}=drag,rect=node.getBoundingClientRect(),display=organizerDisplay();
+ for(const tile of tileNodes.values()){tile.style.transition='';tile.style.transform=''}
+ drag.active=true;
+ drag.home=new Map(display.map((id,slot)=>[id,slot]));
+ drag.slots=display.map(id=>{const tile=tileNodes.get(id);return {x:tile.offsetLeft,y:tile.offsetTop}});
+ drag.grabX=drag.startX-rect.left;drag.grabY=drag.startY-rect.top;
+ drag.box=list.getBoundingClientRect();
  const ghost=node.cloneNode(true);
  ghost.className='mg-org-tile mg-org-ghost';ghost.removeAttribute('tabindex');ghost.setAttribute('aria-hidden','true');
  Object.assign(ghost.style,{width:rect.width+'px',height:rect.height+'px',left:rect.left+'px',top:rect.top+'px',
-  transition:'none',transform:'scale(1.05)'});
+  transform:'translate3d(0,0,0) scale(1.04)'});
  document.body.append(ghost);drag.ghost=ghost;
- node.classList.add('lifted');document.body.classList.add('mg-org-dragging');
+ list.classList.add('sorting');node.classList.add('lifted');document.body.classList.add('mg-org-dragging');
 }
 function dragMove(event){
  if(!drag||event.pointerId!==drag.pointerId)return;
+ drag.x=event.clientX;drag.y=event.clientY;
  if(!drag.active){
-  if(Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)<5)return;
-  startDrag(event);
+  if(Math.hypot(drag.x-drag.startX,drag.y-drag.startY)<5)return;
+  startDrag();
  }
- drag.ghost.style.left=(event.clientX-drag.offsetX)+'px';
- drag.ghost.style.top=(event.clientY-drag.offsetY)+'px';
- const modal=$('mg-org-modal');
- if(event.clientY<60)modal.scrollTop-=14;else if(event.clientY>innerHeight-60)modal.scrollTop+=14;
- const target=dropIndex(event.clientX,event.clientY);
- if(target>=0)moveTo(drag.id,target);
+ if(!drag.frame)drag.frame=requestAnimationFrame(dragFrame);
 }
-// The photo whose spot is nearest the pointer. Spots come from the grid layout
-// (offsetLeft/Top ignore the slide animation), so tiles do not flicker back and
-// forth. The video's spot is fixed.
-function dropIndex(x,y){
- const box=$('mg-org-list').getBoundingClientRect(),px=x-box.left,py=y-box.top;
- let nearest=null,best=Infinity;
- for(const id of organizerDisplay()){
-  const node=tileNodes.get(id);
-  const distance=Math.hypot(px-node.offsetLeft-node.offsetWidth/2,py-node.offsetTop-node.offsetHeight/2);
-  if(distance<best){best=distance;nearest=id}
- }
- return nearest&&nearest!==VIDEO_TILE?organizer.order.indexOf(nearest):-1;
+function dragFrame(){
+ if(!drag?.active)return;
+ drag.frame=0;
+ drag.ghost.style.transform='translate3d('+(drag.x-drag.startX)+'px,'+(drag.y-drag.startY)+'px,0) scale(1.04)';
+ const modal=$('mg-org-modal');
+ if(drag.y<60)modal.scrollTop-=14;else if(drag.y>innerHeight-60)modal.scrollTop+=14;
+ // The spot nearest the dragged photo; the video's spot is fixed.
+ const id=organizerDisplay()[nearestSlot()];
+ if(id===undefined||id===VIDEO_TILE||id===drag.id)return;
+ const from=organizer.order.indexOf(drag.id),to=organizer.order.indexOf(id);
+ organizer.order.splice(from,1);organizer.order.splice(to,0,drag.id);
+ slideTiles();
+}
+function nearestSlot(){
+ const x=drag.x-drag.grabX-drag.box.left,y=drag.y-drag.grabY-drag.box.top;
+ let best=0,distance=Infinity;
+ drag.slots.forEach((slot,index)=>{
+  const d=(slot.x-x)**2+(slot.y-y)**2;
+  if(d<distance){distance=d;best=index}
+ });
+ return best;
+}
+// Shows each tile at its new spot (relative to where it sits in the page).
+function slideTiles(){
+ organizerDisplay().forEach((id,slot)=>{
+  const tile=tileNodes.get(id),from=drag.slots[drag.home.get(id)],to=drag.slots[slot];
+  const dx=to.x-from.x,dy=to.y-from.y;
+  tile.style.transform=dx||dy?'translate3d('+dx+'px,'+dy+'px,0)':'';
+ });
+ organizer.order.forEach((id,index)=>{tileNodes.get(id).querySelector('.mg-org-badge').hidden=index!==0});
 }
 function dragEnd(event){
  if(!drag||event.pointerId!==drag.pointerId)return;
- const {id,active}=drag;
- finishDrag();
- if(active&&event.type==='pointerup')announce(id);
+ const {id,active}=drag,dropped=event.type==='pointerup';
+ finishDrag(dropped);
+ if(active&&dropped)announce(id);
  tileNodes.get(id)?.focus({preventScroll:true});
 }
-function finishDrag(){
+function finishDrag(settle=false){
  window.removeEventListener('pointermove',dragMove);
  window.removeEventListener('pointerup',dragEnd);
  window.removeEventListener('pointercancel',dragEnd);
  if(!drag)return;
- drag.ghost?.remove();drag.node.classList.remove('lifted');
- document.body.classList.remove('mg-org-dragging');
+ const {node,ghost,active,frame}=drag;
  drag=null;
+ if(frame)cancelAnimationFrame(frame);
+ document.body.classList.remove('mg-org-dragging');
+ if(!active)return;
+ // The tiles take their new order in the page and lose their transforms in
+ // the same frame, so nothing jumps.
+ const list=$('mg-org-list'),slot=list.querySelector('.mg-org-slot');
+ list.classList.remove('sorting');
+ for(const tile of tileNodes.values())tile.style.transform='';
+ if(organizer){for(const id of organizerDisplay())list.insertBefore(tileNodes.get(id),slot);refreshTiles()}
+ const done=()=>{ghost.remove();if(drag?.node!==node)node.classList.remove('lifted')};
+ if(!settle||!node.isConnected)return done();
+ // The dropped photo glides into its spot.
+ const to=node.getBoundingClientRect();
+ ghost.style.transition='transform .15s ease';
+ ghost.style.transform='translate3d('+(to.left-parseFloat(ghost.style.left))+'px,'+(to.top-parseFloat(ghost.style.top))+'px,0)';
+ setTimeout(done,160);
 }
 function cancelDrag(){
  if(!drag)return false;
- const {start,active}=drag;
+ if(drag.active&&organizer)organizer.order=drag.start;
  finishDrag();
- if(active&&organizer){organizer.order=start;arrange()}
  return true;
 }
 async function saveOrderToServer(artworkId,{batchId,templateIds,order}){
@@ -908,6 +945,7 @@ $('mg-deselect-all').addEventListener('click',()=>{
  if(!job)return;selectionByJob.set(job.id,{chosen:new Set()});selectionChanged();
 });
 $('mg-apply-selected').addEventListener('click',()=>act(useResults));
+$('mg-org-modal').addEventListener('scroll',()=>{if(drag?.active)drag.box=$('mg-org-list').getBoundingClientRect()},{passive:true});
 const backToSelection=()=>{closeOrganizer();message('Back to selection. Change the ticked mockups, then apply again.')};
 $('mg-org-back').addEventListener('click',backToSelection);
 $('mg-org-close').addEventListener('click',backToSelection);

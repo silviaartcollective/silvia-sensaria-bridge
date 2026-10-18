@@ -77,10 +77,11 @@ return `
 .mg-preview-item span{display:block;width:100%;font-size:12px;line-height:1.35;font-weight:600;overflow-wrap:anywhere}
 .mg-preview-item small{display:block;font-size:10px;font-weight:400;color:#74776f;margin-top:3px}
 .mg-preview #mg-selection-status{font-size:12px}
-.mg-org-modal{position:fixed;inset:0;z-index:1000;background:rgba(34,34,34,.55);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:4vh 16px}
+.mg-org-modal{position:fixed;inset:0;z-index:1000;contain:layout style;background:rgba(34,34,34,.55);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:4vh 16px}
 .mg-org-modal[hidden]{display:none}
 body.mg-org-open{overflow:hidden}
-body.mg-org-dragging,body.mg-org-dragging *{cursor:grabbing!important}
+body.mg-org-dragging,body.mg-org-dragging .mg-org-tile{cursor:grabbing}
+body.mg-org-dragging .mg-org-caption{opacity:0;transition:none}
 /* Laid out like Etsy's "Photo and video" listing editor. */
 .mg-org-dialog{width:min(920px,100%);background:#f8f7f4;color:#222;border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.3);padding:26px 30px 22px}
 .mg-org-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
@@ -97,15 +98,17 @@ body.mg-org-dragging,body.mg-org-dragging *{cursor:grabbing!important}
 .mg-org-tile img,.mg-org-tile video{display:block;width:100%;height:100%;object-fit:cover;pointer-events:none}
 .mg-org-blank{display:flex;align-items:center;justify-content:center;height:100%;padding:8px;text-align:center;font-size:11px;color:#74776f;background:#f0efeb}
 .mg-org-badge{position:absolute;top:7px;right:7px;background:#fff;color:#222;font-size:11px;font-weight:600;line-height:1;padding:5px 8px;border-radius:999px;box-shadow:0 1px 4px rgba(0,0,0,.28)}
-.mg-org-badge[hidden]{display:none}
+/* Kept in the layout so moving the Featured badge never re-lays out the grid. */
+.mg-org-badge[hidden]{display:block;visibility:hidden}
 .mg-org-caption{position:absolute;left:0;right:0;bottom:0;padding:18px 8px 6px;font-size:11px;line-height:1.25;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.62));opacity:0;transition:opacity .15s;overflow-wrap:anywhere}
 .mg-org-tile:hover .mg-org-caption,.mg-org-tile:focus-visible .mg-org-caption{opacity:1}
 .mg-org-video{cursor:default;background:#3a3631}
 .mg-org-play{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.35)}
 .mg-org-play::after{content:'';position:absolute;left:13px;top:10px;border-style:solid;border-width:7px 0 7px 11px;border-color:transparent transparent transparent #222}
+.mg-org-list.sorting .mg-org-tile{transition:transform .2s cubic-bezier(.2,0,0,1);will-change:transform}
 .mg-org-tile.lifted{background:#efede8;border:2px dashed #a9a59c}
 .mg-org-tile.lifted>*{visibility:hidden}
-.mg-org-ghost{position:fixed;z-index:1001;margin:0;pointer-events:none;box-shadow:0 10px 28px rgba(0,0,0,.3)}
+.mg-org-ghost{position:fixed;z-index:1001;margin:0;pointer-events:none;will-change:transform;box-shadow:0 10px 28px rgba(0,0,0,.3)}
 .mg-org-slot{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;border:1px dashed #b9b6ae;border-radius:12px;padding:8px;text-align:center;font-size:12px;color:#595959}
 .mg-org-help{margin:14px 0 0;font-size:12px;color:#595959;line-height:1.45}
 .mg-org-foot{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid #e1ded7}
