@@ -19,7 +19,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import sharp from 'sharp';
 
-const PREP_VERSION = 4;
+const PREP_VERSION = 5;
 const MAX_CANVAS_PIXELS = 100_000_000;
 const OUTPUT_MAX_PIXELS = 24_000_000;
 const MAX_FILE_BYTES = 1_500 * 1024 * 1024;
@@ -386,6 +386,42 @@ export function normalizeDepth(psd) {
   return psd;
 }
 
+// The visible layers below the artwork, flattened onto white inside `box` (RGB).
+function flattenRegion(entries, count, box) {
+  const out = new Uint8Array(box.width * box.height * 3).fill(255);
+  for (let k = 0; k < count; k++) {
+    const e = entries[k], img = e.layer.imageData;
+    if (!e.visible || e.adjustment || !img?.data) continue;
+    const lx = Math.round(Number(e.layer.left || 0)), ly = Math.round(Number(e.layer.top || 0));
+    if (lx >= box.left + box.width || ly >= box.top + box.height || lx + img.width <= box.left || ly + img.height <= box.top) continue;
+    const rgba = cropLayerRGBA(e.layer, box), alpha = entryAlpha(e, box, rgba);
+    if (e.clipBase >= 0) {
+      const base = entries[e.clipBase];
+      if (!base.visible) continue;
+      const baseAlpha = entryAlpha(base, box, cropLayerRGBA(base.layer, box));
+      for (let i = 0; i < alpha.length; i++) alpha[i] *= baseAlpha[i];
+    }
+    const fn = blendFor(e.blend) || BLENDS.normal;
+    for (let i = 0; i < alpha.length; i++) {
+      const a = alpha[i];
+      if (a <= 0) continue;
+      for (let c = 0; c < 3; c++) {
+        const b = out[i * 3 + c] / 255, s = rgba[i * 4 + c] / 255;
+        out[i * 3 + c] = Math.round(255 * (b * (1 - a) + fn(b, s) * a));
+      }
+    }
+  }
+  return out;
+}
+// Artwork colour (0..1, in `color`) blended over what is below it at box pixel i.
+function blendArt(color, below, i, fn, opacity) {
+  for (let c = 0; c < 3; c++) {
+    const b = below[i * 3 + c] / 255;
+    color[c] = b * (1 - opacity) + fn(b, color[c]) * opacity;
+  }
+  return color;
+}
+
 // A composite that is one flat colour everywhere is Photoshop's placeholder for
 // a PSD saved without "Maximize PSD and PSB File Compatibility".
 export function compositeIsBlank(psd) {
@@ -461,10 +497,13 @@ export function prepareFromPsd(psd, mapping = null) {
     return { needsMapping: true, objects: selection.objects, usedMapping: null, reason: selection.reason };
   const art = entries[selection.index];
   if (!art.visible) unsupported('The artwork Smart Object is hidden.');
-  if (art.blend !== 'normal' && art.blend !== 'pass through')
-    unsupported('The artwork layer uses "' + art.blend + '" blending; set it to Normal for native rendering.');
-  if (art.opacity * art.fill < 0.995)
-    unsupported('The artwork layer opacity is below 100%; set it to 100% for native rendering.');
+  // An artwork layer in Multiply (or another mode), or below 100% opacity,
+  // blends with what is under it, so that is kept for every render.
+  const artOpacity = Math.max(0, Math.min(1, art.opacity * art.fill));
+  const artMode = art.blend === 'pass through' ? 'normal' : art.blend;
+  if (!blendFor(artMode)) unsupported('The artwork layer uses "' + art.blend + '" blending, which is not supported; set it to Normal or Multiply.');
+  if (artOpacity < 0.02) unsupported('The artwork layer is fully transparent.');
+  const artBlend = artMode !== 'normal' || artOpacity < 0.995 ? { mode: artMode, opacity: artOpacity } : null;
   const reasons = [...notes];
   if (art.effects) reasons.push('the artwork layer has layer effects');
   // Ignored when the scene is built from layers: smart filters on the artwork.
@@ -519,7 +558,9 @@ export function prepareFromPsd(psd, mapping = null) {
   // explain (layer effects such as inner shadows, adjustment layers, unusual
   // blending) is kept as a per-pixel correction and applied to every artwork.
   const artPixels = cropLayerRGBA(art.layer, box);
-  const N = box.width * box.height, out = new Float64Array(3);
+  const below = artBlend ? flattenRegion(entries, selection.index, box) : null;
+  const artFn = artBlend ? blendFor(artBlend.mode) : null;
+  const N = box.width * box.height, out = new Float64Array(3), mixed = new Float64Array(3);
   const mul = new Uint8Array(N * 3).fill(128), add = new Uint8Array(N * 3).fill(128);
   let compared = 0, error = 0, outliers = 0, rasterOutside = 0, rasterTotal = 0, corrected = 0;
   let cx0 = box.width, cy0 = box.height, cx1 = -1, cy1 = -1;
@@ -529,7 +570,9 @@ export function prepareFromPsd(psd, mapping = null) {
     if (rasterAlpha > 0.5) { rasterTotal++; if (quadCoverage[i] < 0.5) rasterOutside++; }
     const visibleAlpha = rasterAlpha * artMasks[i] * (clipAlpha ? clipAlpha[i] : 1);
     if (visibleAlpha < 0.99 || coverage[i] < 252) continue;
-    applyAbove(above, x, y, artPixels[i * 4] / 255, artPixels[i * 4 + 1] / 255, artPixels[i * 4 + 2] / 255, out);
+    for (let ch = 0; ch < 3; ch++) mixed[ch] = artPixels[i * 4 + ch] / 255;
+    if (artBlend) blendArt(mixed, below, i, artFn, artBlend.opacity);
+    applyAbove(above, x, y, mixed[0], mixed[1], mixed[2], out);
     const c = ((box.top + y) * psd.width + box.left + x) * 4;
     let delta = 0, needs = false;
     for (let ch = 0; ch < 3; ch++) {
@@ -571,28 +614,47 @@ export function prepareFromPsd(psd, mapping = null) {
 
   return {
     needsMapping: false, width: psd.width, height: psd.height, box, quad, contentWidth, contentHeight,
-    coverage, above, residual, composite, objects: selection.objects, usedMapping: selection.pathId,
+    coverage, above, residual, artBlend, below, composite, objects: selection.objects, usedMapping: selection.pathId,
     fidelity: { meanPixelError: Number(mean.toFixed(3)), outlierFraction: Number(outlierFraction.toFixed(5)),
       comparedPixels: compared, correctedFraction: Number((corrected / compared).toFixed(5)),
       ...(selfComposited ? { selfComposited: true, approximations: sceneApproximations(entries) } : {}) }
   };
 }
 
-export async function prepareNativePsd({ psdPath, mapping = null, onStage = async () => {} }) {
+// Where a PSD's prepared data lives. The worker's download cache names each PSD
+// after its immutable R2 object, so name + size identify it. (Its modification
+// time is not used: the download cache touches the file on every reuse, which
+// made every render prepare the template again.)
+async function preparedLocation(psdPath, mapping) {
   const stat = await fs.stat(psdPath);
-  if (stat.size > MAX_FILE_BYTES) unsupported('PSD is larger than the 1.5 GB limit.');
   const hash = crypto.createHash('sha256').update(JSON.stringify([
-    path.basename(psdPath), stat.size, stat.mtimeMs, mapping?.path ?? '', PREP_VERSION
+    path.basename(psdPath), stat.size, mapping?.path ?? '', PREP_VERSION
   ])).digest('hex');
-  const folder = path.join(BASE, hash), manifestPath = path.join(folder, 'manifest.json');
+  const folder = path.join(BASE, hash);
+  return { stat, folder, manifestPath: path.join(folder, 'manifest.json') };
+}
+async function readPrepared(location) {
   try {
-    const cached = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
-    if (cached.version === PREP_VERSION && cached.psdBytes === stat.size) {
-      const now = new Date();
-      await fs.utimes(folder, now, now).catch(() => {});
-      return { ...cached, folder, preparedFromCache: true };
-    }
+    const cached = JSON.parse(await fs.readFile(location.manifestPath, 'utf8'));
+    if (cached.version === PREP_VERSION && cached.psdBytes === location.stat.size) return cached;
   } catch {}
+  return null;
+}
+// Lets the worker run at most one (memory-heavy) first-time preparation at once.
+export async function isTemplatePrepared({ psdPath, mapping = null }) {
+  return !!(await readPrepared(await preparedLocation(psdPath, mapping)));
+}
+
+export async function prepareNativePsd({ psdPath, mapping = null, onStage = async () => {} }) {
+  const location = await preparedLocation(psdPath, mapping);
+  const { stat, folder, manifestPath } = location;
+  if (stat.size > MAX_FILE_BYTES) unsupported('PSD is larger than the 1.5 GB limit.');
+  const cached = await readPrepared(location);
+  if (cached) {
+    const now = new Date();
+    await fs.utimes(folder, now, now).catch(() => {});
+    return { ...cached, folder, preparedFromCache: true };
+  }
 
   await onStage('Preparing PSD template on PC (one time per template)');
   const { readPsd } = await loadAgPsd();
@@ -624,6 +686,7 @@ export async function prepareNativePsd({ psdPath, mapping = null, onStage = asyn
     await fs.writeFile(path.join(folder, 'above-' + n + '.a'), layer.a);
     above.push({ name: layer.name, blend: layer.blend, clipToArt: layer.clipToArt, sub: layer.sub });
   }
+  if (prepared.below) await fs.writeFile(path.join(folder, 'below.rgb'), prepared.below);
   if (prepared.residual) {
     await fs.writeFile(path.join(folder, 'residual.mul'), prepared.residual.mul);
     await fs.writeFile(path.join(folder, 'residual.add'), prepared.residual.add);
@@ -631,7 +694,7 @@ export async function prepareNativePsd({ psdPath, mapping = null, onStage = asyn
   const manifest = {
     version: PREP_VERSION, psdBytes: stat.size, width: prepared.width, height: prepared.height,
     box: prepared.box, quad: prepared.quad, contentWidth: prepared.contentWidth, contentHeight: prepared.contentHeight,
-    above, residual: prepared.residual ? { sub: prepared.residual.sub } : null,
+    above, residual: prepared.residual ? { sub: prepared.residual.sub } : null, artBlend: prepared.artBlend || null,
     objects: prepared.objects, usedMapping: prepared.usedMapping, fidelity: prepared.fidelity
   };
   await fs.writeFile(manifestPath + '.tmp', JSON.stringify(manifest));
@@ -672,7 +735,8 @@ async function loadPrepared(prepared) {
   const residual = prepared.residual ? { sub: prepared.residual.sub,
     mul: new Uint8Array(await fs.readFile(path.join(folder, 'residual.mul'))),
     add: new Uint8Array(await fs.readFile(path.join(folder, 'residual.add'))) } : null;
-  const loaded = { coverage, above, residual };
+  const below = prepared.artBlend ? new Uint8Array(await fs.readFile(path.join(folder, 'below.rgb'))) : null;
+  const loaded = { coverage, above, residual, below, artBlend: prepared.artBlend || null };
   preparedMemory.set(folder, loaded);
   while (preparedMemory.size > 24) preparedMemory.delete(preparedMemory.keys().next().value);
   return loaded;
@@ -684,18 +748,21 @@ const ARTWORK_MAX_SIDE = 6000;
 async function decodedArtwork(artworkPath) {
   const info = await fs.stat(artworkPath);
   const key = artworkPath + '|' + info.size + '|' + info.mtimeMs;
-  if (artworkMemory?.key === key) return artworkMemory;
-  const { data, info: raw } = await sharp(artworkPath, { limitInputPixels: false }).rotate()
+  if (artworkMemory?.key === key) return artworkMemory.decoded;
+  const decoded = sharp(artworkPath, { limitInputPixels: false }).rotate()
     .resize(ARTWORK_MAX_SIDE, ARTWORK_MAX_SIDE, { fit: 'inside', withoutEnlargement: true })
-    .flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  artworkMemory = { key, data, width: raw.width, height: raw.height };
-  return artworkMemory;
+    .flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    .then(({ data, info }) => ({ data, width: info.width, height: info.height }));
+  artworkMemory = { key, decoded };
+  decoded.catch(() => { if (artworkMemory?.decoded === decoded) artworkMemory = null; });
+  return decoded;
 }
 
 // Pure compositing step (exported for tests): the artwork warped into the
 // Smart Object corners, with the layers above and the correction applied, as an
 // RGBA patch over the artwork box whose alpha is the artwork's coverage.
-export function renderArtworkPatch({ box, quad, coverage, above, residual = null, art, artWidth, artHeight }) {
+export function renderArtworkPatch({ box, quad, coverage, above, residual = null, artBlend = null, below = null, art, artWidth, artHeight }) {
+  const artFn = artBlend ? blendFor(artBlend.mode) : null, mixed = new Float64Array(3);
   const [h0, h1, h2, h3, h4, h5, h6, h7, h8] =
     homography(quad, [[0, 0], [artWidth, 0], [artWidth, artHeight], [0, artHeight]]);
   const patch = new Uint8ClampedArray(box.width * box.height * 4), out = new Float64Array(3);
@@ -715,6 +782,11 @@ export function renderArtworkPatch({ box, quad, coverage, above, residual = null
       let r = (art[a] * (1 - fx) + art[b] * fx) * (1 - fy) + (art[c] * (1 - fx) + art[d] * fx) * fy;
       let g = (art[a + 1] * (1 - fx) + art[b + 1] * fx) * (1 - fy) + (art[c + 1] * (1 - fx) + art[d + 1] * fx) * fy;
       let bl = (art[a + 2] * (1 - fx) + art[b + 2] * fx) * (1 - fy) + (art[c + 2] * (1 - fx) + art[d + 2] * fx) * fy;
+      if (artBlend) {
+        mixed[0] = r / 255; mixed[1] = g / 255; mixed[2] = bl / 255;
+        blendArt(mixed, below, i, artFn, artBlend.opacity);
+        r = mixed[0] * 255; g = mixed[1] * 255; bl = mixed[2] * 255;
+      }
       if (above.length) {
         applyAbove(above, x, y, r / 255, g / 255, bl / 255, out);
         r = out[0] * 255; g = out[1] * 255; bl = out[2] * 255;
@@ -737,7 +809,7 @@ export function renderArtworkPatch({ box, quad, coverage, above, residual = null
 
 export async function renderPreparedMockup({ prepared, artworkPath, outputPath, fitMode = 'contain' }) {
   const { box, quad, contentWidth, contentHeight, width, height, folder } = prepared;
-  const [{ coverage, above, residual }, source] = await Promise.all([loadPrepared(prepared), decodedArtwork(artworkPath)]);
+  const [{ coverage, above, residual, below, artBlend }, source] = await Promise.all([loadPrepared(prepared), decodedArtwork(artworkPath)]);
   // Resample the artwork only as finely as the placement needs.
   const side = Math.max(...quad.map((p, i) => Math.hypot(quad[(i + 1) % 4][0] - p[0], quad[(i + 1) % 4][1] - p[1])));
   const scale = Math.min(1, (side * 1.25) / Math.max(contentWidth, contentHeight));
@@ -745,7 +817,7 @@ export async function renderPreparedMockup({ prepared, artworkPath, outputPath, 
   const art = await sharp(source.data, { raw: { width: source.width, height: source.height, channels: 3 } })
     .resize(artWidth, artHeight, { fit: fitMode === 'cover' ? 'cover' : 'contain', background: { r: 255, g: 255, b: 255, alpha: 1 } })
     .flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer();
-  const patch = renderArtworkPatch({ box, quad, coverage, above, residual, art, artWidth, artHeight });
+  const patch = renderArtworkPatch({ box, quad, coverage, above, residual, artBlend, below, art, artWidth, artHeight });
   const overlay = { input: Buffer.from(patch.buffer, patch.byteOffset, patch.byteLength),
     raw: { width: box.width, height: box.height, channels: 4 }, left: box.left, top: box.top };
   const base = sharp(path.join(folder, 'composite.jpg'), { limitInputPixels: false }).composite([overlay]);

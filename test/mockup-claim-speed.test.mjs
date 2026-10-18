@@ -5,7 +5,7 @@ const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 
 test('worker claims read only active batches, not every batch ever created',()=>{
  const api=read('src/mockup-api.mjs');
- assert.match(api,/const jobs=await claimCandidates\(\);/);
+ assert.match(api,/const jobs=await claimCandidates\(owner\);/);
  assert.match(api,/Date\.now\(\)-activeBatches\.listedAt>10\*60\*1000/);
  for(const point of ['markMockupArtworkUploaded(job.id);markBatchActive(job.id)',
   'markMockupArtworkUploaded(id);markBatchActive(id)','ownerCheck(body));markBatchActive(id)'])

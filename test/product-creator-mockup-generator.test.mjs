@@ -21,7 +21,7 @@ test('PSDs render only on the PC worker; the browser never opens them',()=>{
  assert.doesNotThrow(()=>new vm.Script(browser));
  assert.ok(!browser.includes('postMessage('));
  assert.ok(!/photopea\.com/i.test(browser));
- assert.ok(worker.includes('renderMockupNative('));
+ assert.ok(worker.includes('renderInPool('));
  assert.ok(worker.includes('24000000'));
  assert.ok(!browser.includes('R2_SECRET_ACCESS_KEY'));
 });

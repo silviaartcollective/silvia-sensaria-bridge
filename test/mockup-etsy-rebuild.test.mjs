@@ -72,7 +72,7 @@ test('vertical landscape and square mockups remain separated',()=>{
 
 test('PSD jobs render natively on the PC worker with no browser fallback',()=>{
  const processor=read('worker/mockup-processor.mjs');
- assert.match(processor,/renderMockupNative\(/);
+ assert.match(processor,/renderInPool\(/);
  assert.doesNotMatch(processor,/POD_PSD_RENDERER|puppeteer|getWarmPhotopea/);
 });
 

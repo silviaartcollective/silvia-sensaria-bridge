@@ -7,7 +7,7 @@ import {
  deleteMockupTemplate,listMockupJobs,getMockupJob,createMockupJob,markMockupArtworkUploaded,
  controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
  classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput,
- hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT,knownMockupArtworkTarget
+ hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT,knownMockupArtworkTarget,withMockupJobLock
 } from './mockup-generator.mjs';
 import {
  signedArtworkUploadUrl,signedArtworkUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
@@ -78,7 +78,7 @@ const activeBatches={ids:null,listedAt:0};
 const openBatch=j=>!!j&&j.artworkUploaded&&!j.deleted&&
  !!j.templates?.some(t=>t.status==='queued'||t.status==='processing');
 function markBatchActive(id){activeBatches.ids?.add(id)}
-async function claimCandidates(){
+async function claimCandidates(owner=''){
  if(!activeBatches.ids||Date.now()-activeBatches.listedAt>10*60*1000){
   const listedAt=Date.now(),all=await listMockupJobs(300);
   activeBatches.ids=new Set(all.filter(openBatch).map(j=>j.id));activeBatches.listedAt=listedAt;
@@ -88,7 +88,10 @@ async function claimCandidates(){
   let j=null;
   try{j=await getMockupJob(id)}catch{}
   if(!openBatch(j)){activeBatches.ids.delete(id);continue}
-  if(!j.paused&&!hasActiveMockupLease(j))jobs.push(j);
+  // A batch this worker already holds stays claimable while it has queued PSDs:
+  // the worker renders several PSDs at once.
+  if(j.paused)continue;
+  if(!hasActiveMockupLease(j)||(j.lease.owner===owner&&j.templates.some(t=>t.status==='queued')))jobs.push(j);
  }
  // Newest batch first: the listing being created now should not wait behind
  // older batches that were queued while the worker was unavailable.
@@ -126,7 +129,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     if(!(v[0]>4||(v[0]===4&&v[1]>=5))){
      sendJson(res,426,{ok:false,error:'PC mockup worker version 4.5.0 or newer is required (PSDs now render on the PC worker alone, without Photoshop or Photopea). Run worker/setup-worker.cmd and restart it.'});return true;
     }
-    const jobs=await claimCandidates();
+    const jobs=await claimCandidates(owner);
     for(const candidate of jobs){
      let claimed;
      try{claimed=await claimMockupWork(candidate.id,owner)}
@@ -240,12 +243,16 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
       output:{key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600)}}),true;
    }
    if(req.method==='POST'&&parts[2]==='heartbeat'){
-    const body=await readJson(req),owner=ownerCheck(body),j=await getMockupJob(id);
-    if(!hasActiveMockupLease(j)||j.lease.owner!==owner)throw Error('This browser no longer owns the batch.');
-    const now=Date.now();
-    j.lease.renewedAt=new Date(now).toISOString();
-    j.lease.expiresAt=new Date(now+MOCKUP_LEASE_MS).toISOString();
-    await putMockupJob(j);return send(200,{lease:j.lease,status:j.status,paused:j.paused}),true;
+    const body=await readJson(req),owner=ownerCheck(body);
+    const j=await withMockupJobLock(id,async()=>{
+     const j=await getMockupJob(id);
+     if(!hasActiveMockupLease(j)||j.lease.owner!==owner)throw Error('This browser no longer owns the batch.');
+     const now=Date.now();
+     j.lease.renewedAt=new Date(now).toISOString();
+     j.lease.expiresAt=new Date(now+MOCKUP_LEASE_MS).toISOString();
+     return putMockupJob(j);
+    });
+    return send(200,{lease:j.lease,status:j.status,paused:j.paused}),true;
    }
    if(req.method==='POST'&&parts[2]==='complete'){
     const body=await readJson(req),owner=ownerCheck(body),itemId=str(body.templateId),key=str(body.outputKey);

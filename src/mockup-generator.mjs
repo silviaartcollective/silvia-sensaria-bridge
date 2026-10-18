@@ -154,12 +154,26 @@ export async function createMockupJob({filename,size,templateIds,fitMode='contai
   history:[{at:created,event:'created'}]};
  await putJsonObject(jobKey(id),job);return job;
 }
+// Batch records are read, changed and written back to R2. The PC worker now
+// renders several PSDs of a batch at once, so changes to one batch run one at a
+// time (this server is a single process) and no update overwrites another.
+const jobLocks=new Map();
+export function withMockupJobLock(id,task){
+ const previous=jobLocks.get(id)||Promise.resolve();
+ const result=previous.then(task,task);
+ const tail=result.catch(()=>{});
+ jobLocks.set(id,tail);
+ void tail.then(()=>{if(jobLocks.get(id)===tail)jobLocks.delete(id)});
+ return result;
+}
 export async function putMockupJob(job){job.updatedAt=iso();job.history=(job.history||[]).slice(-120);await putJsonObject(jobKey(job.id),job);return job}
 export async function markMockupArtworkUploaded(id){
+ return withMockupJobLock(id,async()=>{
  const r=await getMockupJob(id);
  if(!await artworkObjectExists(r.artworkKey))throw Error('Artwork upload missing.');
  r.artworkUploaded=true;r.status='queued';r.history.push({at:iso(),event:'artwork_uploaded'});
  return putMockupJob(r);
+});
 }
 export const MOCKUP_LEASE_MS=120_000;
 export function hasActiveMockupLease(job,now=Date.now()){
@@ -178,6 +192,7 @@ export function isLeaseOwner(job,owner){
  return hasActiveMockupLease(job)&&job.lease.owner===owner;
 }
 export async function controlMockupJob(id,action,owner){
+ return withMockupJobLock(id,async()=>{
  const j=await getMockupJob(id),active=hasActiveMockupLease(j);
  if(active&&j.lease.owner!==owner&&action!=='pause')
   throw Error('This batch is already being processed by the shared PC worker. Wait for the current PSD or stop the batch.');
@@ -210,8 +225,10 @@ export async function controlMockupJob(id,action,owner){
   j.paused=false;j.status='queued';j.lease=null; // Shared PC worker claims queued items independently.
  }else throw Error('Unsupported batch action.');
  j.history.push({at:iso(),event:action});return putMockupJob(j);
+});
 }
 export async function claimMockupWork(id,owner){
+ return withMockupJobLock(id,async()=>{
  const j=await getMockupJob(id);
  if(!j.artworkUploaded)throw Error('Artwork is not uploaded.');
  if(j.paused)return {job:j,item:null,paused:true};
@@ -227,14 +244,18 @@ export async function claimMockupWork(id,owner){
  j.lease=newMockupLease(owner);
  const item=j.templates.find(t=>t.status==='queued');
  if(!item){
+  // PSDs this worker is still rendering keep the batch leased to it.
+  if(j.templates.some(t=>t.status==='processing')){j.status='running';await putMockupJob(j);return {job:j,item:null}}
   const incomplete=j.templates.filter(t=>t.status!=='completed');
   j.status=incomplete.length?'attention':'completed';j.lease=null;
   await putMockupJob(j);return {job:j,item:null};
  }
  item.status='processing';item.attempts++;item.startedAt=iso();item.progressAt=item.startedAt;item.progress='Preparing PSD on PC';j.status='running';
  await putMockupJob(j);return {job:j,item};
+});
 }
 export async function completeMockupItem(id,owner,templateId,details){
+ return withMockupJobLock(id,async()=>{
  const j=await getMockupJob(id);
  if(!isLeaseOwner(j,owner))throw Error('Worker lease expired or belongs to another browser.');
  const item=j.templates.find(x=>x.id===templateId);
@@ -243,6 +264,7 @@ export async function completeMockupItem(id,owner,templateId,details){
  item.usedMapping=details.mapping||null;item.finishedAt=iso();
  j.history.push({at:iso(),event:'output_verified',name:item.name});
  await putMockupJob(j);return j;
+});
 }
 // Failure notifications can arrive after a successful upload if the PC or HTTP reply stalls.
 export function markMockupItemFailed(item,message,needsMapping=false){
@@ -254,6 +276,7 @@ export function markMockupItemFailed(item,message,needsMapping=false){
  return true;
 }
 export async function failMockupItem(id,owner,templateId,message,needsMapping=false){
+ return withMockupJobLock(id,async()=>{
  const j=await getMockupJob(id);
  if(!isLeaseOwner(j,owner))throw Error('Worker lease expired or belongs to another browser.');
  const item=j.templates.find(x=>x.id===templateId);
@@ -261,8 +284,10 @@ export async function failMockupItem(id,owner,templateId,message,needsMapping=fa
  if(!markMockupItemFailed(item,message,needsMapping))return j; // Keep a verified JPG completed.
  j.history.push({at:iso(),event:item.status,name:item.name,reason:item.error});
  await putMockupJob(j);return j;
+});
 }
 export async function updateMockupItemProgress(id,owner,templateId,step){
+ return withMockupJobLock(id,async()=>{
  const j=await getMockupJob(id);
  if(!isLeaseOwner(j,owner))throw Error('Worker lease expired or belongs to a different session.');
  const t=j.templates.find(x=>x.id===templateId);
@@ -270,6 +295,7 @@ export async function updateMockupItemProgress(id,owner,templateId,step){
  t.progress=limitText(step,220);t.progressAt=iso();
  j.lease=newMockupLease(owner); // Progress refreshes the renewable worker lease.
  return putMockupJob(j);
+});
 }
 export function mockupOutputKey(jobId,templateId){
  assertId(jobId);assertId(templateId);
@@ -292,6 +318,7 @@ export async function getMockupItemDownload(jobId,templateId){
 export const MOCKUP_ROOT=ROOT;
 
 export async function deleteMockupOutput(jobId,templateId){
+ return withMockupJobLock(jobId,async()=>{
  const j=await getMockupJob(jobId);
  if(j.status==='running'&&Date.parse(j.lease?.expiresAt)>Date.now())
   throw Error('Pause the active batch before deleting an output.');
@@ -301,4 +328,5 @@ export async function deleteMockupOutput(jobId,templateId){
  t.outputKey=null;t.dimensions=null;t.status='deleted';t.error=null;
  j.history.push({at:iso(),event:'output_deleted',name:t.name});
  return putMockupJob(j);
+});
 }

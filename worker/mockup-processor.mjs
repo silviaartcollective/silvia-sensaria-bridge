@@ -1,10 +1,12 @@
 // PSD mockup renderer used by the shared PC crop + mockup worker.
 // Everything runs inside this Node process: the PSD is read with ag-psd and
 // prepared once (cached on disk); every artwork after that is a perspective warp
-// plus composite with sharp. No Photoshop, Photopea or browser is involved.
+// plus composite with sharp, on a pool of render threads (one per mockup being
+// rendered). No Photoshop, Photopea or browser is involved.
 import {stat} from 'node:fs/promises';
 import sharp from 'sharp';
-import {renderMockupNative,NativeMockupUnsupported} from './native-mockup.mjs';
+import {NativeMockupUnsupported} from './native-mockup.mjs';
+import {renderInPool} from './render-pool.mjs';
 
 export {NativeMockupUnsupported};
 
@@ -13,7 +15,7 @@ export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateN
  const started=Date.now();
  let result;
  try{
-  result=await renderMockupNative({psdPath,artworkPath,outputPath,mapping,fitMode,onStage});
+  result=await renderInPool({psdPath,artworkPath,outputPath,mapping,fitMode,onStage});
  }catch(error){
   if(error instanceof NativeMockupUnsupported)
    throw Object.assign(Error(('PSD template "'+templateName+'" is not supported by the PC worker: '+
