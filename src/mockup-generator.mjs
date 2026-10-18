@@ -227,7 +227,25 @@ export async function controlMockupJob(id,action,owner){
  j.history.push({at:iso(),event:action});return putMockupJob(j);
 });
 }
-export async function claimMockupWork(id,owner){
+// Width and height from a JPEG's start-of-frame marker, or null.
+export function jpegDimensions(buffer){
+ if(!buffer||buffer[0]!==0xff||buffer[1]!==0xd8)return null;
+ let offset=2;
+ while(offset+9<buffer.length){
+  if(buffer[offset]!==0xff){offset++;continue}
+  const marker=buffer[offset+1];
+  if(marker===0xd8||marker===0x01||(marker>=0xd0&&marker<=0xd7)){offset+=2;continue}
+  const length=buffer.readUInt16BE(offset+2);
+  if(marker>=0xc0&&marker<=0xcf&&![0xc4,0xc8,0xcc].includes(marker))
+   return {height:buffer.readUInt16BE(offset+5),width:buffer.readUInt16BE(offset+7)};
+  offset+=2+length;
+ }
+ return null;
+}
+export const mockupPreviewKey=outputKey=>String(outputKey).replace(/\.jpg$/,'.preview.jpg');
+// Claims up to `limit` queued PSDs of a batch in one write: the PC worker
+// renders several at once.
+export async function claimMockupWork(id,owner,limit=1){
  return withMockupJobLock(id,async()=>{
  const j=await getMockupJob(id);
  if(!j.artworkUploaded)throw Error('Artwork is not uploaded.');
@@ -248,10 +266,12 @@ export async function claimMockupWork(id,owner){
   if(j.templates.some(t=>t.status==='processing')){j.status='running';await putMockupJob(j);return {job:j,item:null}}
   const incomplete=j.templates.filter(t=>t.status!=='completed');
   j.status=incomplete.length?'attention':'completed';j.lease=null;
-  await putMockupJob(j);return {job:j,item:null};
+  await putMockupJob(j);return {job:j,item:null,items:[]};
  }
- item.status='processing';item.attempts++;item.startedAt=iso();item.progressAt=item.startedAt;item.progress='Preparing PSD on PC';j.status='running';
- await putMockupJob(j);return {job:j,item};
+ const items=j.templates.filter(t=>t.status==='queued').slice(0,Math.max(1,Math.min(8,Number(limit)||1)));
+ for(const t of items){t.status='processing';t.attempts++;t.startedAt=iso();t.progressAt=t.startedAt;t.progress='Preparing PSD on PC'}
+ j.status='running';
+ await putMockupJob(j);return {job:j,item:items[0],items};
 });
 }
 export async function completeMockupItem(id,owner,templateId,details){
@@ -261,6 +281,7 @@ export async function completeMockupItem(id,owner,templateId,details){
  const item=j.templates.find(x=>x.id===templateId);
  if(!item||item.status!=='processing')throw Error('This PSD is not claimed for processing.');
  item.status='completed';item.error=null;item.progress='Ready';item.outputKey=details.outputKey;item.dimensions=details.dimensions;
+ item.previewKey=details.previewKey||null;
  item.usedMapping=details.mapping||null;item.finishedAt=iso();
  j.history.push({at:iso(),event:'output_verified',name:item.name});
  await putMockupJob(j);return j;
@@ -313,7 +334,7 @@ export async function getMockupItemDownload(jobId,templateId){
  const job=await getMockupJob(jobId);
  const item=job.templates.find(t=>t.id===templateId);
  if(item?.status!=='completed'||!item.outputKey)throw Error('This mockup is not ready for download.');
- return {url:await signedArtworkUrl(item.outputKey,600),name:item.outputName,key:item.outputKey};
+ return {url:await signedArtworkUrl(item.outputKey,600),name:item.outputName,key:item.outputKey,previewKey:item.previewKey||null};
 }
 export const MOCKUP_ROOT=ROOT;
 
@@ -325,7 +346,8 @@ export async function deleteMockupOutput(jobId,templateId){
  const t=j.templates.find(x=>x.id===templateId);
  if(!t)throw Error('Mockup output not found in this job.');
  if(t.outputKey)await deleteArtworkObject(t.outputKey);
- t.outputKey=null;t.dimensions=null;t.status='deleted';t.error=null;
+ if(t.previewKey)await deleteArtworkObject(t.previewKey).catch(()=>{});
+ t.outputKey=null;t.previewKey=null;t.dimensions=null;t.status='deleted';t.error=null;
  j.history.push({at:iso(),event:'output_deleted',name:t.name});
  return putMockupJob(j);
 });

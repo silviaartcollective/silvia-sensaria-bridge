@@ -1,5 +1,5 @@
 import { WORKER_ID } from './config.mjs';
-const WORKER_VERSION = '4.5.5';
+const WORKER_VERSION = '4.5.6';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -108,8 +108,8 @@ export function apiFor(app) {
       });
     },
     // The PSD generator shares this same worker, per-shop token, and scheduler.
-    claimMockup(owner) {
-      return request(app,'/api/mockups/worker/claim',{method:'POST',body:{owner,version:WORKER_VERSION}});
+    claimMockup(owner,limit=1) {
+      return request(app,'/api/mockups/worker/claim',{method:'POST',body:{owner,version:WORKER_VERSION,limit}});
     },
     inspectMockupTemplate(templateId,objects) {
       return request(app,'/api/mockups/templates/'+encodeURIComponent(templateId)+'/inspect',{
@@ -125,9 +125,9 @@ export function apiFor(app) {
       return request(app,'/api/mockups/worker/'+encodeURIComponent(jobId)+
        '/templates/'+encodeURIComponent(templateId)+'/progress',{method:'POST',body:{owner,stage}});
     },
-    mockupComplete(jobId,owner,templateId,outputKey,mapping) {
+    mockupComplete(jobId,owner,templateId,outputKey,mapping,previewUploaded=false) {
       return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/complete',{
-       method:'POST',body:{owner,templateId,outputKey,mapping,visibilityVerified:true,
+       method:'POST',body:{owner,templateId,outputKey,mapping,previewUploaded,visibilityVerified:true,
          mappingVerified:true,artworkReplaced:true}
       });
     },

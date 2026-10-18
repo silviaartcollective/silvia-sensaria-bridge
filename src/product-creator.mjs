@@ -42,7 +42,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
 .result{display:none;margin-top:14px;padding:14px;border-radius:10px;border:1px solid var(--line);background:#f7f4ee;font-size:13px;line-height:1.5}.result.show{display:block}
 .uploadbox{border:1px dashed #cfc9be;border-radius:12px;padding:16px;background:#faf8f3;display:grid;gap:12px}.uploadrow{display:grid;grid-template-columns:1fr 1fr;gap:12px}.uploadmeta{font-size:11px;color:var(--muted);line-height:1.45}.progress{height:7px;background:#e8e3d9;border-radius:999px;overflow:hidden}.progress>span{display:block;height:100%;width:0;background:#697969;transition:width .2s ease}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 @media(max-width:1100px){.shell{height:auto;min-height:100vh;overflow:visible}.shell>aside{height:auto;overflow:visible}main{height:auto;min-height:100vh;display:block;overflow:visible}.grid{grid-template-columns:1fr;min-height:auto}.creator-editor-scroll,.creator-preview-scroll{height:auto;min-height:0;overflow:visible;scrollbar-gutter:auto}.twocol{grid-template-columns:1fr}}
-@media(max-width:720px){.shell{grid-template-columns:1fr}.shell>aside{display:none}main{padding:24px 18px}.top{flex-direction:column}h1{font-size:32px}.mg-preview-list{grid-template-columns:repeat(3,minmax(0,1fr));}}
+@media(max-width:720px){.shell{grid-template-columns:1fr}.shell>aside{display:none}main{padding:24px 18px}.top{flex-direction:column}h1{font-size:32px}.mg-preview-list{grid-template-columns:repeat(2,minmax(0,1fr));}}
 </style>
 </head>
 <body>

@@ -7,7 +7,8 @@ import {
  deleteMockupTemplate,listMockupJobs,getMockupJob,createMockupJob,markMockupArtworkUploaded,
  controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
  classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput,
- hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT,knownMockupArtworkTarget,withMockupJobLock
+ hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT,knownMockupArtworkTarget,withMockupJobLock,
+ jpegDimensions,mockupPreviewKey
 } from './mockup-generator.mjs';
 import {
  signedArtworkUploadUrl,signedArtworkUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
@@ -15,7 +16,7 @@ import {
 import {randomUUID} from 'node:crypto';
 import {streamMockupZip} from './mockup-zip.mjs';
 import {loadArtworkManifest,saveArtworkManifest} from './artwork-storage.mjs';
-import {copyArtworkObject,artworkObjectInfo} from './r2.mjs';
+import {copyArtworkObject,artworkObjectInfo,getArtworkObjectStart} from './r2.mjs';
 
 // Generated outputs have immutable UUID keys. Cache their small previews
 // to avoid repeated 24MP R2 downloads on every gallery review or refresh.
@@ -30,8 +31,8 @@ async function generatedMockupThumbnail(key){
   if(!source.body.length||source.body.length>60*1024*1024)
    throw Error('Generated preview source is too large.');
   return sharp(source.body,{limitInputPixels:24_000_001})
-   .rotate().resize(320,320,{fit:'inside',withoutEnlargement:true})
-   .jpeg({quality:78}).toBuffer();
+   .rotate().resize(720,720,{fit:'inside',withoutEnlargement:true})
+   .jpeg({quality:80}).toBuffer();
  })();
  thumbnailCache.set(key,{pending,expiresAt:Date.now()+THUMBNAIL_TTL_MS});
  if(thumbnailCache.size>THUMBNAIL_MAX_ENTRIES)
@@ -130,22 +131,28 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
      sendJson(res,426,{ok:false,error:'PC mockup worker version 4.5.0 or newer is required (PSDs now render on the PC worker alone, without Photoshop or Photopea). Run worker/setup-worker.cmd and restart it.'});return true;
     }
     const jobs=await claimCandidates(owner);
+    // Several PSDs per request: the worker asks for as many as it has free threads.
+    const limit=Math.max(1,Math.min(8,Number(body.limit)||1));
     for(const candidate of jobs){
      let claimed;
-     try{claimed=await claimMockupWork(candidate.id,owner)}
+     try{claimed=await claimMockupWork(candidate.id,owner,limit)}
      catch(error){if(/processing|lease|paused/i.test(String(error?.message)))continue;throw error}
      if(!claimed?.item)continue;
-     const stored=await getMockupTemplate(claimed.item.id);
-     // Known templates (e.g. mockup 19's layer "5") use the same layer the server verifies.
-     const known=knownMockupArtworkTarget(stored.name);
-     const template=stored.mapping?.path||!known?stored:{...stored,mapping:{path:known}};
-     const key=mockupOutputKey(candidate.id,template.id);
-     return send(200,{job:claimed.job,item:claimed.item,template,
-       templateUrl:await signedArtworkUrl(template.key,3600),
-       artworkUrl:await signedArtworkUrl(claimed.job.artworkKey,3600),
-       output:{key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600)}}),true;
+     const artworkUrl=await signedArtworkUrl(claimed.job.artworkKey,3600);
+     const items=await Promise.all(claimed.items.map(async item=>{
+      const stored=await getMockupTemplate(item.id);
+      // Known templates (e.g. mockup 19's layer "5") use the same layer the server verifies.
+      const known=knownMockupArtworkTarget(stored.name);
+      const template=stored.mapping?.path||!known?stored:{...stored,mapping:{path:known}};
+      const key=mockupOutputKey(candidate.id,template.id),previewKey=mockupPreviewKey(key);
+      return {item,template,templateUrl:await signedArtworkUrl(template.key,3600),artworkUrl,
+       output:{key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600),
+        previewKey,previewUploadUrl:await signedArtworkUploadUrl(previewKey,'image/jpeg',3600)}};
+     }));
+     // The first claim stays at the top level for workers that take one at a time.
+     return send(200,{job:claimed.job,...items[0],items}),true;
     }
-    return send(200,{job:null,item:null}),true;
+    return send(200,{job:null,item:null,items:[]}),true;
    }
    if(req.method==='POST'&&parts.length===5&&parts[2]==='templates'&&parts[4]==='progress'&&isId(parts[1])&&isId(parts[3])){
     const body=await readJson(req);
@@ -263,16 +270,26 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
      throw Error('Output path is not valid for this job.');
     if(!body.visibilityVerified||!body.mappingVerified||!body.artworkReplaced)
      throw Error('The artwork replacement, target Smart Object, and original layer visibility must be verified.');
-    const data=await getArtworkObject(key);
-    if(!data.body.length||data.body.length>60*1024*1024)throw Error('Invalid mockup JPG size.');
-    if(data.body[0]!==255||data.body[1]!==216)throw Error('Output is not a JPEG.');
-    const metadata=await sharp(data.body,{limitInputPixels:24_000_001}).metadata();
-    if(metadata.format!=='jpeg'||metadata.width*metadata.height>24_000_000||
-       metadata.width<150||metadata.height<150)throw Error('Export does not meet the 24MP JPG requirements.');
-    const old=item.outputKey;
-    const result=await completeMockupItem(id,owner,itemId,{outputKey:key,
+    // Only the JPEG header is read: downloading the full 24MP JPG from R2 on
+    // every completion was the slowest step per mockup.
+    const start=await getArtworkObjectStart(key);
+    if(!start.totalSize||start.totalSize>60*1024*1024)throw Error('Invalid mockup JPG size.');
+    let metadata=jpegDimensions(start.body);
+    if(!metadata&&start.body[0]===255&&start.body[1]===216)
+     metadata=await sharp((await getArtworkObject(key)).body,{limitInputPixels:24_000_001}).metadata();
+    if(!metadata)throw Error('Output is not a JPEG.');
+    if(metadata.width*metadata.height>24_000_000||metadata.width<150||metadata.height<150)
+     throw Error('Export does not meet the 24MP JPG requirements.');
+    let previewKey=null;
+    if(body.previewUploaded===true){
+     const preview=await getArtworkObjectStart(mockupPreviewKey(key),4096).catch(()=>null);
+     if(preview?.body?.[0]===255&&preview.body[1]===216&&preview.totalSize<5*1024*1024)previewKey=mockupPreviewKey(key);
+    }
+    const old=item.outputKey,oldPreview=item.previewKey;
+    const result=await completeMockupItem(id,owner,itemId,{outputKey:key,previewKey,
      dimensions:{width:metadata.width,height:metadata.height},mapping:str(body.mapping)});
     if(old&&old!==key)await deleteArtworkObject(old).catch(()=>{});
+    if(oldPreview&&oldPreview!==previewKey)await deleteArtworkObject(oldPreview).catch(()=>{});
     // Successful JPG verification is the trigger; do not wait for all PSDs.
     void Promise.resolve().then(()=>onMockupCompleted(result)).catch(
       error=>console.error('PSD completion notification failed:',error)
@@ -293,7 +310,8 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    if(req.method==='GET'&&parts[2]==='thumbnail'&&isId(parts[3])){
     // Small previews avoid loading full-resolution 24MP JPGs into a long scrolling list.
     const d=await getMockupItemDownload(id,parts[3]);
-    const thumbnail=await generatedMockupThumbnail(d.key);
+    // The worker uploads a ready-made preview; older outputs are resized here.
+    const thumbnail=d.previewKey?(await getArtworkObject(d.previewKey)).body:await generatedMockupThumbnail(d.key);
     res.writeHead(200,{
      'content-type':'image/jpeg','content-length':thumbnail.length,
      // The client URL carries ?v=finishedAt, so a regenerated JPG gets a new URL.

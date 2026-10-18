@@ -24,6 +24,7 @@ import {renderMockupOnPC} from './mockup-processor.mjs';
 import {RENDER_THREADS} from './render-pool.mjs';
 import {patchAgPsd} from './patch-ag-psd.mjs';
 import {downloadCached} from './asset-cache.mjs';
+import sharp from 'sharp';
 
 const LOCK_PATH = path.join(os.tmpdir(), 'pod-crop-worker.lock');
 const tempPaths = new Set();
@@ -38,6 +39,9 @@ const active = new Set();
 const inFlightByBatch = new Map(); // appUrl|batchId -> PSDs rendering now
 const mockupOwner = crypto.randomUUID();
 const mockupUnsupported=new Map(); // Retry temporarily unavailable PSD endpoints.
+// Server confirmations of a template's artwork layer, reused while the same
+// layers are found (saves a request per mockup).
+const confirmedLayers=new Map();
 // Each poll is outbound bandwidth on every shop's Render service. While a batch
 // has queued PSDs the next one is claimed immediately; otherwise queues are
 // checked every 5 s for a minute after the last job, then every 15 s.
@@ -135,6 +139,11 @@ async function uploadFile(url, filePath) {
     );
   }
   return info.size;
+}
+
+async function uploadBuffer(url,body){
+  const response=await fetch(url,{method:'PUT',headers:{'Content-Type':'image/jpeg'},body,signal:AbortSignal.timeout(2*60*1000)});
+  if(!response.ok)throw new Error('R2 upload failed (HTTP '+response.status+')');
 }
 
 async function processJob(app, job) {
@@ -287,8 +296,16 @@ async function processPSDJob(app,claim){
    onStage:stage
   });
   measure('renderMs');
-  const inspected=await queue(()=>api.inspectMockupTemplate(itemId,render.objects));
-  const classification=inspected.classification||{};
+  const layerKey=app.appUrl+'|'+claim.template.id+'|'+(claim.template.mapping?.path||'')+'|'+JSON.stringify(render.objects||[]);
+  let classification=confirmedLayers.get(layerKey);
+  if(!classification){
+   const inspected=await queue(()=>api.inspectMockupTemplate(itemId,render.objects));
+   classification=inspected.classification||{};
+   if(classification.status==='mapped'&&classification.path===render.usedMapping){
+    confirmedLayers.set(layerKey,classification);
+    if(confirmedLayers.size>500)confirmedLayers.delete(confirmedLayers.keys().next().value);
+   }
+  }
   measure('smartObjectVerificationMs');
   if(render.needsMapping||classification.status!=='mapped'||
       classification.path!==render.usedMapping){
@@ -298,9 +315,13 @@ async function processPSDJob(app,claim){
    return;
   }
   await stage('Uploading and verifying '+claim.item.outputName);
-  await uploadFile(claim.output.uploadUrl,outputPath);
+  // The full JPG and a 900 px preview for the Product Creator go up together.
+  const preview=claim.output.previewUploadUrl?sharp(outputPath).resize(900,900,{fit:'inside',withoutEnlargement:true})
+   .jpeg({quality:82}).toBuffer().then(body=>uploadBuffer(claim.output.previewUploadUrl,body)).then(()=>true,
+    error=>{console.error('['+app.name+'] Preview upload failed (the full JPG is fine):',error.message);return false}):false;
+  const [,previewUploaded]=await Promise.all([uploadFile(claim.output.uploadUrl,outputPath),preview]);
   measure('generatedJpgR2UploadMs');
-  await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping));
+  await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping,previewUploaded));
   measure('serverVerificationMs');
   completionRecorded=true;
   console.log('['+app.name+'] PSD_TIMINGS '+JSON.stringify({
@@ -387,14 +408,18 @@ async function cropLane(){
 }
 
 // Mockup lane: claims queued PSDs until every render thread is busy.
-async function claimMockup(){
+async function claimMockups(limit){
   const cycle=rotatingApps(APP_CONNECTIONS,nextMockupAppIndex);
   if(APP_CONNECTIONS.length)nextMockupAppIndex=(nextMockupAppIndex+1)%APP_CONNECTIONS.length;
   for(const app of cycle){
     if(stopping||(mockupUnsupported.get(app.appUrl)||0)>Date.now())continue;
     try{
-      const claimed=await clientFor(app).claimMockup(mockupOwner);
-      if(claimed.item)return {app,claimed};
+      const claimed=await clientFor(app).claimMockup(mockupOwner,limit);
+      if(!claimed.item)continue;
+      // Servers before multi-claim return one PSD at the top level.
+      const claims=Array.isArray(claimed.items)&&claimed.items.length
+        ?claimed.items.map(entry=>({...entry,job:claimed.job})):[claimed];
+      return {app,claims};
     }catch(error){
       // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
       if(/404|not found|non-json/i.test(error.message)){
@@ -409,12 +434,14 @@ async function mockupLane(){
   const running=new Set();
   while(!stopping){
     if(running.size>=RENDER_THREADS){await Promise.race(running);continue;}
-    const next=await claimMockup();
+    const next=await claimMockups(RENDER_THREADS-running.size);
     if(next){
-      const {app,claimed}=next,batch=app.appUrl+'|'+claimed.job.id;
-      inFlightByBatch.set(batch,(inFlightByBatch.get(batch)||0)+1);
-      const task=track({app,job:{id:claimed.job.id},type:'mockup'},processPSDJob(app,claimed)).catch(()=>{});
-      running.add(task);void task.finally(()=>running.delete(task));
+      for(const claimed of next.claims){
+        const app=next.app,batch=app.appUrl+'|'+claimed.job.id;
+        inFlightByBatch.set(batch,(inFlightByBatch.get(batch)||0)+1);
+        const task=track({app,job:{id:claimed.job.id},type:'mockup'},processPSDJob(app,claimed)).catch(()=>{});
+        running.add(task);void task.finally(()=>running.delete(task));
+      }
       continue; // claim the next queued PSD straight away
     }
     // Nothing queued: wait for a render to finish or the idle poll interval.

@@ -24,7 +24,7 @@ test('Product Creator keeps a separate right-side gallery outside the listing fo
  assert.match(html,/<details class="creator-planned-details">/);
 });
 
-test('gallery displays a three-by-three selection viewport with usable thumbnails',()=>{
+test('gallery displays large previews, two per row, in a scrolling selection viewport',()=>{
  const gallery=renderMockupPreviewPanel();
  const editor=renderMockupGeneratorSection();
  assert.match(gallery,/id="mg-preview-list"/);
@@ -32,8 +32,9 @@ test('gallery displays a three-by-three selection viewport with usable thumbnail
  assert.match(gallery,/id="mg-deselect-all"/);
  assert.match(gallery,/id="mg-apply-selected"/);
  assert.doesNotMatch(editor,/id="mg-preview-list"/);
- assert.match(editor,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
- assert.match(editor,/height:calc\(3 \* var\(--preview-row-height\) \+ 32px\)/);
+ assert.match(editor,/grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+ assert.match(editor,/--preview-row-height:clamp\(300px,40dvh,460px\)/);
+ assert.match(editor,/height:calc\(2 \* var\(--preview-row-height\) \+ 24px\)/);
  assert.match(editor,/overflow-y:auto;overscroll-behavior:contain/);
  assert.match(editor,/\.mg-preview-item:has\(input:checked\)/);
 });

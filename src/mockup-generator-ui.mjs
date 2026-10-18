@@ -3,7 +3,7 @@ return `
 <section class="uploadbox" id="mockup-generator-panel" aria-label="Generate mockups">
  <div class="mg-workspace"><div class="mg-main"><div><strong>Generate listing mockups</strong>
  <div class="uploadmeta">Optional: choose only the PSD templates you need, then queue them on your PC. You can create the Etsy draft immediately without waiting for rendering. Keep the draft unpublished until its final mockups are ready.</div></div>
- <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically generate every selected mockup after each master artwork uploads (about a second each). Etsy fits 16 of them next to the master artwork and 3 preset photos: the first 16 are ticked, and you can swap any before applying.</span></label></div>
+ <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically generate every selected mockup after each master artwork uploads (about a second each). Then tick up to 16 for Etsy (the master artwork and 3 preset photos fill the other 4 of its 20 photo slots).</span></label></div>
  <div class="uploadrow">
   <label>Vertical PSD / PSB templates <span class="hint">portrait artwork</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
@@ -66,7 +66,7 @@ return `
 .mg-preview-head .hint{font-size:12px;white-space:nowrap}
 .mg-preview-actions{display:flex;gap:8px;flex-wrap:wrap}
 .mg-preview-actions button{font-size:12px;padding:9px 11px}
-.mg-preview-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));--preview-row-height:clamp(172px,20dvh,230px);grid-auto-rows:var(--preview-row-height);gap:11px;min-height:455px;height:calc(3 * var(--preview-row-height) + 32px);max-height:74dvh;overflow-y:auto;overscroll-behavior:contain;align-content:start;scrollbar-gutter:stable;padding:3px 7px 7px 3px}
+.mg-preview-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));--preview-row-height:clamp(300px,40dvh,460px);grid-auto-rows:var(--preview-row-height);gap:12px;min-height:455px;height:calc(2 * var(--preview-row-height) + 24px);max-height:82dvh;overflow-y:auto;overscroll-behavior:contain;align-content:start;scrollbar-gutter:stable;padding:3px 7px 7px 3px}
 .mg-preview-empty{grid-column:1/-1;font-size:13px;color:#74776f;line-height:1.6;padding:26px 14px;text-align:center;align-self:start}
 .mg-preview-item{display:flex;flex-direction:column;position:relative;gap:8px;border:2px solid #e4e0d7;border-radius:11px;padding:8px;background:white;cursor:pointer;min-width:0;transition:border-color .15s,background .15s}
 .mg-preview-item:hover{border-color:#adb9aa}
@@ -78,7 +78,7 @@ return `
 .mg-preview-item small{display:block;font-size:10px;font-weight:400;color:#74776f;margin-top:3px}
 .mg-preview #mg-selection-status{font-size:12px}
 .mg-preview #mg-apply-selected{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0}
-@media(max-width:760px){.mg-preview-list{gap:7px;max-height:550px;min-height:260px}.mg-preview-item{padding:5px}.mg-preview-item span{font-size:11px}.mg-preview-item input{width:19px;height:19px;top:7px;right:7px}}
+@media(max-width:760px){.mg-preview-list{--preview-row-height:clamp(220px,34dvh,320px);gap:7px;max-height:620px;min-height:260px}.mg-preview-item{padding:5px}.mg-preview-item span{font-size:11px}.mg-preview-item input{width:19px;height:19px;top:7px;right:7px}}
 #mockup-generator-panel .mg-actions{display:flex;flex-wrap:wrap;gap:10px}
 #mockup-generator-panel #mg-library-upload-status{font-size:13px;line-height:1.5;min-height:36px;padding:12px;border-radius:9px;background:#f4f6f1;color:#344d38}
 #mockup-generator-panel #mg-library-upload-status.warn{background:#fff0df;color:#945026}
