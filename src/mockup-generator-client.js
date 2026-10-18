@@ -203,51 +203,127 @@ async function syncGeneratedJpgs(batchId,templateIds){
  }
  message('Etsy setup is still busy. Click Apply selected to listing to retry the mockup sync.',true);
 }
+// "Apply selected to listing" opens the photo organizer: every Etsy photo in
+// listing order, to arrange before anything is uploaded.
 async function useResults(){
  if(!currentBatch())throw Error('These mockups were created for a different artwork. Create a fresh batch for this master.');
  if(attaching)return;
- const batchId=job.id,version=selectionVersion;
- const selected=job.templates.filter(t=>t.status==='completed'&&isSelected(batchId,t.id));
+ const batchId=job.id;
+ const selected=job.templates.filter(t=>t.status==='completed'&&isSelected(batchId,t.id)).slice(0,ETSY_MOCKUP_SLOTS);
  if(!selected.length){markRequested();throw Error('Select at least one generated JPG.')}
- attaching=true;renderPreviews();
+ const artworkId=job.artworkId||$('artwork_id').value.trim();
+ if(!job.artworkId&&artworkId)await linkBatchToArtwork(batchId,artworkId).catch(()=>{});
+ await openOrganizer(batchId,selected.map(t=>t.id));
+}
+
+// ------------------------------------------------------------ photo organizer
+let organizer=null,localMaster={file:null,url:''};
+function localMasterPreview(){
+ const file=$('master_file').files?.[0];
+ if(!file)return '';
+ if(localMaster.file!==file){
+  if(localMaster.url)URL.revokeObjectURL(localMaster.url);
+  localMaster={file,url:URL.createObjectURL(file)};
+ }
+ return localMaster.url;
+}
+async function openOrganizer(batchId,templateIds){
+ const artworkId=job?.artworkId||$('artwork_id').value.trim();
+ const query=new URLSearchParams({jobId:batchId,templateIds:templateIds.join(',')});
+ if(artworkId)query.set('artworkId',artworkId);
+ message('Loading the Etsy photo order…');
+ const response=await fetch('/api/etsy-photo-organizer?'+query,{cache:'no-store'});
+ const data=await response.json().catch(()=>({}));
+ if(!response.ok||!data.ok)throw Error(data.error||'Could not load the Etsy photos (HTTP '+response.status+').');
+ organizer={batchId,templateIds,tiles:new Map(data.tiles.map(t=>[t.id,t])),order:[...data.order],
+  mode:data.mode,limit:data.limit||20,video:!!data.video};
+ $('mg-preview-panel').classList.add('organizing');
+ renderOrganizer();
+ message('Arrange the Etsy photos, then save the order.');
+}
+function closeOrganizer(){
+ organizer=null;
+ $('mg-preview-panel').classList.remove('organizing');
+ renderPreviews();
+}
+function moveTile(from,to){
+ if(!organizer||from===to||to<0||to>=organizer.order.length)return;
+ const [id]=organizer.order.splice(from,1);
+ organizer.order.splice(to,0,id);
+ renderOrganizer();
+}
+let draggedIndex=-1;
+function renderOrganizer(){
+ if(!organizer)return;
+ const list=$('mg-org-list');list.replaceChildren();
+ organizer.order.forEach((id,index)=>{
+  const tile=organizer.tiles.get(id)||{label:id};
+  const item=create('div','',{class:'mg-org-item',draggable:'true','data-index':String(index)});
+  const src=tile.thumb||(tile.kind==='master'?localMasterPreview():'');
+  if(src)item.append(create('img','',{src,alt:tile.label||'Etsy photo',loading:'lazy',draggable:'false'}));
+  else item.append(create('div',tile.label||'Photo',{class:'mg-org-blank'}));
+  item.append(create('b',index===0?'Featured':String(index+1),{class:'mg-org-rank'+(index===0?' featured':'')}));
+  item.append(create('span',tile.label||''));
+  const moves=create('div','',{class:'mg-org-move'});
+  const earlier=create('button','←',{type:'button','aria-label':'Move earlier'});
+  const later=create('button','→',{type:'button','aria-label':'Move later'});
+  earlier.disabled=index===0;later.disabled=index===organizer.order.length-1;
+  earlier.addEventListener('click',()=>moveTile(index,index-1));
+  later.addEventListener('click',()=>moveTile(index,index+1));
+  moves.append(earlier,later);item.append(moves);
+  item.addEventListener('dragstart',event=>{
+   draggedIndex=index;item.classList.add('dragging');
+   event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',String(index));
+  });
+  item.addEventListener('dragend',()=>{draggedIndex=-1;item.classList.remove('dragging')});
+  item.addEventListener('dragover',event=>{if(draggedIndex>=0){event.preventDefault();item.classList.add('drop-target')}});
+  item.addEventListener('dragleave',()=>item.classList.remove('drop-target'));
+  item.addEventListener('drop',event=>{
+   event.preventDefault();item.classList.remove('drop-target');
+   if(draggedIndex>=0)moveTile(draggedIndex,index);
+  });
+  list.append(item);
+ });
+ const remaining=organizer.limit-organizer.order.length;
+ if(remaining>0)list.append(create('div',remaining+' photo slot'+(remaining===1?'':'s')+' remaining',{class:'mg-org-slot'}));
+ $('mg-org-status').textContent=organizer.order.length+' of '+organizer.limit+' Etsy photos. The first is the Featured photo.'+
+  (organizer.video?' The video keeps its own spot on Etsy.':'')+
+  (organizer.mode==='live'?'':' Nothing is uploaded until the Etsy draft exists; this order is used then.');
+ $('mg-org-save').textContent=organizer.mode==='live'?'Save order to Etsy':'Save order';
+}
+async function saveOrderToServer(artworkId,{batchId,templateIds,order}){
+ const response=await fetch('/api/etsy-photo-organizer',{method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({artworkId,jobId:batchId,templateIds,order})});
+ const data=await response.json().catch(()=>({}));
+ if(!response.ok||!data.ok)throw Error(data.error||'Could not save the Etsy photo order (HTTP '+response.status+').');
+ return data;
+}
+async function saveOrganizer(){
+ if(!organizer||attaching)return;
+ const {batchId,templateIds,order}=organizer;
+ const artworkId=job?.artworkId||$('artwork_id').value.trim();
+ lastAppliedBatchId=batchId;appliedCount=templateIds.length;
+ ready=true;requested=true;
+ panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
+ if(!artworkId){
+  // No artwork ID or folders until the Etsy draft is created: keep the choice
+  // and order, and add the photos in this order once the draft's artwork exists.
+  pendingApply={batchId,templateIds,order:[...order]};
+  closeOrganizer();
+  message('Photo order saved. These '+templateIds.length+' mockups are added in this order when you create the Etsy draft.');
+  return;
+ }
+ attaching=true;$('mg-org-save').disabled=true;
+ message('Saving the photo order to Etsy…');
  try{
-  const artworkIdNow=$('artwork_id').value.trim();
-  if(!job.artworkId&&artworkIdNow)await linkBatchToArtwork(batchId,artworkIdNow).catch(()=>{});
-  if(!job.artworkId&&!artworkIdNow){
-   // No artwork ID or folders until the Etsy draft is created: keep the choice
-   // and add these JPGs as soon as the draft's artwork is created.
-   pendingApply={batchId,templateIds:selected.slice(0,ETSY_MOCKUP_SLOTS).map(t=>t.id)};
-   lastAppliedBatchId=batchId;appliedCount=pendingApply.templateIds.length;
-   ready=true;requested=true;
-   panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
-   message(appliedCount+' mockups chosen. They are added to the Etsy draft when you create it.');
-   return;
-  }
-  const chosen=selected.slice(0,ETSY_MOCKUP_SLOTS),artworkId=$('artwork_id').value.trim();
-  if(job.artworkId&&job.artworkId===artworkId){
-    // Server-to-server R2 sync avoids fetching 17 large JPGs back into the browser.
-    lastAppliedBatchId=batchId;appliedCount=chosen.length;
-    ready=true;requested=true;
-    panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
-    message('Syncing '+chosen.length+' verified JPGs directly from Cloudflare R2…');
-    void syncGeneratedJpgs(batchId,chosen.map(t=>t.id)).catch(failure);
-    return;
-  }
-  const dt=new DataTransfer();
-  for(const t of chosen){
-   const response=await fetch('/api/mockups/jobs/'+batchId+'/download/'+t.id,{cache:'no-store'});
-   if(!response.ok)throw Error('Could not retrieve '+t.outputName+' (HTTP '+response.status+')');
-   dt.items.add(new File([await response.blob()],t.outputName,{type:'image/jpeg'}));
-  }
-  if(!job||job.id!==batchId||selectionVersion!==version)return;
-  $('mockup_files').files=dt.files;
-  lastAppliedBatchId=batchId;appliedCount=chosen.length;
-  ready=true;requested=true;
-  panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
-  $('upload-status').textContent=chosen.length+' selected PC-generated mockups ready for the Etsy draft.'+
-    (selected.length>ETSY_MOCKUP_SLOTS?' Etsy can fit only the first '+ETSY_MOCKUP_SLOTS+' selected mockups alongside the master and 3 preset photos.':'');
-  message('Selected mockups ready ('+chosen.length+' JPGs).');
- }finally{attaching=false;renderPreviews()}
+  const data=await saveOrderToServer(artworkId,{batchId,templateIds,order});
+  closeOrganizer();
+  message(data.sync?.pendingSetup||data.sync?.pendingDraft||data.order?.pending
+   ?'Order saved. The photos are added and arranged as soon as the Etsy draft is ready.'
+   :data.order?.applied&&data.order.matches===false
+    ?'Photos saved to Etsy, but Etsy did not confirm the full order. Open the listing to check.'
+    :'Etsy photos saved in this order.');
+ }finally{attaching=false;$('mg-org-save').disabled=false}
 }
 async function loadTemplates(){
  templates=(await api('templates')).templates;
@@ -535,10 +611,11 @@ async function linkBatchToArtwork(batchId,artworkId){
   job=(await api('jobs/'+batchId+'/link-artwork','POST',{artworkId})).job;
   await showJob(batchId,{quiet:true});
  }
- // Mockups chosen before the draft existed are added now.
+ // Mockups chosen (and arranged) before the draft existed are added now.
  if(pendingApply?.batchId===batchId){
-  const {templateIds}=pendingApply;pendingApply=null;
-  await syncGeneratedJpgs(batchId,templateIds);
+  const pending=pendingApply;pendingApply=null;
+  if(pending.order)await saveOrderToServer(artworkId,pending);
+  else await syncGeneratedJpgs(batchId,pending.templateIds);
  }
 }
 function createJob(options){
@@ -698,6 +775,8 @@ $('mg-deselect-all').addEventListener('click',()=>{
  if(!job)return;selectionByJob.set(job.id,{chosen:new Set()});selectionChanged();
 });
 $('mg-apply-selected').addEventListener('click',()=>act(useResults));
+$('mg-org-back').addEventListener('click',()=>{closeOrganizer();message('Back to selection. Change the ticked mockups, then apply again.')});
+$('mg-org-save').addEventListener('click',()=>act(saveOrganizer));
 for(const [id,method] of [
  ['mg-generate',()=>createJob()],['mg-refresh-jobs',loadJobs],['mg-pause',pause],
  ['mg-retry',retry],['mg-regenerate',regenerate],['mg-save-map',saveMapping]

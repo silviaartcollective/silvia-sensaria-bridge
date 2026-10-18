@@ -719,6 +719,22 @@ export async function uploadListingImage({
 }
 
 
+// Moves a photo already on the listing to `rank` (Etsy shifts the others).
+export async function setListingImageRank({
+  shopId, listingId, listingImageId, rank, keystring, sharedSecret, accessToken
+}) {
+  const form = new FormData();
+  form.append('listing_image_id', String(listingImageId));
+  form.append('rank', String(rank));
+  form.append('overwrite', 'false');
+  const response = await fetch(
+    `${ETSY_API_BASE}/application/shops/${encodeURIComponent(shopId)}/listings/${encodeURIComponent(listingId)}/images`,
+    { method: 'POST', headers: apiHeaders({ keystring, sharedSecret, accessToken }), body: form }
+  );
+  if (!response.ok) throw new Error(`Etsy photo reorder failed (${response.status}): ${await response.text()}`);
+  return response.json();
+}
+
 export async function uploadListingVideo({
   shopId,
   listingId,

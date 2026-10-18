@@ -77,6 +77,27 @@ return `
 .mg-preview-item span{display:block;width:100%;font-size:12px;line-height:1.35;font-weight:600;overflow-wrap:anywhere}
 .mg-preview-item small{display:block;font-size:10px;font-weight:400;color:#74776f;margin-top:3px}
 .mg-preview #mg-selection-status{font-size:12px}
+.mg-preview .mg-organizer-only{display:none}
+.mg-preview.organizing .mg-select-only{display:none}
+.mg-preview.organizing .mg-organizer-only{display:block}
+.mg-preview.organizing .mg-org-list{display:grid}
+.mg-preview.organizing .mg-org-actions{display:flex}
+.mg-org-intro{font-size:12px;color:#5f645c;line-height:1.5}
+.mg-org-list{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-content:start;overflow-y:auto;max-height:74dvh;padding:3px 7px 7px 3px;scrollbar-gutter:stable}
+.mg-org-item{position:relative;display:flex;flex-direction:column;gap:6px;border:2px solid #e4e0d7;border-radius:11px;padding:6px;background:#fff;cursor:grab;min-width:0}
+.mg-org-item.dragging{opacity:.45}
+.mg-org-item.drop-target{border-color:#546f59;box-shadow:0 0 0 2px #546f59}
+.mg-org-item img,.mg-org-blank{display:block;width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;background:#f0efeb}
+.mg-org-blank{display:flex;align-items:center;justify-content:center;font-size:11px;color:#74776f;text-align:center;padding:6px}
+.mg-org-rank{position:absolute;top:11px;left:11px;background:#fff;border-radius:999px;padding:2px 9px;font-size:11px;box-shadow:0 1px 5px #0003}
+.mg-org-rank.featured{background:#2f3a31;color:#fff}
+.mg-org-item span{font-size:11px;line-height:1.3;font-weight:600;overflow-wrap:anywhere}
+.mg-org-move{display:flex;gap:5px}
+.mg-org-move button{flex:1;padding:4px 0;font-size:13px;border:1px solid #d9d5cc;border-radius:7px;background:#faf8f4;cursor:pointer}
+.mg-org-move button:disabled{opacity:.35;cursor:default}
+.mg-org-slot{display:flex;align-items:center;justify-content:center;text-align:center;aspect-ratio:1/1;border:2px dashed #d9d5cc;border-radius:11px;font-size:12px;color:#74776f;padding:8px}
+.mg-org-actions{gap:8px}
+.mg-org-actions .btn{flex:1;font-size:13px;padding:12px}
 .mg-preview #mg-apply-selected{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0}
 @media(max-width:760px){.mg-preview-list{--preview-row-height:clamp(220px,34dvh,320px);gap:7px;max-height:620px;min-height:260px}.mg-preview-item{padding:5px}.mg-preview-item span{font-size:11px}.mg-preview-item input{width:19px;height:19px;top:7px;right:7px}}
 #mockup-generator-panel .mg-actions{display:flex;flex-wrap:wrap;gap:10px}
@@ -100,17 +121,24 @@ return `
 // Render generated results in Product Creator's independent right-side preview pane.
 export function renderMockupPreviewPanel(){
 return `
- <aside class="mg-preview" aria-label="Generated mockup previews">
-  <div class="mg-preview-head"><strong>Generated mockups</strong><span id="mg-preview-count" class="hint">0 ready</span></div>
-  <div class="mg-preview-actions">
+ <aside class="mg-preview" id="mg-preview-panel" aria-label="Generated mockup previews">
+  <div class="mg-preview-head"><strong class="mg-select-only">Generated mockups</strong><strong class="mg-organizer-only">Arrange Etsy photos</strong><span id="mg-preview-count" class="hint mg-select-only">0 ready</span></div>
+  <div class="mg-organizer-only mg-org-intro">Drag photos (or use the arrows) into the order they should appear on Etsy.</div>
+  <div id="mg-org-list" class="mg-org-list mg-organizer-only" aria-live="polite"></div>
+  <div id="mg-org-status" class="uploadmeta mg-organizer-only"></div>
+  <div class="mg-org-actions mg-organizer-only">
+   <button class="btn secondary" type="button" id="mg-org-back">&larr; Back to selection</button>
+   <button class="btn" type="button" id="mg-org-save">Save order</button>
+  </div>
+  <div class="mg-preview-actions mg-select-only">
    <button class="btn secondary" type="button" id="mg-select-all">Select first 16</button>
    <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
   </div>
-  <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
+  <div id="mg-preview-list" class="mg-preview-list mg-select-only" aria-live="polite">
    <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
   </div>
-  <div id="mg-selection-status" class="uploadmeta">A starter draft contains 1 master photo and 3 preset photos, leaving 16 slots for generated JPGs (20 Etsy photos total). Older batches remain in troubleshooting.</div>
-  <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
+  <div id="mg-selection-status" class="uploadmeta mg-select-only">A starter draft contains 1 master photo and 3 preset photos, leaving 16 slots for generated JPGs (20 Etsy photos total). Older batches remain in troubleshooting.</div>
+  <button class="btn mg-select-only" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside>
 `;
 }

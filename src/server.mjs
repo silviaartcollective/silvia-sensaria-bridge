@@ -125,6 +125,7 @@ import {
   sortCustomMockupsByReference,
   mapWithConcurrency
 } from './mockup-sorter.mjs';
+import {ETSY_PHOTO_LIMIT,defaultPlannedOrder,mergeOrder,desiredImageOrder,rankUpdates} from './etsy-photo-organizer.mjs';
 import {
   verifyAdminPassword,
   createAdminSessionCookie,
@@ -155,6 +156,7 @@ import {
   getListingInventory,
   updateListingInventory,
   uploadListingImage,
+  setListingImageRank,
   uploadListingVideo,
   updateListing,
   createDraftListing,
@@ -2126,6 +2128,109 @@ async function reconcileCompletedMockupsForArtwork(artworkId){
     try{await syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds})}
     catch(error){console.error('Selected Etsy PSD catch-up failed '+artworkId+' '+jobId+':',error)}
   }
+  // The photo order chosen in the organizer before the draft existed.
+  try{await applyEtsyPhotoOrder(artworkId)}
+  catch(error){console.error('Etsy photo order could not be applied for '+artworkId+':',error)}
+}
+
+// ---------------------------------------------------------- photo organizer
+const PRESET_LABELS={'choose-option':'Preset: choose your option','choose-frame':'Preset: choose your frame',promotion:'Preset: promotion'};
+async function organizerJob(jobId){
+  if(!jobId)return null;
+  try{return await getMockupJob(String(jobId))}catch{return null}
+}
+const organizerKeyForGenerated=(manifest,job)=>templateId=>{
+  const output=job?.templates?.find(t=>t.id===templateId)?.outputKey;
+  return output?(manifest?.mockups||[]).find(m=>m.generatedFromKey===output)?.key||'':'';
+};
+// Photos the organizer shows, in the order they will appear on Etsy.
+async function etsyPhotoOrganizer({artworkId='',jobId='',templateIds=[]}){
+  const job=await organizerJob(jobId);
+  const chosen=new Set(templateIds.map(String));
+  const generated=(job?.templates||[]).filter(t=>t.status==='completed'&&chosen.has(t.id)).map(t=>({
+    id:'generated:'+t.id,kind:'mockup',label:t.outputName||t.name,
+    thumb:'/api/mockups/jobs/'+job.id+'/thumbnail/'+t.id+'?v='+encodeURIComponent(t.finishedAt||'1')}));
+  const manifest=artworkId?await loadArtworkManifest(artworkId).catch(()=>null):null;
+  const saved=manifest?.etsyPhotoOrder?.tiles||[];
+  const presets=(await presetMediaStatus()).items;
+  const video=presets.some(p=>p.role==='video'&&p.exists);
+  const thumbFor=key=>'/api/etsy-photo-organizer/thumb?key='+encodeURIComponent(key);
+  if(manifest?.etsyDraftListingId){
+    const session=await getEtsySession();
+    const live=(await getEtsyListingImages({listingId:Number(manifest.etsyDraftListingId),
+      keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken}))
+      .slice().sort((a,b)=>Number(a.rank)-Number(b.rank));
+    const receiptById=new Map((manifest.etsyMedia?.images||[]).map(r=>[String(r.listingImageId),r]));
+    const presetByKey=new Map(presets.map(p=>[p.key,p]));
+    const keyForGenerated=organizerKeyForGenerated(manifest,job);
+    const onEtsy=new Set();
+    const tiles=live.map(image=>{
+      const receipt=receiptById.get(String(image.listing_image_id));
+      if(receipt?.key)onEtsy.add(receipt.key);
+      const preset=receipt?presetByKey.get(receipt.key):null;
+      return {id:receipt?.key?'key:'+receipt.key:'etsy:'+image.listing_image_id,
+        kind:receipt?.key===manifest.master?.key?'master':preset?'preset':'photo',
+        label:receipt?.key===manifest.master?.key?'Master artwork':preset?PRESET_LABELS[preset.role]||'Preset photo':
+          receipt?.filename||'Photo on Etsy',
+        thumb:image.url_570xN||image.url_fullxfull||null,onEtsy:true};
+    });
+    // Selected mockups not on Etsy yet join at the end until placed.
+    for(const tile of generated)if(!onEtsy.has(keyForGenerated(tile.id.slice(10))))tiles.push(tile);
+    // An order saved before the draft names the master and new mockups by their
+    // planned ids; on Etsy they are known by their R2 keys.
+    const savedLive=saved.map(id=>id==='master'&&manifest.master?.key?'key:'+manifest.master.key:
+      id.startsWith('generated:')&&keyForGenerated(id.slice(10))?'key:'+keyForGenerated(id.slice(10)):id);
+    return {mode:'live',tiles,order:mergeOrder(savedLive,tiles.map(t=>t.id)),limit:ETSY_PHOTO_LIMIT,video};
+  }
+  // No draft yet: the photos a new draft gets, plus the chosen mockups.
+  const manual=(manifest?.mockups||[]).filter(m=>!m.generatedFromKey&&String(m.contentType||'').startsWith('image/'));
+  const presetImages=presets.filter(p=>p.exists&&p.role!=='video');
+  const masterKey=manifest?.master?.key||'';
+  const tiles=[
+    ...(manual.length?[]:[{id:masterKey?'key:'+masterKey:'master',kind:'master',label:'Master artwork',
+      thumb:masterKey?thumbFor(masterKey):null}]),
+    ...manual.map(m=>({id:'key:'+m.key,kind:'mockup',label:m.originalFilename||'Mockup',thumb:thumbFor(m.key)})),
+    ...presetImages.map(p=>({id:'key:'+p.key,kind:'preset',label:PRESET_LABELS[p.role]||'Preset photo',thumb:thumbFor(p.key)})),
+    ...generated
+  ];
+  const planned=defaultPlannedOrder({masterKey:manual.length?'':masterKey||'master',presets:presetImages,
+    generated:[...manual.map(m=>'key:'+m.key),...generated.map(t=>t.id)]})
+    .map(id=>id==='key:master'?'master':id);
+  return {mode:'planned',tiles,order:mergeOrder(saved.length?saved:planned,tiles.map(t=>t.id)),limit:ETSY_PHOTO_LIMIT,video};
+}
+// Re-ranks the listing's photos on Etsy to the saved organizer order.
+async function applyEtsyPhotoOrder(artworkId){
+  const manifest=await loadArtworkManifest(artworkId);
+  const order=manifest?.etsyPhotoOrder?.tiles;
+  if(!Array.isArray(order)||!order.length||!manifest.etsyDraftListingId)return {applied:false};
+  const session=await getEtsySession();
+  const listingId=Number(manifest.etsyDraftListingId);
+  const read=async()=>(await getEtsyListingImages({listingId,keystring:session.keystring,
+    sharedSecret:session.sharedSecret,accessToken:session.accessToken}))
+    .slice().sort((a,b)=>Number(a.rank)-Number(b.rank));
+  const live=await read();
+  const job=await organizerJob(manifest.etsyPhotoOrder.jobId);
+  const tiles=order.map(id=>id==='master'&&manifest.master?.key?'key:'+manifest.master.key:id);
+  const desired=desiredImageOrder({order:tiles,liveImages:live,receipts:manifest.etsyMedia?.images||[],
+    keyForGenerated:organizerKeyForGenerated(manifest,job)});
+  const updates=rankUpdates(live.map(i=>String(i.listing_image_id)),desired);
+  for(const update of updates){
+    await withEtsyListingRetry(()=>setListingImageRank({shopId:session.shop.shop_id,listingId,
+      listingImageId:update.listingImageId,rank:update.rank,keystring:session.keystring,
+      sharedSecret:session.sharedSecret,accessToken:session.accessToken}),{attempts:6,baseDelayMs:220});
+  }
+  const after=(await read()).map(i=>String(i.listing_image_id));
+  return {applied:true,updated:updates.length,matches:after.join(',')===desired.join(',')};
+}
+const organizerThumbCache=new Map();
+async function organizerThumb(key){
+  if(organizerThumbCache.has(key))return organizerThumbCache.get(key);
+  const pending=getArtworkObject(key).then(object=>sharp(object.body,{failOn:'none',limitInputPixels:false})
+    .rotate().resize(480,480,{fit:'inside',withoutEnlargement:true}).jpeg({quality:80}).toBuffer());
+  organizerThumbCache.set(key,pending);
+  pending.catch(()=>organizerThumbCache.delete(key));
+  while(organizerThumbCache.size>40)organizerThumbCache.delete(organizerThumbCache.keys().next().value);
+  return pending;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -4276,6 +4381,43 @@ const server = http.createServer(async (req, res) => {
     }
     return sendJson(res,405,{ok:false,error:'Unsupported mockup action'});
    }catch(error){return sendJson(res,409,{ok:false,error:String(error.message||error)})}
+  }
+
+  // Etsy photo organizer: the photos in listing order, and saving a new order.
+  if(url.pathname==='/api/etsy-photo-organizer'&&(req.method==='GET'||req.method==='POST')){
+    if(!requireAdminApi(req,res))return;
+    try{
+      if(req.method==='GET'){
+        const artworkId=String(url.searchParams.get('artworkId')||'').toUpperCase();
+        return sendJson(res,200,{ok:true,...await etsyPhotoOrganizer({
+          artworkId:/^SAC\d+$/.test(artworkId)?artworkId:'',jobId:String(url.searchParams.get('jobId')||''),
+          templateIds:String(url.searchParams.get('templateIds')||'').split(',').filter(Boolean).slice(0,40)})});
+      }
+      const body=await readJsonBody(req);
+      const artworkId=String(body.artworkId||'').toUpperCase();
+      if(!/^SAC\d+$/.test(artworkId))throw Error('Create the Etsy draft first; the order is kept until then.');
+      const order=(Array.isArray(body.order)?body.order:[]).map(String).filter(id=>id.length<600).slice(0,ETSY_PHOTO_LIMIT);
+      const templateIds=(Array.isArray(body.templateIds)?body.templateIds:[]).map(String).slice(0,40);
+      await updateArtworkManifest(artworkId,current=>{
+        current.etsyPhotoOrder={tiles:order,jobId:String(body.jobId||''),savedAt:new Date().toISOString()};
+      });
+      const sync=templateIds.length?await syncGeneratedMockupsForArtwork({artworkId,jobId:String(body.jobId||''),templateIds}):{ok:true};
+      const manifest=await loadArtworkManifest(artworkId);
+      const orderResult=manifest.etsyDraftListingId&&!sync.pendingSetup&&!sync.pendingDraft
+        ?await applyEtsyPhotoOrder(artworkId):{applied:false,pending:true};
+      return sendJson(res,200,{ok:true,sync,order:orderResult});
+    }catch(error){return sendJson(res,409,{ok:false,error:String(error?.message||error)})}
+  }
+  if(req.method==='GET'&&url.pathname==='/api/etsy-photo-organizer/thumb'){
+    if(!requireAdminApi(req,res))return;
+    try{
+      const key=String(url.searchParams.get('key')||'');
+      if(!/^(presets\/listing-media\/|artworks\/SAC\d+\/)[^?#]+$/.test(key)||key.includes('..'))throw Error('Not an organizer photo.');
+      const body=await organizerThumb(key);
+      res.writeHead(200,{'content-type':'image/jpeg','content-length':body.length,
+        'cache-control':'private, max-age=86400','x-content-type-options':'nosniff'});
+      return res.end(body);
+    }catch(error){return sendJson(res,404,{ok:false,error:String(error?.message||error)})}
   }
 
   // Master uploaded on file pick, before an artwork ID or folders exist.
