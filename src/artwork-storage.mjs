@@ -11,7 +11,10 @@ import {
   signedArtworkUploadUrl,
   nextArtworkId,
   deleteArtworkObject,
-  downloadArtworkObjectToFile
+  downloadArtworkObjectToFile,
+  artworkObjectInfo,
+  copyArtworkObject,
+  listArtworkObjects
 } from './r2.mjs';
 import {
   manifestObjectKey,
@@ -100,6 +103,34 @@ function mockupSortOrder(filename, fallbackIndex) {
 
 // Serializes ID allocation + manifest creation across simultaneous tabs/listings.
  // All consumers (converter and product creator) share this lock on one server instance.
+// The master is uploaded as soon as it is picked, before any artwork ID or
+// folder exists: it waits under staging/ and is moved into artworks/<ID>/ when
+// the Etsy draft is created. Staged masters never used are removed after 3 days.
+const STAGING_PREFIX = 'staging/';
+const STAGED_MASTER_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+const stagedMasterKey = (stageId, ext) => {
+  if (!/^[a-f0-9-]{36}$/.test(String(stageId || ''))) throw new Error('Invalid staged master ID');
+  return STAGING_PREFIX + stageId + '/master.' + String(ext || 'jpg').replace(/[^a-z0-9]/g, '');
+};
+export async function stageMasterUpload({ filename, contentType, size } = {}) {
+  if (!filename) throw new Error('A master artwork file is required');
+  if (!(Number(size) > 0)) throw new Error('The master artwork size is required');
+  const stageId = randomUUID();
+  const key = stagedMasterKey(stageId, extensionFromFilename(filename));
+  const type = normalizeContentType(contentType, filename);
+  return { stageId, key, contentType: type, uploadUrl: await signedArtworkUploadUrl(key, type) };
+}
+export async function pruneStagedMasters(now = Date.now()) {
+  let removed = 0;
+  for (const object of await listArtworkObjects(STAGING_PREFIX)) {
+    if (object.lastModified && now - object.lastModified.getTime() > STAGED_MASTER_MAX_AGE_MS) {
+      await deleteArtworkObject(object.key).catch(() => {});
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
 let artworkReservationTail=Promise.resolve();
 export async function reserveArtworkUpload(input){
  const task=artworkReservationTail.then(()=>reserveArtworkUploadUnlocked(input));
@@ -110,7 +141,8 @@ async function reserveArtworkUploadUnlocked({
   title = '',
   orientation = 'portrait',
   master,
-  mockups = []
+  mockups = [],
+  stagedMaster = null
 }) {
   if (!master?.filename) throw new Error('A master artwork file is required');
   if (!Array.isArray(mockups)) throw new Error('Mockups must be an array');
@@ -162,7 +194,20 @@ async function reserveArtworkUploadUnlocked({
 
   await saveArtworkManifest(manifest);
 
-  const masterUploadUrl = await signedArtworkUploadUrl(masterKey, masterType);
+  // A master already uploaded to staging is copied in place (server side) instead
+  // of being uploaded again; any problem falls back to a normal upload.
+  let masterAlreadyUploaded = false;
+  if (stagedMaster?.stageId) {
+    try {
+      const staged = stagedMasterKey(stagedMaster.stageId, masterExt);
+      const info = await artworkObjectInfo(staged);
+      if (master.size && info.size !== Number(master.size)) throw new Error('Staged master size does not match');
+      await copyArtworkObject(staged, masterKey);
+      await deleteArtworkObject(staged).catch(() => {});
+      masterAlreadyUploaded = true;
+    } catch {}
+  }
+  const masterUploadUrl = masterAlreadyUploaded ? null : await signedArtworkUploadUrl(masterKey, masterType);
   const mockupUploads = await Promise.all(
     mockupEntries.map(async (item) => ({
       ...item,
@@ -177,7 +222,8 @@ async function reserveArtworkUploadUnlocked({
       master: {
         key: masterKey,
         contentType: masterType,
-        uploadUrl: masterUploadUrl
+        uploadUrl: masterUploadUrl,
+        alreadyUploaded: masterAlreadyUploaded
       },
       mockups: mockupUploads
     }

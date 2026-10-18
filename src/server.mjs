@@ -85,6 +85,8 @@ import {
 } from './r2.mjs';
 import {
   reserveArtworkUpload,
+  stageMasterUpload,
+  pruneStagedMasters,
   completeArtworkUpload,
   cancelArtworkUpload,
   generateArtworkFulfillmentRatios,
@@ -4276,6 +4278,16 @@ const server = http.createServer(async (req, res) => {
    }catch(error){return sendJson(res,409,{ok:false,error:String(error.message||error)})}
   }
 
+  // Master uploaded on file pick, before an artwork ID or folders exist.
+  if (req.method === 'POST' && url.pathname === '/api/artworks/stage') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      return sendJson(res, 201, { ok: true, ...(await stageMasterUpload(await readJsonBody(req))) });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/artworks/reserve') {
     if (!requireAdminApi(req, res)) return;
     try {
@@ -5014,6 +5026,10 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 }
+
+// Staged masters whose Etsy draft was never created are removed after 3 days.
+setTimeout(()=>void pruneStagedMasters().catch(()=>{}),60_000).unref();
+setInterval(()=>void pruneStagedMasters().catch(()=>{}),12*60*60*1000).unref();
 
 // Keep Render's edge proxy from reusing a connection Node has already closed.
 server.keepAliveTimeout = 120_000;

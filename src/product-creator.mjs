@@ -623,6 +623,46 @@ async function queueCropJob(artworkId){
   return d;
 }
 
+// The master goes to R2 staging as soon as it is picked. No artwork ID or
+// folder is created until the Etsy draft is created; then the server moves the
+// staged file into artworks/<ID>/ without uploading it again.
+let stagedMaster=null;
+const masterSignature=file=>file?file.name+'|'+file.size+'|'+file.lastModified:'';
+window.stageMasterArtwork=()=>{
+ const master=masterFileInput.files?.[0];
+ if(!master)return Promise.reject(Error('Choose the master artwork first.'));
+ if(document.getElementById('artwork_id').value.trim())return Promise.resolve('');
+ const signature=masterSignature(master);
+ if(stagedMaster?.signature===signature)return stagedMaster.promise;
+ const record={signature,promise:null};
+ record.promise=(async()=>{
+  uploadStatus.className='status';
+  uploadStatus.textContent='Uploading the master artwork to R2…';
+  const response=await fetch('/api/artworks/stage',{method:'POST',headers:{'content-type':'application/json'},
+   body:JSON.stringify({filename:master.name,contentType:master.type,size:master.size})});
+  const data=await readJsonResponse(response,'Master upload');
+  if(!response.ok)throw new Error(data.error||'Could not start the master upload');
+  await putFile(data.uploadUrl,master,data.contentType);
+  if(stagedMaster===record){
+   uploadStatus.className='status ok';
+   uploadStatus.textContent='Master artwork uploaded to R2. Its artwork ID and folders are created when you create the Etsy draft.';
+  }
+  return data.stageId;
+ })();
+ record.promise.catch(error=>{
+  if(stagedMaster!==record)return;
+  stagedMaster=null;
+  uploadStatus.className='status warn';
+  uploadStatus.textContent=String(error?.message||error)+' The master will upload when you create the Etsy draft.';
+ });
+ stagedMaster=record;
+ return record.promise;
+};
+masterFileInput.addEventListener('change',()=>{
+ stagedMaster=null;
+ if(masterFileInput.files?.[0])void window.stageMasterArtwork().catch(()=>{});
+});
+
 let sharedArtworkUpload=null;
 // One R2 upload is shared by the draft button and automatic PSD generation.
 window.startProductArtworkUpload=()=>{
@@ -661,6 +701,14 @@ async function uploadArtworkToR2(){
   const media=Array.from(mockupFilesInput.files||[]);
   if(!master)throw new Error('Choose a master artwork file first.');
 
+  // Use the master already uploaded to staging, if it is this same file.
+  let stageId='';
+  if(stagedMaster?.signature===masterSignature(master)){
+    uploadStatus.className='status';
+    uploadStatus.textContent='Finishing the master artwork upload…';
+    try{stageId=await stagedMaster.promise||''}catch{}
+  }
+
   uploadProgress.style.width='3%';
   uploadStatus.className='status';
   uploadStatus.textContent='Reserving the next artwork ID…';
@@ -675,7 +723,8 @@ async function uploadArtworkToR2(){
         title:document.getElementById('title').value.trim(),
         orientation:document.getElementById('orientation').value,
         master:{filename:master.name,contentType:master.type,size:master.size},
-        mockups:media.map(f=>({filename:f.name,contentType:f.type,size:f.size}))
+        mockups:media.map(f=>({filename:f.name,contentType:f.type,size:f.size})),
+        stagedMaster:stageId?{stageId}:null
         })
       });
     }catch(error){
@@ -691,7 +740,9 @@ async function uploadArtworkToR2(){
 
     const uploads=data.uploads.mockups||[];
     const uploadTasks=[
-      {file:master,uploadUrl:data.uploads.master.uploadUrl,contentType:data.uploads.master.contentType},
+      // A staged master was already moved into place on the server.
+      ...(data.uploads.master.alreadyUploaded?[]:[
+        {file:master,uploadUrl:data.uploads.master.uploadUrl,contentType:data.uploads.master.contentType}]),
       ...uploads.map((item)=>{
         const file=media[item.originalIndex];
         if(!file)throw new Error('Could not match media file '+String(item.originalFilename||item.index));
