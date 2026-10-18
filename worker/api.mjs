@@ -1,5 +1,5 @@
 import { WORKER_ID } from './config.mjs';
-export const WORKER_VERSION = '4.5.7';
+export const WORKER_VERSION = '4.5.8';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -130,9 +130,9 @@ export function apiFor(app) {
       return request(app,'/api/mockups/worker/'+encodeURIComponent(jobId)+
        '/templates/'+encodeURIComponent(templateId)+'/progress',{method:'POST',body:{owner,stage}});
     },
-    mockupComplete(jobId,owner,templateId,outputKey,mapping,previewUploaded=false) {
+    mockupComplete(jobId,owner,templateId,outputKey,mapping,previewUploaded=false,etsyUploaded=false) {
       return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/complete',{
-       method:'POST',body:{owner,templateId,outputKey,mapping,previewUploaded,visibilityVerified:true,
+       method:'POST',body:{owner,templateId,outputKey,mapping,previewUploaded,etsyUploaded,visibilityVerified:true,
          mappingVerified:true,artworkReplaced:true}
       });
     },

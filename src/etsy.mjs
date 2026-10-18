@@ -735,6 +735,21 @@ export async function setListingImageRank({
   return response.json();
 }
 
+// Attaches a video already uploaded to this shop (by its video_id) to a listing.
+export async function attachListingVideo({
+  shopId, listingId, videoId, name = 'Listing video', keystring, sharedSecret, accessToken
+}) {
+  const form = new FormData();
+  form.append('video_id', String(videoId));
+  form.append('name', String(name).slice(0, 200));
+  const response = await fetch(
+    `${ETSY_API_BASE}/application/shops/${encodeURIComponent(shopId)}/listings/${encodeURIComponent(listingId)}/videos`,
+    { method: 'POST', headers: apiHeaders({ keystring, sharedSecret, accessToken }), body: form }
+  );
+  if (!response.ok) throw new Error(`Etsy video attach failed (${response.status}): ${await response.text()}`);
+  return response.json();
+}
+
 export async function uploadListingVideo({
   shopId,
   listingId,

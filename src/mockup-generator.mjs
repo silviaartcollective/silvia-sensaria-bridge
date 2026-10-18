@@ -257,6 +257,8 @@ export function jpegDimensions(buffer){
  return null;
 }
 export const mockupPreviewKey=outputKey=>String(outputKey).replace(/\.jpg$/,'.preview.jpg');
+// 2400 px copy the server uploads to Etsy as-is.
+export const mockupEtsyKey=outputKey=>String(outputKey).replace(/\.jpg$/,'.etsy.jpg');
 // Claims up to `limit` queued PSDs of a batch in one write: the PC worker
 // renders several at once.
 export async function claimMockupWork(id,owner,limit=1){
@@ -296,6 +298,7 @@ export async function completeMockupItem(id,owner,templateId,details){
  if(!item||item.status!=='processing')throw Error('This PSD is not claimed for processing.');
  item.status='completed';item.error=null;item.progress='Ready';item.outputKey=details.outputKey;item.dimensions=details.dimensions;
  item.previewKey=details.previewKey||null;
+ item.etsyKey=details.etsyKey||null;
  item.usedMapping=details.mapping||null;item.finishedAt=iso();
  j.history.push({at:iso(),event:'output_verified',name:item.name});
  await putMockupJob(j);return j;
@@ -361,7 +364,8 @@ export async function deleteMockupOutput(jobId,templateId){
  if(!t)throw Error('Mockup output not found in this job.');
  if(t.outputKey)await deleteArtworkObject(t.outputKey);
  if(t.previewKey)await deleteArtworkObject(t.previewKey).catch(()=>{});
- t.outputKey=null;t.previewKey=null;t.dimensions=null;t.status='deleted';t.error=null;
+ if(t.etsyKey)await deleteArtworkObject(t.etsyKey).catch(()=>{});
+ t.outputKey=null;t.previewKey=null;t.etsyKey=null;t.dimensions=null;t.status='deleted';t.error=null;
  j.history.push({at:iso(),event:'output_deleted',name:t.name});
  return putMockupJob(j);
 });

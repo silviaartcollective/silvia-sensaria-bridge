@@ -94,7 +94,8 @@ test('completion reads only the JPEG header; dimensions come from its frame mark
 test('the worker claims as many PSDs as it has free threads and uploads a preview with each JPG',()=>{
  const worker=read('worker/index.mjs'),api=read('src/mockup-api.mjs');
  assert.match(worker,/claimMockup\(mockupOwner,RENDER_THREADS-running\.size,LONG_POLL_MS\)/);
- assert.match(worker,/claim\.output\.previewUploadUrl\?sharp\(outputPath\)\.resize\(900,900/);
+ assert.match(worker,/sized\(claim\.output\.previewUploadUrl,900,82,'Preview'\)/);
+ assert.match(worker,/sized\(claim\.output\.etsyUploadUrl,2400,90,'Etsy copy'\)/);
  assert.match(worker,/confirmedLayers\.get\(layerKey\)/);
  assert.match(api,/claimMockupWork\(candidate\.id,owner,limit\)/);
  assert.match(api,/d\.previewKey\?\(await getArtworkObject\(d\.previewKey\)\)\.body/);
