@@ -22,6 +22,10 @@ function extension(value){
   throw Error('Unsupported cached artwork extension.');
  return v;
 }
+// Where downloadCached keeps (or would keep) this R2 object on disk.
+export function cachedFilePath({shop,id,key,updatedAt='',size=0,ext='.jpg'}){
+ return path.join(BASE,cacheKeyFor({shop,id,key,updatedAt,size})+extension(ext));
+}
 export async function downloadCached(url,{shop,id,key,updatedAt='',size=0,ext='.jpg'},onStage=async()=>{}){
  const hash=cacheKeyFor({shop,id,key,updatedAt,size});
  const target=path.join(BASE,hash+extension(ext));

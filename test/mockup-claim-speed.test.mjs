@@ -8,7 +8,7 @@ test('worker claims read only active batches, not every batch ever created',()=>
  assert.match(api,/const jobs=await claimCandidates\(owner\);/);
  assert.match(api,/Date\.now\(\)-activeBatches\.listedAt>10\*60\*1000/);
  for(const point of ['markMockupArtworkUploaded(job.id);markBatchActive(job.id)',
-  'markMockupArtworkUploaded(id);markBatchActive(id)','ownerCheck(body));markBatchActive(id)'])
+  "markMockupArtworkUploaded(id,{local:body?.local===true});markBatchActive(id)",'ownerCheck(body));markBatchActive(id)'])
   assert.ok(api.includes(point),point);
 });
 
@@ -93,7 +93,7 @@ test('completion reads only the JPEG header; dimensions come from its frame mark
 
 test('the worker claims as many PSDs as it has free threads and uploads a preview with each JPG',()=>{
  const worker=read('worker/index.mjs'),api=read('src/mockup-api.mjs');
- assert.match(worker,/claimMockups\(RENDER_THREADS-running\.size\)/);
+ assert.match(worker,/claimMockup\(mockupOwner,RENDER_THREADS-running\.size,LONG_POLL_MS\)/);
  assert.match(worker,/claim\.output\.previewUploadUrl\?sharp\(outputPath\)\.resize\(900,900/);
  assert.match(worker,/confirmedLayers\.get\(layerKey\)/);
  assert.match(api,/claimMockupWork\(candidate\.id,owner,limit\)/);

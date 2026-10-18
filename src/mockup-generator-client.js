@@ -211,6 +211,12 @@ async function useResults(){
  if(!selected.length){markRequested();throw Error('Select at least one generated JPG.')}
  attaching=true;renderPreviews();
  try{
+  // A batch started from the selected file is linked once the master is in R2.
+  if(!job.artworkId&&window.startProductArtworkUpload){
+   message('Finishing the master artwork upload before applying…');
+   const uploadedId=await window.startProductArtworkUpload().catch(()=>null);
+   if(uploadedId)await linkBatchToArtwork(batchId,uploadedId).catch(()=>{});
+  }
   const chosen=selected.slice(0,ETSY_MOCKUP_SLOTS),artworkId=$('artwork_id').value.trim();
   if(job.artworkId&&job.artworkId===artworkId){
     // Server-to-server R2 sync avoids fetching 17 large JPGs back into the browser.
@@ -503,7 +509,31 @@ async function showJob(id,{quiet=false}={}){
  // Keep finished JPGs visible for review; only the Apply button attaches them.
  return job;
 }
-async function createJob({artworkId='',automatic=false}={}){
+// The shared PC worker listens on this computer for artwork from this browser.
+const LOCAL_WORKER='http://127.0.0.1:47823';
+async function handToWorker(created,file){
+ const token=created.localUpload?.token;
+ if(!token)return false;
+ const query=new URLSearchParams({job:created.job.id,key:created.job.artworkKey,
+  size:String(created.job.artworkSize),filename:created.job.filename,token});
+ try{
+  const response=await fetch(LOCAL_WORKER+'/artwork?'+query,{method:'PUT',body:file,
+   headers:{'content-type':'application/octet-stream'},signal:AbortSignal.timeout(180000)});
+  return response.ok;
+ }catch{return false} // worker not running here, or the browser blocked it: upload to R2
+}
+let jobCreation=null;
+async function linkBatchToArtwork(batchId,artworkId){
+ if(!batchId||!artworkId||(job?.id===batchId&&job.artworkId===artworkId))return;
+ job=(await api('jobs/'+batchId+'/link-artwork','POST',{artworkId})).job;
+ await showJob(batchId,{quiet:true});
+}
+function createJob(options){
+ if(jobCreation)return jobCreation;
+ jobCreation=createJobNow(options).finally(()=>{jobCreation=null});
+ return jobCreation;
+}
+async function createJobNow({artworkId='',automatic=false}={}){
  if(preparing)return;
  if(automatic&&!$('mg-auto-queue').checked)return;
  preparing=true;$('mg-generate').disabled=true;
@@ -527,11 +557,18 @@ async function createJob({artworkId='',automatic=false}={}){
    })).job;
    currentArtworkId=uploaded;
   }else{
+   // Start rendering now: the PC worker on this computer takes the file
+   // directly (a local copy), while the master still uploads to R2 for Etsy.
    const result=await api('jobs','POST',{filename:art.name,size:art.size,templateIds:ids,fitMode:'contain'});
-   message('Uploading the master artwork for this new PC batch…');
-   await upload(result.uploadUrl,art,'application/octet-stream');
-   await api('jobs/'+result.job.id+'/artwork-confirm','POST');
+   message('Handing the artwork to the PC worker on this computer…');
+   const local=await handToWorker(result,art);
+   if(!local){
+    message('Uploading the master artwork for this new PC batch…');
+    await upload(result.uploadUrl,art,'application/octet-stream');
+   }
+   await api('jobs/'+result.job.id+'/artwork-confirm','POST',{local});
    freshJob=(await api('jobs/'+result.job.id)).job;
+   if(local)message('Artwork handed to the PC worker; mockups are rendering.');
   }
   job=freshJob;activeJobId=job.id;activeMasterSignature=signature;
   await showJob(job.id);await loadJobs();await workerStatus();
@@ -602,7 +639,13 @@ $('master_file').addEventListener('change',()=>{
  // completes later, the artwork-uploaded event must not create a second job.
  const file=$('master_file').files?.[0];
  if(file&&$('mg-auto-queue').checked){
-  // Queue from the one verified artwork in R2; don't upload the master twice.
+  // Mockups start straight away from the selected file; the R2 upload for the
+  // Etsy draft and crops runs alongside and is linked to the batch when done.
+  void initialLoad.then(async()=>{
+   await orientationDetection;
+   if([...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].length)
+    await createJob({automatic:true});
+  }).catch(failure);
   void initialLoad.then(()=>window.startProductArtworkUpload()).catch(failure);
  }
 });
@@ -618,11 +661,15 @@ window.addEventListener('pod-artwork-uploaded',event=>{
  if(!file||!info.artworkId||file.name!==info.filename||file.size!==Number(info.size)||
    file.lastModified!==Number(info.lastModified))return;
  currentArtworkId=String(info.artworkId);
- if(activeJobId&&activeMasterSignature===fileSignature(file))return;
- if(!$('mg-auto-queue').checked)return;
- void initialLoad.then(async()=>{
-  if(![...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].length)return;
-  await createJob({artworkId:currentArtworkId,automatic:true});
+ // A batch already started from this file only needs linking to the artwork.
+ void (jobCreation||Promise.resolve()).then(()=>{
+  if(activeJobId&&activeMasterSignature===fileSignature(file))
+   return linkBatchToArtwork(activeJobId,currentArtworkId);
+  if(!$('mg-auto-queue').checked)return;
+  return initialLoad.then(async()=>{
+   if(![...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].length)return;
+   await createJob({artworkId:currentArtworkId,automatic:true});
+  });
  }).catch(failure);
 });
 $('mg-psds').addEventListener('change',scheduleTemplateLibraryUpload);
@@ -658,9 +705,10 @@ const batchRunning=()=>!!job&&!job.paused&&job.templates.some(t=>t.status==='que
 setInterval(()=>{
  if(preparing||document.hidden)return;
  const running=batchRunning();
+ // Finished mockups appear within about 2 s while a batch is running.
  if(running)void showJob(job.id,{quiet:true}).catch(failure);
- if(running||Date.now()-lastWorkerCheck>=30000){lastWorkerCheck=Date.now();void workerStatus();}
-},6000);
+ if((running&&Date.now()-lastWorkerCheck>=6000)||Date.now()-lastWorkerCheck>=30000){lastWorkerCheck=Date.now();void workerStatus();}
+},2000);
 document.addEventListener('visibilitychange',()=>{
  if(document.hidden||preparing)return;
  lastWorkerCheck=Date.now();void workerStatus();

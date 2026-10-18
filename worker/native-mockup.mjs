@@ -24,7 +24,7 @@ const MAX_CANVAS_PIXELS = 100_000_000;
 const OUTPUT_MAX_PIXELS = 24_000_000;
 const MAX_FILE_BYTES = 1_500 * 1024 * 1024;
 const BASE = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'pod-worker-cache', 'native-psd-v2');
-const MAX_PREPARED_TEMPLATES = Math.max(4, Number(process.env.POD_PREPARED_PSD_LIMIT) || 80);
+const MAX_PREPARED_TEMPLATES = Math.max(4, Number(process.env.POD_PREPARED_PSD_LIMIT) || 300);
 
 export class NativeMockupUnsupported extends Error {
   constructor(reason) { super(reason); this.name = 'NativeMockupUnsupported'; }
@@ -637,8 +637,10 @@ export function prepareFromPsd(psd, mapping = null) {
 // after its immutable R2 object, so name + size identify it. (Its modification
 // time is not used: the download cache touches the file on every reuse, which
 // made every render prepare the template again.)
-async function preparedLocation(psdPath, mapping) {
-  const stat = await fs.stat(psdPath);
+// `psdSize` (from the template record) lets the worker find a prepared template
+// without the PSD on disk, so prepared templates are never downloaded again.
+async function preparedLocation(psdPath, mapping, psdSize = 0) {
+  const stat = Number(psdSize) > 0 ? { size: Number(psdSize) } : await fs.stat(psdPath);
   const hash = crypto.createHash('sha256').update(JSON.stringify([
     path.basename(psdPath), stat.size, mapping?.path ?? '', PREP_VERSION
   ])).digest('hex');
@@ -653,12 +655,12 @@ async function readPrepared(location) {
   return null;
 }
 // Lets the worker run at most one (memory-heavy) first-time preparation at once.
-export async function isTemplatePrepared({ psdPath, mapping = null }) {
-  return !!(await readPrepared(await preparedLocation(psdPath, mapping)));
+export async function isTemplatePrepared({ psdPath, mapping = null, psdSize = 0 }) {
+  return !!(await readPrepared(await preparedLocation(psdPath, mapping, psdSize)));
 }
 
-export async function prepareNativePsd({ psdPath, mapping = null, onStage = async () => {} }) {
-  const location = await preparedLocation(psdPath, mapping);
+export async function prepareNativePsd({ psdPath, mapping = null, psdSize = 0, onStage = async () => {} }) {
+  const location = await preparedLocation(psdPath, mapping, psdSize);
   const { stat, folder, manifestPath } = location;
   if (stat.size > MAX_FILE_BYTES) unsupported('PSD is larger than the 1.5 GB limit.');
   const cached = await readPrepared(location);
@@ -681,7 +683,13 @@ export async function prepareNativePsd({ psdPath, mapping = null, onStage = asyn
   }
   await onStage('Checking the template against the PSD\'s saved composite');
   const prepared = prepareFromPsd(psd, mapping);
-  if (prepared.needsMapping) return prepared;
+  if (prepared.needsMapping) {
+    // Remember the answer too, so the PSD is not parsed again until a layer is chosen.
+    await fs.mkdir(folder, { recursive: true });
+    await fs.writeFile(manifestPath, JSON.stringify({ version: PREP_VERSION, psdBytes: stat.size,
+      needsMapping: true, objects: prepared.objects, reason: prepared.reason }));
+    return { ...prepared, preparedFromCache: false };
+  }
 
   await fs.rm(folder, { recursive: true, force: true });
   await fs.mkdir(folder, { recursive: true });
@@ -843,9 +851,9 @@ export async function renderPreparedMockup({ prepared, artworkPath, outputPath, 
     .jpeg(jpeg).toFile(outputPath);
 }
 
-export async function renderMockupNative({ psdPath, artworkPath, outputPath, mapping = null, fitMode = 'contain', onStage = async () => {} }) {
+export async function renderMockupNative({ psdPath, artworkPath, outputPath, mapping = null, psdSize = 0, fitMode = 'contain', onStage = async () => {} }) {
   const started = Date.now();
-  const prepared = await prepareNativePsd({ psdPath, mapping, onStage });
+  const prepared = await prepareNativePsd({ psdPath, mapping, psdSize, onStage });
   if (prepared.needsMapping) return { engine: 'native', needsMapping: true, objects: prepared.objects, usedMapping: null, reason: prepared.reason };
   await onStage(prepared.preparedFromCache ? 'Rendering mockup on PC (template already prepared)' : 'Template checked; rendering mockup on PC');
   const result = await renderPreparedMockup({ prepared, artworkPath, outputPath, fitMode });

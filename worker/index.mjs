@@ -13,7 +13,7 @@ import {
   WORKER_ID,
   validateWorkerConfig
 } from './config.mjs';
-import { apiFor } from './api.mjs';
+import { apiFor, WORKER_VERSION as WORKER_VERSION_LABEL } from './api.mjs';
 import {rotatingApps,heartbeatFor} from './worker-scheduling.mjs';
 import {
   generateProductionCrop,
@@ -21,9 +21,11 @@ import {
   validateRatioSource
 } from './crop.mjs';
 import {renderMockupOnPC} from './mockup-processor.mjs';
-import {RENDER_THREADS} from './render-pool.mjs';
+import {RENDER_THREADS,prepareInPool} from './render-pool.mjs';
+import {isTemplatePrepared} from './native-mockup.mjs';
+import {startLocalIntake} from './local-intake.mjs';
 import {patchAgPsd} from './patch-ag-psd.mjs';
-import {downloadCached} from './asset-cache.mjs';
+import {downloadCached,cachedFilePath} from './asset-cache.mjs';
 import sharp from 'sharp';
 
 const LOCK_PATH = path.join(os.tmpdir(), 'pod-crop-worker.lock');
@@ -279,9 +281,12 @@ async function processPSDJob(app,claim){
  try{
   await stage('Preparing PSD template on PC');
   const extension=path.extname(claim.template.name).toLowerCase()==='.psb'?'.psb':'.psd';
-  psdPath=(await downloadCached(claim.templateUrl,{
-   shop:app.appUrl,id:claim.template.id,key:claim.template.key,
-   size:claim.template.size,ext:extension},stage)).path;
+  const templateMeta={shop:app.appUrl,id:claim.template.id,key:claim.template.key,
+   size:claim.template.size,ext:extension};
+  psdPath=cachedFilePath(templateMeta);
+  // A prepared template renders from its prepared data: no PSD download.
+  if(!await isTemplatePrepared({psdPath,mapping:claim.template.mapping||null,psdSize:claim.template.size}))
+   psdPath=(await downloadCached(claim.templateUrl,templateMeta,stage)).path;
   measure('templateReadMs');
   await stage('Preparing master artwork on PC');
   artworkPath=(await downloadCached(claim.artworkUrl,{
@@ -292,6 +297,7 @@ async function processPSDJob(app,claim){
   tempPaths.add(outputPath);
   const render=await renderMockupOnPC({
    psdPath,artworkPath,outputPath,templateName:claim.template.name,mapping:claim.template.mapping||null,
+   psdSize:claim.template.size,
    fitMode:claim.job.fitMode||'contain',
    onStage:stage
   });
@@ -408,46 +414,78 @@ async function cropLane(){
 }
 
 // Mockup lane: claims queued PSDs until every render thread is busy.
-async function claimMockups(limit){
-  const cycle=rotatingApps(APP_CONNECTIONS,nextMockupAppIndex);
-  if(APP_CONNECTIONS.length)nextMockupAppIndex=(nextMockupAppIndex+1)%APP_CONNECTIONS.length;
-  for(const app of cycle){
-    if(stopping||(mockupUnsupported.get(app.appUrl)||0)>Date.now())continue;
-    try{
-      const claimed=await clientFor(app).claimMockup(mockupOwner,limit);
-      if(!claimed.item)continue;
-      // Servers before multi-claim return one PSD at the top level.
-      const claims=Array.isArray(claimed.items)&&claimed.items.length
-        ?claimed.items.map(entry=>({...entry,job:claimed.job})):[claimed];
-      return {app,claims};
-    }catch(error){
-      // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
-      if(/404|not found|non-json/i.test(error.message)){
-        mockupUnsupported.set(app.appUrl,Date.now()+60000);
-        console.log('['+app.name+'] PSD API unavailable; will retry in one minute. Crop service remains enabled.');
-      }else console.error('['+app.name+'] PSD polling failed:',error.message);
-    }
-  }
-  return null;
-}
+// Mockup lane: one loop per shop. Each asks for as many PSDs as there are free
+// render threads; servers that support it hold the request until a batch is
+// queued, so new work starts at once without polling.
+const LONG_POLL_MS=25000;
 async function mockupLane(){
   const running=new Set();
-  while(!stopping){
-    if(running.size>=RENDER_THREADS){await Promise.race(running);continue;}
-    const next=await claimMockups(RENDER_THREADS-running.size);
-    if(next){
-      for(const claimed of next.claims){
-        const app=next.app,batch=app.appUrl+'|'+claimed.job.id;
-        inFlightByBatch.set(batch,(inFlightByBatch.get(batch)||0)+1);
-        const task=track({app,job:{id:claimed.job.id},type:'mockup'},processPSDJob(app,claimed)).catch(()=>{});
-        running.add(task);void task.finally(()=>running.delete(task));
-      }
-      continue; // claim the next queued PSD straight away
+  const start=(app,claims)=>{
+    for(const claimed of claims){
+      const batch=app.appUrl+'|'+claimed.job.id;
+      inFlightByBatch.set(batch,(inFlightByBatch.get(batch)||0)+1);
+      const task=track({app,job:{id:claimed.job.id},type:'mockup'},processPSDJob(app,claimed)).catch(()=>{});
+      running.add(task);void task.finally(()=>running.delete(task));
     }
-    // Nothing queued: wait for a render to finish or the idle poll interval.
-    await Promise.race([sleep(idlePollMs(MOCKUP_IDLE_POLL_MS)),...running]);
-  }
+  };
+  const shopLoop=async app=>{
+    while(!stopping){
+      if((mockupUnsupported.get(app.appUrl)||0)>Date.now()){await sleep(5000);continue}
+      if(running.size>=RENDER_THREADS){await Promise.race(running);continue}
+      let claimed;
+      try{claimed=await clientFor(app).claimMockup(mockupOwner,RENDER_THREADS-running.size,LONG_POLL_MS)}
+      catch(error){
+        // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
+        if(/404|not found|non-json/i.test(error.message)){
+          mockupUnsupported.set(app.appUrl,Date.now()+60000);
+          console.log('['+app.name+'] PSD API unavailable; will retry in one minute. Crop service remains enabled.');
+        }else console.error('['+app.name+'] PSD polling failed:',error.message);
+        await sleep(idlePollMs(MOCKUP_IDLE_POLL_MS));continue;
+      }
+      if(claimed.item){
+        // Servers before multi-claim return one PSD at the top level.
+        start(app,Array.isArray(claimed.items)&&claimed.items.length
+          ?claimed.items.map(entry=>({...entry,job:claimed.job})):[claimed]);
+        continue; // claim the next queued PSD straight away
+      }
+      // Older servers answer at once: fall back to polling.
+      if(!claimed.longPoll)await Promise.race([sleep(idlePollMs(MOCKUP_IDLE_POLL_MS)),...running]);
+    }
+  };
+  await Promise.all(APP_CONNECTIONS.map(shopLoop));
   await Promise.allSettled([...running]);
+}
+
+// Warm-up: while no mockups are rendering, prepare every saved template so a
+// new artwork never waits for a PSD download or first-time preparation.
+const WARM_UP_EVERY_MS=10*60*1000;
+async function warmUpLane(){
+  await sleep(15000);
+  while(!stopping){
+    for(const app of APP_CONNECTIONS){
+      if(stopping||(mockupUnsupported.get(app.appUrl)||0)>Date.now())continue;
+      let templates=[];
+      try{templates=(await clientFor(app).mockupTemplates()).templates||[]}
+      catch{continue} // older servers have no template list
+      let prepared=0;
+      for(const template of templates){
+        if(stopping)break;
+        // Real mockups first: wait until nothing is rendering.
+        while(!stopping&&[...active].some(a=>a.type==='mockup'))await sleep(2000);
+        const ext=path.extname(template.name).toLowerCase()==='.psb'?'.psb':'.psd';
+        const meta={shop:app.appUrl,id:template.id,key:template.key,size:template.size,ext};
+        const mapping=template.mapping||null;
+        try{
+          if(await isTemplatePrepared({psdPath:cachedFilePath(meta),mapping,psdSize:template.size}))continue;
+          const psdPath=(await downloadCached(template.url,meta)).path;
+          await prepareInPool({psdPath,mapping,psdSize:template.size});
+          prepared++;
+        }catch(error){console.error('['+app.name+'] Could not prepare '+template.name+' in advance:',error.message)}
+      }
+      if(prepared)console.log('['+app.name+'] Prepared '+prepared+' PSD template(s) in advance.');
+    }
+    await sleep(WARM_UP_EVERY_MS);
+  }
 }
 async function main(){
   validateWorkerConfig();
@@ -465,6 +503,10 @@ async function main(){
   const ticker=setInterval(()=>{if(!stopping)void heartbeatAll();},8000);
   ticker.unref();
   console.log('Rendering up to '+RENDER_THREADS+' mockups at once; crops run alongside.');
+  // The Product Creator in this PC's browser hands artwork straight to the worker.
+  startLocalIntake({apps:APP_CONNECTIONS,version:WORKER_VERSION_LABEL,
+    onArtwork:({app,size})=>console.log('['+app.name+'] Artwork received from this PC\'s browser ('+
+      (size/1048576).toFixed(1)+' MB); no R2 download needed.')});
   const idleCheck=IDLE_EXIT_MS>0?setInterval(()=>{
     if(!active.size&&Date.now()-lastWorkAt>=IDLE_EXIT_MS){
       console.log('Shared crop worker exiting after explicitly configured idle limit.');
@@ -472,7 +514,7 @@ async function main(){
     }
   },5000):null;
   try{
-    await Promise.all([cropLane(),mockupLane()]);
+    await Promise.all([cropLane(),mockupLane(),warmUpLane()]);
   }finally{
     if(idleCheck)clearInterval(idleCheck);
     clearInterval(ticker);

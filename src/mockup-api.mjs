@@ -8,12 +8,12 @@ import {
  controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
  classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput,
  hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT,knownMockupArtworkTarget,withMockupJobLock,
- jpegDimensions,mockupPreviewKey
+ jpegDimensions,mockupPreviewKey,linkMockupArtwork
 } from './mockup-generator.mjs';
 import {
  signedArtworkUploadUrl,signedArtworkUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
 } from './r2.mjs';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHmac} from 'node:crypto';
 import {streamMockupZip} from './mockup-zip.mjs';
 import {loadArtworkManifest,saveArtworkManifest} from './artwork-storage.mjs';
 import {copyArtworkObject,artworkObjectInfo,getArtworkObjectStart} from './r2.mjs';
@@ -78,7 +78,27 @@ async function streamObject(res,key,name=''){
 const activeBatches={ids:null,listedAt:0};
 const openBatch=j=>!!j&&j.artworkUploaded&&!j.deleted&&
  !!j.templates?.some(t=>t.status==='queued'||t.status==='processing');
-function markBatchActive(id){activeBatches.ids?.add(id)}
+// Workers waiting in a claim (long poll) are answered the moment a batch is queued.
+const claimWaiters=new Set();
+function markBatchActive(id){
+ activeBatches.ids?.add(id);
+ for(const wake of claimWaiters)wake();
+ claimWaiters.clear();
+}
+function waitForBatch(ms){
+ return new Promise(resolve=>{
+  const done=()=>{clearTimeout(timer);claimWaiters.delete(done);resolve()};
+  const timer=setTimeout(done,ms);
+  claimWaiters.add(done);
+ });
+}
+// Authorizes the browser to hand this batch's artwork straight to the PC worker
+// on the same computer. The worker checks it with its own copy of the token.
+export function localArtworkToken(jobId,artworkKey,size){
+ const secret=String(process.env.CROP_WORKER_TOKEN||'');
+ if(!secret)return '';
+ return createHmac('sha256',secret).update(['pod-local-artwork',jobId,artworkKey,String(Number(size)||0)].join('|')).digest('hex');
+}
 async function claimCandidates(owner=''){
  if(!activeBatches.ids||Date.now()-activeBatches.listedAt>10*60*1000){
   const listedAt=Date.now(),all=await listMockupJobs(300);
@@ -105,6 +125,20 @@ async function redirectToObject(res,key,name){
  const url=await getSignedUrl(r2Client(),new GetObjectCommand({Bucket:config.bucket,Key:key,
   ResponseContentDisposition:"attachment; filename*=UTF-8''"+encodeURIComponent(name)}),{expiresIn:300});
  res.writeHead(302,{location:url,'cache-control':'no-store'});res.end();
+}
+// What the worker needs for each claimed PSD: template, signed URLs, output keys.
+async function claimPayloads(jobId,claimed){
+ const artworkUrl=await signedArtworkUrl(claimed.job.artworkKey,3600);
+ return Promise.all(claimed.items.map(async item=>{
+  const stored=await getMockupTemplate(item.id);
+  // Known templates (e.g. mockup 19's layer "5") use the same layer the server verifies.
+  const known=knownMockupArtworkTarget(stored.name);
+  const template=stored.mapping?.path||!known?stored:{...stored,mapping:{path:known}};
+  const key=mockupOutputKey(jobId,template.id),previewKey=mockupPreviewKey(key);
+  return {item,template,templateUrl:await signedArtworkUrl(template.key,3600),artworkUrl,
+   output:{key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600),
+    previewKey,previewUploadUrl:await signedArtworkUploadUrl(previewKey,'image/jpeg',3600)}};
+ }));
 }
 function makeError(error){
  if(error?.name==='TimeoutError'||/timed? ?out/i.test(String(error?.message||'')))
@@ -138,21 +172,36 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
      try{claimed=await claimMockupWork(candidate.id,owner,limit)}
      catch(error){if(/processing|lease|paused/i.test(String(error?.message)))continue;throw error}
      if(!claimed?.item)continue;
-     const artworkUrl=await signedArtworkUrl(claimed.job.artworkKey,3600);
-     const items=await Promise.all(claimed.items.map(async item=>{
-      const stored=await getMockupTemplate(item.id);
-      // Known templates (e.g. mockup 19's layer "5") use the same layer the server verifies.
-      const known=knownMockupArtworkTarget(stored.name);
-      const template=stored.mapping?.path||!known?stored:{...stored,mapping:{path:known}};
-      const key=mockupOutputKey(candidate.id,template.id),previewKey=mockupPreviewKey(key);
-      return {item,template,templateUrl:await signedArtworkUrl(template.key,3600),artworkUrl,
-       output:{key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600),
-        previewKey,previewUploadUrl:await signedArtworkUploadUrl(previewKey,'image/jpeg',3600)}};
-     }));
+     const items=await claimPayloads(candidate.id,claimed);
      // The first claim stays at the top level for workers that take one at a time.
      return send(200,{job:claimed.job,...items[0],items}),true;
     }
-    return send(200,{job:null,item:null,items:[]}),true;
+    // Nothing queued: hold the request until a batch is queued (or `wait` ms),
+    // then look once more. The worker learns of new work at once instead of polling.
+    const wait=Math.max(0,Math.min(25000,Number(body.wait)||0));
+    if(wait&&!body.retried){
+     await waitForBatch(wait);
+     body.retried=true;
+     for(const candidate of await claimCandidates(owner)){
+      let claimed;
+      try{claimed=await claimMockupWork(candidate.id,owner,limit)}
+      catch(error){if(/processing|lease|paused/i.test(String(error?.message)))continue;throw error}
+      if(!claimed?.item)continue;
+      const items=await claimPayloads(candidate.id,claimed);
+      return send(200,{job:claimed.job,...items[0],items,longPoll:true}),true;
+     }
+    }
+    return send(200,{job:null,item:null,items:[],longPoll:wait>0}),true;
+   }
+   // Saved templates, so an idle worker can prepare them before any artwork needs them.
+   if(req.method==='GET'&&parts[1]==='templates'&&parts.length===2){
+    const ready=(await listMockupTemplates()).filter(t=>t.status==='ready');
+    const templates=await Promise.all(ready.map(async t=>{
+     const known=knownMockupArtworkTarget(t.name);
+     return {id:t.id,name:t.name,key:t.key,size:t.size,mapping:t.mapping?.path?t.mapping:known?{path:known}:null,
+      url:await signedArtworkUrl(t.key,3600)};
+    }));
+    return send(200,{templates}),true;
    }
    if(req.method==='POST'&&parts.length===5&&parts[2]==='templates'&&parts[4]==='progress'&&isId(parts[1])&&isId(parts[3])){
     const body=await readJson(req);
@@ -227,12 +276,28 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    }
    if(req.method==='POST'&&parts.length===1){
     const job=await createMockupJob(await readJson(req));
-    return send(201,{job,uploadUrl:await signedArtworkUploadUrl(job.artworkKey,'application/octet-stream',3600)}),true;
+    return send(201,{job,uploadUrl:await signedArtworkUploadUrl(job.artworkKey,'application/octet-stream',3600),
+     localUpload:{token:localArtworkToken(job.id,job.artworkKey,job.artworkSize)}}),true;
    }
    const id=parts[1];if(!isId(id))throw Error('Invalid batch ID.');
    if(req.method==='GET'&&parts.length===2)return send(200,{job:await getMockupJob(id)}),true;
    if(req.method==='POST'&&parts[2]==='artwork-confirm'){
-    const job=await markMockupArtworkUploaded(id);markBatchActive(id);
+    const body=await readJson(req).catch(()=>({}));
+    const job=await markMockupArtworkUploaded(id,{local:body?.local===true});markBatchActive(id);
+    return send(200,{job}),true;
+   }
+   if(req.method==='POST'&&parts[2]==='link-artwork'){
+    const body=await readJson(req),artworkId=str(body.artworkId);
+    if(!/^SAC\d+$/.test(artworkId))throw Error('A valid artwork ID is required.');
+    const manifest=await loadArtworkManifest(artworkId);
+    if(!manifest||manifest.status!=='ready'||!manifest.master?.key)throw Error('The artwork is not verified in Cloudflare R2 yet.');
+    const current=await getMockupJob(id);
+    if(manifest.master.size&&Number(manifest.master.size)!==Number(current.artworkSize))
+     throw Error('This batch was started from a different file than the uploaded master.');
+    // A batch whose artwork went straight to the PC worker gets its R2 copy now.
+    if(current.artworkLocal&&!await artworkObjectExists(current.artworkKey))
+     await copyArtworkObject(manifest.master.key,current.artworkKey);
+    const job=await linkMockupArtwork(id,{artworkId,masterKey:manifest.master.key,orientation:manifest.orientation});
     return send(200,{job}),true;
    }
    if(req.method==='POST'&&parts[2]==='control'){

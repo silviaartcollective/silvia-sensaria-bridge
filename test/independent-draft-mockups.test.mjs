@@ -23,10 +23,11 @@ test('selecting a master queues PSDs before the Etsy draft action',()=>{
  assert.ok(js.includes("const art=$('master_file').files?.[0]"));
  assert.ok(js.includes("if(file&&$('mg-auto-queue').checked)"));
  assert.ok(js.includes("window.startProductArtworkUpload()"));
- assert.ok(js.includes('async function createJob('));
+ assert.ok(js.includes('async function createJobNow(')&&js.includes('function createJob(options)'));
  assert.ok(js.includes("api('jobs','POST'"));
  assert.ok(js.includes("api('jobs/from-artwork','POST'"));
- assert.ok(js.includes("if(activeJobId&&activeMasterSignature===fileSignature(file))return;"));
+ // A batch started from the selected file is linked to the artwork, never duplicated.
+ assert.ok(js.includes("if(activeJobId&&activeMasterSignature===fileSignature(file))\n   return linkBatchToArtwork(activeJobId,currentArtworkId);"));
  assert.ok(!js.includes('const existing=jobs.find('));
  const submit=product.slice(product.indexOf("form.addEventListener('submit',async"));
  assert.ok(!submit.includes('await createJob('));

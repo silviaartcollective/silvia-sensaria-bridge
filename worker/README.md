@@ -47,6 +47,14 @@ The **same running worker** processes two queues: production artwork crops and P
 PSDs saved with **Maximize PSD and PSB File Compatibility** turned on are reproduced most faithfully, including effects and adjustment layers. Without it, Photoshop saves no usable preview, so the worker builds the scene from the layers. Layer effects (e.g. drop shadows) and adjustment layers are then left out.
 
 
+**Instant start:**
+- When you pick the master artwork in the Product Creator, the page hands the file straight to the worker on this PC (`127.0.0.1:47823`, reachable only from this computer) and queues the batch at once. The worker renders from the original file instead of downloading it back from R2.
+- The R2 upload runs alongside for the Etsy draft and production crops, and the batch is linked to the artwork when it finishes.
+- Chrome may ask once to let the shop's site access apps on this device: allow it. If the worker is not reachable, the page uploads the artwork to R2 as before.
+- Each handoff carries a code derived from the shop's `CROP_WORKER_TOKEN`, so other websites cannot send files to the worker.
+- The worker keeps a request open with each shop, so a new batch starts immediately instead of on the next poll.
+- While idle, it prepares every saved template in advance (one at a time, pausing whenever mockups are rendering). A new artwork never waits for a PSD download or a first-time preparation, and prepared templates are not downloaded again.
+
 **Stopping the worker:** it runs hidden in the background, so there is no window to close. Run `stop-worker.cmd` (or end the Node.js process in Task Manager). Dashboards show it offline about 20 seconds later. Opening an admin page while it is offline asks Windows to start it again.
 
 **After pulling this update on the PC:**
@@ -55,4 +63,4 @@ PSDs saved with **Maximize PSD and PSB File Compatibility** turned on are reprod
 3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
 4. Run `start-worker.cmd`.
 
-The dashboards should show **Crop + Mockup Worker v4.5.6**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+The dashboards should show **Crop + Mockup Worker v4.5.7**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
