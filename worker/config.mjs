@@ -41,6 +41,10 @@ export const POLL_INTERVAL_MS=Math.max(2000,Number(process.env.POD_CROP_WORKER_P
 // The old installer saved 600000 (10 minutes). Treat it as an obsolete default.
 const oldIdle=Number(local.idleExitMs??0);
 export const IDLE_EXIT_MS=Math.max(0,Number(process.env.POD_CROP_WORKER_IDLE_EXIT_MS??(oldIdle===600000?0:oldIdle)));
+// Self-update (see updater.mjs): on unless "autoUpdate": false; "updateFrom"
+// picks the shop it comes from (default: the Silvia app).
+export const AUTO_UPDATE=String(process.env.POD_WORKER_AUTO_UPDATE??local.autoUpdate??'true').toLowerCase()!=='false';
+export const UPDATE_FROM=String(process.env.POD_WORKER_UPDATE_FROM||local.updateFrom||'').trim();
 export function validateWorkerConfig(){
  if(!APP_CONNECTIONS.length)throw new Error('Run worker/setup-worker.cmd and configure at least one shop.');
  if(!WORKER_ID)throw new Error('Worker ID missing.');

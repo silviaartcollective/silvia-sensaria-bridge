@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import {getFaviconAssets} from './favicon-assets.mjs';
 import { renderDashboard } from './dashboard.mjs';
+import {workerUpdateBundle,latestWorkerVersion,heartbeatUpdate,workerUpdateText,compareWorkerVersions} from './worker-update.mjs';
 import { renderReadinessPage } from './readiness-page.mjs';
 import { renderListingReposterPage } from './listing-reposter-page.mjs';
 import {
@@ -650,19 +651,36 @@ function recordCropWorkerHeartbeat(input = {}) {
     busy: input.busy === true,
     jobId: String(input.jobId || '').trim(),
     activeApp: String(input.activeApp || '').trim().slice(0, 80),
+    // Only the worker's own heartbeats carry these; job claims and progress keep them.
+    update: 'update' in input ? heartbeatUpdate(input.update) : cropWorkerHeartbeat.update || null,
+    autoUpdate: typeof input.autoUpdate === 'boolean' ? input.autoUpdate : cropWorkerHeartbeat.autoUpdate ?? null,
     lastSeenAt: Date.now()
   };
   return cropWorkerHeartbeat;
 }
+// A worker that said it is restarting for an update is reported as updating,
+// not offline, for up to three minutes.
+const WORKER_UPDATE_RESTART_MS = 3 * 60 * 1000;
 
 function cropWorkerStatus() {
   const configured = Boolean(String(process.env.CROP_WORKER_TOKEN || '').trim());
   const online = configured &&
     cropWorkerHeartbeat.lastSeenAt > 0 &&
     Date.now() - cropWorkerHeartbeat.lastSeenAt <= CROP_WORKER_HEARTBEAT_TTL_MS;
+  const restarting = configured && !online && cropWorkerHeartbeat.update?.state === 'restarting' &&
+    Date.now() - cropWorkerHeartbeat.lastSeenAt <= WORKER_UPDATE_RESTART_MS;
+  const latestVersion = latestWorkerVersion();
+  const update = online || restarting ? cropWorkerHeartbeat.update : null;
+  const updateText = workerUpdateText({ online, version: cropWorkerHeartbeat.version, latestVersion, update,
+    restarting, autoUpdate: cropWorkerHeartbeat.autoUpdate });
   return {
     configured,
     online,
+    latestVersion,
+    outdated: online && Boolean(latestVersion) && compareWorkerVersions(cropWorkerHeartbeat.version, latestVersion) < 0,
+    updating: restarting || (online && ['downloading', 'waiting', 'restarting'].includes(update?.state)),
+    update,
+    updateText,
     workerId: online ? cropWorkerHeartbeat.workerId : '',
     version: online ? cropWorkerHeartbeat.version : '',
     mockups: online ? cropWorkerHeartbeat.mockups===true : false,
@@ -2364,10 +2382,23 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, 200, {
         ok: true,
-        worker: recordCropWorkerHeartbeat(input)
+        worker: recordCropWorkerHeartbeat(input),
+        latestWorkerVersion: latestWorkerVersion()
       });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  // The worker files the shared PC worker updates itself to.
+  if (req.method === 'GET' && url.pathname === '/api/crop-worker/update') {
+    if (!requireCropWorker(req, res)) return;
+    try {
+      const bundle = workerUpdateBundle();
+      if (!bundle.version) throw new Error('The worker version could not be read.');
+      return sendJson(res, 200, { ok: true, ...bundle });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
     }
   }
 

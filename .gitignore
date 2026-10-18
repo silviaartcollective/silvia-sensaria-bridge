@@ -5,3 +5,6 @@ data/
 
 worker/config.local.json
 worker/node_modules/
+worker/.update/
+worker/update.log
+worker/worker.log

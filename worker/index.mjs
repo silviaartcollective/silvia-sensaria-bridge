@@ -8,8 +8,10 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import {
   APP_CONNECTIONS,
+  AUTO_UPDATE,
   IDLE_EXIT_MS,
   POLL_INTERVAL_MS,
+  UPDATE_FROM,
   WORKER_ID,
   validateWorkerConfig
 } from './config.mjs';
@@ -27,12 +29,19 @@ import {startLocalIntake} from './local-intake.mjs';
 import {patchAgPsd} from './patch-ag-psd.mjs';
 import {downloadCached,cachedFilePath} from './asset-cache.mjs';
 import sharp from 'sharp';
+import { spawn } from 'node:child_process';
+import {
+  LOCK_PATH, WORKER_DIR, compareVersions, downloadUpdate, recentFailure, stageUpdate, updateSource
+} from './updater.mjs';
 
-const LOCK_PATH = path.join(os.tmpdir(), 'pod-crop-worker.lock');
 const tempPaths = new Set();
 const clients = new Map();
 let lastWorkAt = Date.now();
 let stopping = false;
+// Resolves when the worker starts stopping, to cut long waits short.
+let wakeLanes = () => {};
+const stopped = new Promise(resolve => { wakeLanes = resolve; });
+const stop = () => { stopping = true; wakeLanes(); };
 let nextAppIndex = 0, nextMockupAppIndex = 0;
 let heartbeatInFlight = false;
 // Crops and mockups run at the same time in separate lanes; mockups render
@@ -384,10 +393,50 @@ async function heartbeatAll(){
   heartbeatInFlight=true;
   try{
     await Promise.allSettled(APP_CONNECTIONS.map(async app=>{
-      try{await clientFor(app).heartbeat(heartbeatFor(app,activeFor(app)));}
-      catch(error){console.error('['+app.name+'] heartbeat failed:',error.message);}
+      try{
+        const reply=await clientFor(app).heartbeat({...heartbeatFor(app,activeFor(app)),update:updateState,autoUpdate:AUTO_UPDATE});
+        if(app===UPDATE_SOURCE)void considerUpdate(reply?.latestWorkerVersion);
+      }catch(error){console.error('['+app.name+'] heartbeat failed:',error.message);}
     }));
   }finally{heartbeatInFlight=false;}
+}
+// Self-update. The update shop's heartbeat reply names the latest worker; a
+// newer one is downloaded and checked in the background, then installed once
+// nothing has run for 30 s: the lanes finish their work, update-worker.mjs takes
+// over and this process exits. That installs the files, starts the new worker
+// and restores this version if the new one does not stay running.
+const UPDATE_SOURCE=updateSource(APP_CONNECTIONS,UPDATE_FROM);
+const UPDATE_IDLE_MS=30000,UPDATE_RETRY_MS=10*60*1000;
+let updateState=null,stagedUpdate=null,updateBusy=false,updateRetryAt=0,installingUpdate=null;
+async function considerUpdate(latest){
+  if(!AUTO_UPDATE||updateBusy||stopping||!latest||Date.now()<updateRetryAt)return;
+  if(compareVersions(latest,WORKER_VERSION_LABEL)<=0||stagedUpdate?.version===latest)return;
+  const failed=recentFailure(latest);
+  if(failed){updateState={state:'failed',to:latest,error:failed.error};return;}
+  updateBusy=true;updateState={state:'downloading',to:latest};
+  try{
+    const update=await downloadUpdate(UPDATE_SOURCE);
+    if(compareVersions(update.version,WORKER_VERSION_LABEL)<=0){updateState=null;return;}
+    stagedUpdate={version:update.version,dir:await stageUpdate(update)};
+    updateState={state:'waiting',to:update.version};
+    console.log('Worker v'+update.version+' downloaded; it is installed once the current work is done.');
+  }catch(error){
+    updateRetryAt=Date.now()+UPDATE_RETRY_MS;
+    updateState={state:'failed',to:latest,error:String(error.message).slice(0,200)};
+    console.error('Worker update could not be downloaded:',error.message);
+  }finally{updateBusy=false;}
+}
+function installUpdateWhenIdle(){
+  if(!stagedUpdate||stopping||active.size||Date.now()-lastWorkAt<UPDATE_IDLE_MS)return;
+  installingUpdate=stagedUpdate;
+  updateState={state:'restarting',to:stagedUpdate.version};
+  console.log('Installing worker v'+stagedUpdate.version+'; the worker restarts in a moment.');
+  void heartbeatAll();
+  stop();
+}
+function handOverToUpdater(update){
+  spawn(process.execPath,[path.join(WORKER_DIR,'update-worker.mjs'),'--apply',update.dir,'--after',String(process.pid)],
+    {cwd:WORKER_DIR,detached:true,stdio:'ignore',windowsHide:true}).unref();
 }
 function track(entry,task){
   active.add(entry);void heartbeatAll();
@@ -486,7 +535,7 @@ async function warmUpLane(){
       }
       if(prepared)console.log('['+app.name+'] Prepared '+prepared+' PSD template(s) in advance.');
     }
-    await sleep(WARM_UP_EVERY_MS);
+    await Promise.race([sleep(WARM_UP_EVERY_MS),stopped]);
   }
 }
 async function main(){
@@ -495,8 +544,8 @@ async function main(){
   // Before any render thread loads ag-psd (also applied by `npm install`).
   try{console.log('ag-psd mask patch: '+patchAgPsd().join('; '))}
   catch(error){console.error('ag-psd mask patch failed:',error.message)}
-  process.on('SIGINT',()=>{stopping=true;});
-  process.on('SIGTERM',()=>{stopping=true;});
+  process.on('SIGINT',stop);
+  process.on('SIGTERM',stop);
   process.on('exit',()=>{try{fs.rmSync(LOCK_PATH,{force:true});}catch{}});
   console.log('Shared POD Crop Worker online as '+WORKER_ID+' for: '+
     APP_CONNECTIONS.map(app=>app.name).join(', '));
@@ -512,15 +561,25 @@ async function main(){
   const idleCheck=IDLE_EXIT_MS>0?setInterval(()=>{
     if(!active.size&&Date.now()-lastWorkAt>=IDLE_EXIT_MS){
       console.log('Shared crop worker exiting after explicitly configured idle limit.');
-      stopping=true;
+      stop();
     }
   },5000):null;
+  const updateCheck=setInterval(installUpdateWhenIdle,5000);
+  updateCheck.unref();
   try{
     await Promise.all([cropLane(),mockupLane(),warmUpLane()]);
   }finally{
     if(idleCheck)clearInterval(idleCheck);
     clearInterval(ticker);
+    clearInterval(updateCheck);
     await cleanup();
+  }
+  if(installingUpdate){
+    // Tell every shop the worker is restarting for its update, then hand over.
+    for(let i=0;i<40&&heartbeatInFlight;i++)await sleep(250);
+    await heartbeatAll();
+    handOverToUpdater(installingUpdate);
+    process.exit(0);
   }
 }
 

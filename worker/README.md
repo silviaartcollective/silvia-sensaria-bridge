@@ -57,10 +57,21 @@ PSDs saved with **Maximize PSD and PSB File Compatibility** turned on are reprod
 
 **Stopping the worker:** it runs hidden in the background, so there is no window to close. Run `stop-worker.cmd` (or end the Node.js process in Task Manager). Dashboards show it offline about 20 seconds later. Opening an admin page while it is offline asks Windows to start it again.
 
-**After pulling this update on the PC:**
+## Updates
+
+From **v4.6.0** the worker updates itself. Every heartbeat reply from the Silvia app names the latest worker version, which is the one in the code Render deployed.
+
+- **Download:** when a newer version appears, the worker downloads it in the background and checks every file's SHA-256. Only the worker's own files are replaced; `config.local.json` and the logs are kept, and an older version is never installed.
+- **Install:** once no crop or mockup has run for 30 seconds, the worker finishes what it is doing and exits. `update-worker.mjs` then installs the files, runs `npm install` if the dependencies changed, starts the worker again and checks it stays running.
+- **Rollback:** if the new worker does not start, the previous files are restored and the old worker is started again. That version is not retried for six hours.
+- **Status:** the Product Creator and the dashboard show *outdated · downloading*, *installs as soon as the current work is done* and *updating…*. Progress is written to `update.log`.
+- **Update now:** run `update-worker.cmd`. It stops the worker, so a job in progress is retried by its shop.
+- **Settings** (`config.local.json`): `"autoUpdate": false` turns automatic updates off; the status then shows *outdated* and `update-worker.cmd` updates on demand. `"updateFrom"` chooses another shop's Render URL as the source.
+
+**Installing v4.6.0 itself** (older workers cannot update themselves):
 1. Wait for the current job to finish and run `stop-worker.cmd`.
-2. Update the single shared worker folder.
+2. Replace the files in the single shared worker folder with the new ones. Keep `config.local.json`.
 3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
 4. Run `start-worker.cmd`.
 
-The dashboards should show **Crop + Mockup Worker v4.5.8**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+The dashboards should show **Crop + Mockup Worker v4.6.0**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.

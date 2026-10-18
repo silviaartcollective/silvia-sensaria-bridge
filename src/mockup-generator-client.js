@@ -624,7 +624,8 @@ async function workerStatus(){
   const version=String(worker.version||'0').split('.').map(Number);
   const fixed=worker.online&&worker.mockups===true&&
    (version[0]>4||(version[0]===4&&version[1]>=5));
-  const text=fixed
+  // Outdated, downloading, waiting to install, updating or a failed update.
+  const text=worker.updateText&&(fixed||worker.updating)?worker.updateText:fixed
    ?'Shared PC Crop + Mockup Worker v'+worker.version+' online'+(worker.busy?' · processing':' · idle')
    :worker.online&&worker.mockups===true
     ?'PC worker v'+(worker.version||'unknown')+' still uses Photoshop/Photopea. Update the worker folder, run setup-worker.cmd and restart (v4.5.0 renders PSDs on its own).'
@@ -632,7 +633,7 @@ async function workerStatus(){
     :worker.configured?'Shared PC worker offline · use Launch Shared Crop Worker above'
     :'Shared PC worker not configured in Render';
   $('mg-worker-status').textContent=text;
-  $('mg-worker-status').style.color=fixed?'#477153':'#a46b3d';
+  $('mg-worker-status').style.color=fixed&&!worker.updateText?'#477153':'#a46b3d';
   return fixed;
  }catch{
   $('mg-worker-status').textContent='Could not check PC worker connection';

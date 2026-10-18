@@ -586,7 +586,8 @@ async function watchCropJob(jobId){
       }
       if(job.status==='pending'&&!worker.online){
         cropWorkerStatus.className='status warn';
-        cropWorkerStatus.textContent='Crop job queued. Launch the Shared POD Crop Worker on your PC to generate the ratio files.';
+        cropWorkerStatus.textContent=worker.updating?'Crop job queued. '+worker.updateText:
+          'Crop job queued. Launch the Shared POD Crop Worker on your PC to generate the ratio files.';
       }else{
         cropWorkerStatus.className='status';
         cropWorkerStatus.textContent=String(job.message||'Generating POD production crops…')+' '+String(job.progress||0)+'%';
@@ -614,7 +615,8 @@ async function queueCropJob(artworkId){
     cropWorkerStatus.textContent='Shared POD Crop Worker connected. Production crops queued.';
   }else if(worker.configured){
     cropWorkerStatus.className='status warn';
-    cropWorkerStatus.textContent='Production crops queued. Launch the Shared POD Crop Worker on your PC.';
+    cropWorkerStatus.textContent=worker.updating?'Production crops queued. '+worker.updateText:
+      'Production crops queued. Launch the Shared POD Crop Worker on your PC.';
   }else{
     cropWorkerStatus.className='status warn';
     cropWorkerStatus.textContent='Production crops queued, but CROP_WORKER_TOKEN still needs to be configured in Render.';

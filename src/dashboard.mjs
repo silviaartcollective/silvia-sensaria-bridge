@@ -140,9 +140,10 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
      const seen=Date.parse(w.lastSeenAt||'');
      const ago=Number.isFinite(seen)?' · last check-in '+Math.max(0,Math.round((Date.now()-seen)/1000))+'s ago':'';
      el.textContent=w.online?(w.busy?'Connected · processing'+(w.activeApp?' for '+w.activeApp:''):'Connected · idle')+
-       ' · v'+(w.version||'?')+' · '+(w.workerId||'PC workstation')+ago :
+       ' · v'+(w.version||'?')+' · '+(w.workerId||'PC workstation')+ago+(w.updateText?' · '+w.updateText:'') :
+       w.updating?w.updateText:
        w.configured?'Offline · Start the PC crop worker':'Not configured · Set CROP_WORKER_TOKEN in Render';
-     el.style.color=w.online?'#477153':'#a46b3d';
+     el.style.color=w.online&&!w.updateText?'#477153':'#a46b3d';
    }catch{el.textContent='Could not read crop worker status';}
   }
   await checkCropWorker();
