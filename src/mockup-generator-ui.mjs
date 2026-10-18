@@ -3,7 +3,7 @@ return `
 <section class="uploadbox" id="mockup-generator-panel" aria-label="Generate mockups">
  <div class="mg-workspace"><div class="mg-main"><div><strong>Generate listing mockups</strong>
  <div class="uploadmeta">Optional: choose only the PSD templates you need, then queue them on your PC. You can create the Etsy draft immediately without waiting for rendering. Keep the draft unpublished until its final mockups are ready.</div></div>
- <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically queue the first 16 selected mockups after each master artwork uploads. The master artwork plus 3 preset photos leave 16 additional Etsy photo slots. Use “Select first 7” for a smaller, faster batch.</span></label></div>
+ <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically generate every selected mockup after each master artwork uploads (about a second each). Etsy fits 16 of them next to the master artwork and 3 preset photos: the first 16 are ticked, and you can swap any before applying.</span></label></div>
  <div class="uploadrow">
   <label>Vertical PSD / PSB templates <span class="hint">portrait artwork</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
@@ -22,7 +22,7 @@ return `
  <div id="mg-orientation-status" class="status" aria-live="polite">Select a master artwork to detect its aspect ratio. Previously saved templates can be categorized below. Square artworks require square-compatible templates.</div>
  <details id="mg-saved-details"><summary>Permanent saved PSD templates <span id="mg-saved-count"></span> · choose compatible templates</summary>
   <div class="uploadmeta">Assign an orientation to older templates. Mark square-compatible only when the artwork Smart Object fits a square image without stretching.</div>
-  <div class="mg-actions"><button class="btn secondary" type="button" id="mg-select-seven">Select first 7</button><button class="btn secondary" type="button" id="mg-select-seventeen">Select first 17 (Etsy max)</button><button class="btn secondary" type="button" id="mg-clear-templates">Clear selection</button></div>
+  <div class="mg-actions"><button class="btn secondary" type="button" id="mg-select-seven">Select first 7</button><button class="btn secondary" type="button" id="mg-select-seventeen">Select all compatible</button><button class="btn secondary" type="button" id="mg-clear-templates">Clear selection</button></div>
   <div id="mg-templates" class="mg-template-list"></div>
  </details>
  <div class="mg-actions">
@@ -103,7 +103,7 @@ return `
  <aside class="mg-preview" aria-label="Generated mockup previews">
   <div class="mg-preview-head"><strong>Generated mockups</strong><span id="mg-preview-count" class="hint">0 ready</span></div>
   <div class="mg-preview-actions">
-   <button class="btn secondary" type="button" id="mg-select-all">Select all</button>
+   <button class="btn secondary" type="button" id="mg-select-all">Select first 16</button>
    <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
   </div>
   <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">

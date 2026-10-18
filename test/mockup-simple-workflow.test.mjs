@@ -20,7 +20,7 @@ test('selected finished JPGs attach only after Apply and browser never renders P
  const client=read('src/mockup-generator-client.js');
  assert.doesNotThrow(()=>new vm.Script(client));
  assert.ok(client.includes("const art=$('master_file').files?.[0]"));
- assert.ok(client.includes('selected.slice(0,17)'));
+ assert.ok(client.includes('selected.slice(0,ETSY_MOCKUP_SLOTS)'));
  assert.ok(client.includes("$('mockup_files').files=dt.files"));
  assert.ok(!client.includes('stopImmediatePropagation()')); // Drafts must not wait for PSD generation.
  assert.ok(client.includes('initialLoad'));

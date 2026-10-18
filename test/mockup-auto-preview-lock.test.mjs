@@ -13,8 +13,8 @@ test('PSD generation is optional and preview checkboxes attach selected images',
  assert.ok(!html.includes('id="mg-editor"'));
  assert.ok(!client.includes('maybeAutoStart'));
  assert.ok(client.includes("['mg-generate',()=>createJob()]"));
- assert.ok(client.includes('defaultSelected:true'));
- assert.ok(client.includes('selected.slice(0,17)'));
+ assert.ok(client.includes('const defaultSelection=j=>'));
+ assert.ok(client.includes('selected.slice(0,ETSY_MOCKUP_SLOTS)'));
  assert.ok(client.includes("$('mockup_files').files=dt.files"));
  assert.ok(!client.includes('event.stopImmediatePropagation()'));
 });

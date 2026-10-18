@@ -41,19 +41,30 @@ async function inspectArtworkOrientation(file){
  }
 }
 
+// Etsy allows 20 photos: the master artwork and 3 preset photos leave 16 for
+// mockups. Every compatible template is generated; the first 16 finished JPGs
+// are ticked for the listing until the customer changes the choice.
+const ETSY_MOCKUP_SLOTS=16;
 const selectionByJob=new Map();
 const selectionFor=id=>{
- if(!selectionByJob.has(id))selectionByJob.set(id,{defaultSelected:true,exceptions:new Set()});
+ if(!selectionByJob.has(id))selectionByJob.set(id,{touched:false,chosen:new Set()});
  return selectionByJob.get(id);
 };
+const defaultSelection=j=>new Set(j.templates.filter(t=>t.status==='completed').slice(0,ETSY_MOCKUP_SLOTS).map(t=>t.id));
 const isSelected=(id,itemId)=>{
  const selection=selectionFor(id);
- return selection.exceptions.has(itemId)?!selection.defaultSelected:selection.defaultSelected;
+ if(selection.touched)return selection.chosen.has(itemId);
+ return job?.id===id&&defaultSelection(job).has(itemId);
 };
 function setSelected(id,itemId,checked){
  const selection=selectionFor(id);
- if(checked===selection.defaultSelected)selection.exceptions.delete(itemId);
- else selection.exceptions.add(itemId);
+ if(!selection.touched&&job?.id===id){selection.chosen=defaultSelection(job);selection.touched=true}
+ if(checked&&!selection.chosen.has(itemId)&&selection.chosen.size>=ETSY_MOCKUP_SLOTS){
+  message('Etsy has room for '+ETSY_MOCKUP_SLOTS+' mockups next to the master artwork and 3 preset photos. Untick one first.',true);
+  return false;
+ }
+ if(checked)selection.chosen.add(itemId);else selection.chosen.delete(itemId);
+ return true;
 }
 let lastStatus='',lastWorker={};
 function message(text,warning=false){
@@ -205,7 +216,7 @@ async function useResults(){
  if(!selected.length){markRequested();throw Error('Select at least one generated JPG.')}
  attaching=true;renderPreviews();
  try{
-  const chosen=selected.slice(0,17),artworkId=$('artwork_id').value.trim();
+  const chosen=selected.slice(0,ETSY_MOCKUP_SLOTS),artworkId=$('artwork_id').value.trim();
   if(job.artworkId&&job.artworkId===artworkId){
     // Server-to-server R2 sync avoids fetching 17 large JPGs back into the browser.
     lastAppliedBatchId=batchId;appliedCount=chosen.length;
@@ -227,7 +238,7 @@ async function useResults(){
   ready=true;requested=true;
   panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
   $('upload-status').textContent=chosen.length+' selected PC-generated mockups ready for the Etsy draft.'+
-    (selected.length>17?' Etsy can fit only the first 17 selected artwork mockups alongside 3 preset photos.':'');
+    (selected.length>ETSY_MOCKUP_SLOTS?' Etsy can fit only the first '+ETSY_MOCKUP_SLOTS+' selected mockups alongside the master and 3 preset photos.':'');
   message('Selected mockups ready ('+chosen.length+' JPGs).');
  }finally{attaching=false;renderPreviews()}
 }
@@ -236,7 +247,9 @@ async function loadTemplates(){
  const selected=new Set([...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].map(x=>x.value));
  if(detectedArtworkOrientation&&lastAutoOrientation!==detectedArtworkOrientation){
   selected.clear();
-  for(const t of templates.filter(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)).slice(0,16))
+  // Generate every compatible mockup (each takes about a second); the best 16
+  // are chosen for Etsy afterwards.
+  for(const t of templates.filter(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)))
    selected.add(t.id);
   lastAutoOrientation=detectedArtworkOrientation;
  }
@@ -334,7 +347,6 @@ async function uploadTemplateSelection(){
  await loadTemplates();
  let count=[...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].length;
  for(const cb of $('mg-templates').querySelectorAll('input.mg-template-choice')){
-  if(count>=16)break;
   if(!cb.checked&&!cb.disabled&&successful.some(t=>t.id===cb.value)){
    cb.checked=true;count++;
   }
@@ -570,10 +582,10 @@ function selectSeven(){
  ready.forEach((cb,index)=>{cb.checked=index<7});
  message('Selected '+Math.min(7,ready.length)+' PSD templates. Queue only when needed; Etsy drafts do not wait.');
 }
-function selectSeventeen(){
+function selectAllCompatible(){
  const available=[...$('mg-templates').querySelectorAll('input.mg-template-choice')].filter(cb=>!cb.disabled);
- available.forEach((cb,i)=>{cb.checked=i<17});
- message('Selected '+Math.min(17,available.length)+' PSDs for the available artwork photo slots.');
+ available.forEach(cb=>{cb.checked=true});
+ message('Selected all '+available.length+' compatible PSDs. Pick the '+ETSY_MOCKUP_SLOTS+' for Etsy once they are generated.');
 }
 function clearTemplates(){
  for(const cb of $('mg-templates').querySelectorAll('input.mg-template-choice'))cb.checked=false;
@@ -622,13 +634,13 @@ $('mg-psds').addEventListener('change',scheduleTemplateLibraryUpload);
 $('mg-psds-horizontal').addEventListener('change',scheduleTemplateLibraryUpload);
 $('mg-save-templates').addEventListener('click',()=>act(uploadTemplates));
 $('mg-select-seven').addEventListener('click',selectSeven);
-$('mg-select-seventeen').addEventListener('click',selectSeventeen);
+$('mg-select-seventeen').addEventListener('click',selectAllCompatible);
 $('mg-clear-templates').addEventListener('click',clearTemplates);
 $('mg-select-all').addEventListener('click',()=>{
- if(!job)return;selectionByJob.set(job.id,{defaultSelected:true,exceptions:new Set()});selectionChanged();
+ if(!job)return;selectionByJob.set(job.id,{touched:true,chosen:defaultSelection(job)});selectionChanged();
 });
 $('mg-deselect-all').addEventListener('click',()=>{
- if(!job)return;selectionByJob.set(job.id,{defaultSelected:false,exceptions:new Set()});selectionChanged();
+ if(!job)return;selectionByJob.set(job.id,{touched:true,chosen:new Set()});selectionChanged();
 });
 $('mg-apply-selected').addEventListener('click',()=>act(useResults));
 for(const [id,method] of [

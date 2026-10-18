@@ -12,7 +12,8 @@ test('fresh master cannot inherit archived completed JPGs',()=>{
  assert.ok(client.includes('job.id===activeJobId'));
  assert.ok(client.includes("if(!currentBatch())throw Error("));
  assert.ok(client.includes("window.addEventListener('pod-artwork-uploaded'"));
- assert.ok(client.includes("templates.filter(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)).slice(0,16)"));
+ // Every compatible template is generated; 16 are chosen for Etsy afterwards.
+ assert.ok(client.includes("for(const t of templates.filter(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)))"));
  assert.ok(client.includes("$('artwork_id').value=''"));
  assert.ok(client.includes("$('mg-apply-selected').disabled=!currentBatch()"));
 });
