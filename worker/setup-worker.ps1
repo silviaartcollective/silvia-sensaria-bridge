@@ -30,7 +30,10 @@ foreach($entry in $definitions){
  }
  $apps+=@{name=$entry.name;appUrl=$entry.url;workerToken=$token.Trim()}
 }
-$config=@{apps=$apps;workerId="pod-crop-main-pc";pollIntervalMs=3000;idleExitMs=0}
+$config=@{apps=$apps;workerId="pod-crop-main-pc";pollIntervalMs=3000;idleExitMs=0;autoUpdate=$true}
+# Keep the update settings chosen in an earlier configuration.
+if($previous -and $previous.PSObject.Properties.Name -contains 'autoUpdate'){$config.autoUpdate=[bool]$previous.autoUpdate}
+if($previous -and $previous.updateFrom){$config.updateFrom=[string]$previous.updateFrom}
 Write-Host ""
 Write-Host "Installing Sharp and the PSD reader (no Photoshop, Photopea or browser needed)…"
 npm install

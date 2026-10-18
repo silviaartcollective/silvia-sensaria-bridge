@@ -18,5 +18,6 @@
   ],
   "workerId": "pod-crop-main-pc",
   "pollIntervalMs": 3000,
-  "idleExitMs": 0
+  "idleExitMs": 0,
+  "autoUpdate": true
 }
