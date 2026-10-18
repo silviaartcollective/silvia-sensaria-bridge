@@ -118,10 +118,7 @@ export async function stageMasterUpload({ filename, contentType, size } = {}) {
   const stageId = randomUUID();
   const key = stagedMasterKey(stageId, extensionFromFilename(filename));
   const type = normalizeContentType(contentType, filename);
-  // The browser also uploads a 2400 px JPEG copy, which is what Etsy receives.
-  const etsyKey = STAGING_PREFIX + stageId + '/etsy.jpg';
-  return { stageId, key, contentType: type, uploadUrl: await signedArtworkUploadUrl(key, type),
-    etsyKey, etsyUploadUrl: await signedArtworkUploadUrl(etsyKey, 'image/jpeg') };
+  return { stageId, key, contentType: type, uploadUrl: await signedArtworkUploadUrl(key, type) };
 }
 export async function pruneStagedMasters(now = Date.now()) {
   let removed = 0;
@@ -208,14 +205,6 @@ async function reserveArtworkUploadUnlocked({
       await copyArtworkObject(staged, masterKey);
       await deleteArtworkObject(staged).catch(() => {});
       masterAlreadyUploaded = true;
-      const stagedEtsy = STAGING_PREFIX + stagedMaster.stageId + '/etsy.jpg';
-      if (await artworkObjectExists(stagedEtsy)) {
-        const etsyKey = masterKey.replace(/-master\.[a-z0-9]+$/, '-etsy.jpg');
-        await copyArtworkObject(stagedEtsy, etsyKey);
-        await deleteArtworkObject(stagedEtsy).catch(() => {});
-        manifest.master.etsyKey = etsyKey;
-        await saveArtworkManifest(manifest);
-      }
     } catch {}
   }
   const masterUploadUrl = masterAlreadyUploaded ? null : await signedArtworkUploadUrl(masterKey, masterType);

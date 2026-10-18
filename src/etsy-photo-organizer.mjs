@@ -2,7 +2,7 @@
 // listing's photos on Etsy.
 //
 // A photo is identified by a tile id:
-//   key:<R2 key>              master, preset photo or mockup the app uploaded
+//   key:<R2 key>              preset photo or mockup the app uploaded
 //   generated:<templateId>    a selected PSD mockup not copied to the artwork yet
 //   etsy:<listing_image_id>   a photo on Etsy the app does not manage
 // The chosen order is saved with the artwork, so it survives until the draft and
@@ -13,14 +13,14 @@ export const ETSY_PHOTO_LIMIT = 20;
 // Ranks a new draft gives its preset photos (see prepareMediaPlan).
 const PRESET_RANKS = { 'choose-option': 2, 'choose-frame': 5, promotion: 15 };
 
-// Order of a draft that does not exist yet: the master first, preset photos at
-// their usual places, and the chosen mockups filling the other slots in order.
-export function defaultPlannedOrder({ masterKey = '', presets = [], generated = [] }) {
+// The usual layout: preset photos at their usual places and the mockups
+// filling the other slots in order, so a mockup is the Featured photo. The
+// master artwork is never an Etsy photo.
+export function defaultPlannedOrder({ presets = [], generated = [] }) {
   const slots = [], fill = [...generated];
   const placed = new Map(presets.filter(p => PRESET_RANKS[p.role]).map(p => [PRESET_RANKS[p.role], 'key:' + p.key]));
-  if (masterKey) slots.push('key:' + masterKey);
-  const total = slots.length + fill.length + placed.size;
-  for (let rank = slots.length + 1; rank <= total && slots.length < ETSY_PHOTO_LIMIT; rank++) {
+  const total = fill.length + placed.size;
+  for (let rank = 1; rank <= total && slots.length < ETSY_PHOTO_LIMIT; rank++) {
     if (placed.has(rank)) { slots.push(placed.get(rank)); placed.delete(rank); }
     else if (fill.length) slots.push(fill.shift());
   }

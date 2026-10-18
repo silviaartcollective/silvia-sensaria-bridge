@@ -41,10 +41,11 @@ async function inspectArtworkOrientation(file){
  }
 }
 
-// Etsy allows 20 photos: the master artwork and 3 preset photos leave 16 for
-// mockups. Every compatible template is generated and nothing is ticked until
-// the customer picks; "Select first 16" ticks the first 16 finished JPGs.
-const ETSY_MOCKUP_SLOTS=16;
+// Etsy allows 20 photos: the 3 preset photos leave 17 for mockups (the master
+// artwork is never an Etsy photo). Every compatible template is generated and
+// nothing is ticked until the customer picks; "Select first 17" ticks the first
+// 17 finished JPGs.
+const ETSY_MOCKUP_SLOTS=17;
 const selectionByJob=new Map();
 const selectionFor=id=>{
  if(!selectionByJob.has(id))selectionByJob.set(id,{chosen:new Set()});
@@ -55,7 +56,7 @@ const isSelected=(id,itemId)=>selectionFor(id).chosen.has(itemId);
 function setSelected(id,itemId,checked){
  const selection=selectionFor(id);
  if(checked&&!selection.chosen.has(itemId)&&selection.chosen.size>=ETSY_MOCKUP_SLOTS){
-  message('Etsy has room for '+ETSY_MOCKUP_SLOTS+' mockups next to the master artwork and 3 preset photos. Untick one first.',true);
+  message('Etsy has room for '+ETSY_MOCKUP_SLOTS+' mockups next to the 3 preset photos. Untick one first.',true);
   return false;
  }
  if(checked)selection.chosen.add(itemId);else selection.chosen.delete(itemId);
@@ -221,18 +222,9 @@ async function useResults(){
 // the first photo Featured, and the preset video fixed in the second spot, where
 // Etsy shows it. Photos are dragged (mouse, pen or touch) or moved with the
 // arrow keys; the other tiles slide out of the way.
-let organizer=null,localMaster={file:null,url:''};
+let organizer=null;
 const VIDEO_TILE='video';
 let tileNodes=new Map(),drag=null;
-function localMasterPreview(){
- const file=$('master_file').files?.[0];
- if(!file)return '';
- if(localMaster.file!==file){
-  if(localMaster.url)URL.revokeObjectURL(localMaster.url);
-  localMaster={file,url:URL.createObjectURL(file)};
- }
- return localMaster.url;
-}
 async function openOrganizer(batchId,templateIds){
  const artworkId=job?.artworkId||$('artwork_id').value.trim();
  const query=new URLSearchParams({jobId:batchId,templateIds:templateIds.join(',')});
@@ -266,8 +258,7 @@ function organizerDisplay(){
 function photoTile(id){
  const tile=organizer.tiles.get(id)||{label:id};
  const node=create('div','',{class:'mg-org-tile',role:'listitem',tabindex:'0',title:tile.label||''});
- const src=tile.thumb||(tile.kind==='master'?localMasterPreview():'');
- if(src)node.append(create('img','',{src,alt:'',loading:'lazy',decoding:'async',draggable:'false'}));
+ if(tile.thumb)node.append(create('img','',{src:tile.thumb,alt:'',draggable:'false'}));
  else node.append(create('div',tile.label||'Photo',{class:'mg-org-blank'}));
  node.append(create('b','Featured',{class:'mg-org-badge'}),create('span',tile.label||'',{class:'mg-org-caption'}));
  node.addEventListener('pointerdown',event=>pressTile(event,id,node));
@@ -355,58 +346,51 @@ function keyMove(event,id){
  if(moveTo(id,target))announce(id);
  tileNodes.get(id).focus({preventScroll:false});
 }
-// A press becomes a drag once the pointer moves a few pixels. While dragging
-// nothing in the page is measured or re-laid out: the photo follows the
-// pointer as its own layer, and the other tiles slide to their new spots with
-// transforms, from spot positions measured once when the drag starts. At most
-// one update runs per frame. The tiles take their new order in the page on drop.
+// The photo itself is dragged: it lifts the moment it is pressed, follows the
+// pointer and lands the moment it is let go. While dragging nothing in the page
+// is measured or re-laid out: every tile is its own layer (see the CSS), the
+// other tiles slide to their new spots with transforms from spot positions
+// measured at the press, and at most one update runs per frame. The tiles take
+// their new order in the page on release.
 function pressTile(event,id,node){
  if(!organizer||drag||event.button!==0)return;
+ event.preventDefault(); // no text selection or native image drag
+ node.focus({preventScroll:true});
+ const list=$('mg-org-list'),display=organizerDisplay();
+ for(const tile of tileNodes.values()){tile.style.transition='';tile.style.transform=''}
+ const box=list.getBoundingClientRect();
  drag={id,node,pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,x:event.clientX,y:event.clientY,
-  active:false,frame:0,start:[...organizer.order]};
+  frame:0,start:[...organizer.order],box,box0:box,
+  home:new Map(display.map((tileId,slot)=>[tileId,slot])),
+  slots:display.map(tileId=>{const tile=tileNodes.get(tileId);return {x:tile.offsetLeft,y:tile.offsetTop}})};
+ list.classList.add('sorting');node.classList.add('dragging');document.body.classList.add('mg-org-dragging');
+ node.style.transform='translate3d(0,0,0) scale(1.04)';
  window.addEventListener('pointermove',dragMove);
  window.addEventListener('pointerup',dragEnd);
  window.addEventListener('pointercancel',dragEnd);
 }
-function startDrag(){
- const list=$('mg-org-list'),{node}=drag,rect=node.getBoundingClientRect(),display=organizerDisplay();
- for(const tile of tileNodes.values()){tile.style.transition='';tile.style.transform=''}
- drag.active=true;
- drag.home=new Map(display.map((id,slot)=>[id,slot]));
- drag.slots=display.map(id=>{const tile=tileNodes.get(id);return {x:tile.offsetLeft,y:tile.offsetTop}});
- drag.grabX=drag.startX-rect.left;drag.grabY=drag.startY-rect.top;
- drag.box=list.getBoundingClientRect();
- const ghost=node.cloneNode(true);
- ghost.className='mg-org-tile mg-org-ghost';ghost.removeAttribute('tabindex');ghost.setAttribute('aria-hidden','true');
- Object.assign(ghost.style,{width:rect.width+'px',height:rect.height+'px',left:rect.left+'px',top:rect.top+'px',
-  transform:'translate3d(0,0,0) scale(1.04)'});
- document.body.append(ghost);drag.ghost=ghost;
- list.classList.add('sorting');node.classList.add('lifted');document.body.classList.add('mg-org-dragging');
-}
 function dragMove(event){
  if(!drag||event.pointerId!==drag.pointerId)return;
  drag.x=event.clientX;drag.y=event.clientY;
- if(!drag.active){
-  if(Math.hypot(drag.x-drag.startX,drag.y-drag.startY)<5)return;
-  startDrag();
- }
  if(!drag.frame)drag.frame=requestAnimationFrame(dragFrame);
 }
 function dragFrame(){
- if(!drag?.active)return;
+ if(!drag)return;
  drag.frame=0;
- drag.ghost.style.transform='translate3d('+(drag.x-drag.startX)+'px,'+(drag.y-drag.startY)+'px,0) scale(1.04)';
+ // Follows the pointer, also while the dialog scrolls under it.
+ const dx=drag.x-drag.startX-(drag.box.left-drag.box0.left),dy=drag.y-drag.startY-(drag.box.top-drag.box0.top);
+ drag.node.style.transform='translate3d('+dx+'px,'+dy+'px,0) scale(1.04)';
  const modal=$('mg-org-modal');
  if(drag.y<60)modal.scrollTop-=14;else if(drag.y>innerHeight-60)modal.scrollTop+=14;
  // The spot nearest the dragged photo; the video's spot is fixed.
- const id=organizerDisplay()[nearestSlot()];
+ const home=drag.slots[drag.home.get(drag.id)];
+ const id=organizerDisplay()[nearestSlot(home.x+dx,home.y+dy)];
  if(id===undefined||id===VIDEO_TILE||id===drag.id)return;
  const from=organizer.order.indexOf(drag.id),to=organizer.order.indexOf(id);
  organizer.order.splice(from,1);organizer.order.splice(to,0,drag.id);
  slideTiles();
 }
-function nearestSlot(){
- const x=drag.x-drag.grabX-drag.box.left,y=drag.y-drag.grabY-drag.box.top;
+function nearestSlot(x,y){
  let best=0,distance=Infinity;
  drag.slots.forEach((slot,index)=>{
   const d=(slot.x-x)**2+(slot.y-y)**2;
@@ -414,9 +398,10 @@ function nearestSlot(){
  });
  return best;
 }
-// Shows each tile at its new spot (relative to where it sits in the page).
+// Shows the other tiles at their new spots (relative to where they sit in the page).
 function slideTiles(){
  organizerDisplay().forEach((id,slot)=>{
+  if(id===drag.id)return;
   const tile=tileNodes.get(id),from=drag.slots[drag.home.get(id)],to=drag.slots[slot];
   const dx=to.x-from.x,dy=to.y-from.y;
   tile.style.transform=dx||dy?'translate3d('+dx+'px,'+dy+'px,0)':'';
@@ -425,38 +410,34 @@ function slideTiles(){
 }
 function dragEnd(event){
  if(!drag||event.pointerId!==drag.pointerId)return;
- const {id,active}=drag,dropped=event.type==='pointerup';
- finishDrag(dropped);
- if(active&&dropped)announce(id);
+ const {id,start}=drag,moved=event.type==='pointerup'&&start.join()!==organizer.order.join();
+ finishDrag();
+ if(moved)announce(id);
  tileNodes.get(id)?.focus({preventScroll:true});
 }
-function finishDrag(settle=false){
+function finishDrag(){
  window.removeEventListener('pointermove',dragMove);
  window.removeEventListener('pointerup',dragEnd);
  window.removeEventListener('pointercancel',dragEnd);
  if(!drag)return;
- const {node,ghost,active,frame}=drag;
+ const {node,frame,start}=drag;
  drag=null;
  if(frame)cancelAnimationFrame(frame);
- document.body.classList.remove('mg-org-dragging');
- if(!active)return;
- // The tiles take their new order in the page and lose their transforms in
- // the same frame, so nothing jumps.
- const list=$('mg-org-list'),slot=list.querySelector('.mg-org-slot');
- list.classList.remove('sorting');
+ // Lands at once: the tiles take their new order in the page and lose their
+ // transforms in the same frame.
+ const list=$('mg-org-list');
+ list.classList.remove('sorting');node.classList.remove('dragging');document.body.classList.remove('mg-org-dragging');
  for(const tile of tileNodes.values())tile.style.transform='';
- if(organizer){for(const id of organizerDisplay())list.insertBefore(tileNodes.get(id),slot);refreshTiles()}
- const done=()=>{ghost.remove();if(drag?.node!==node)node.classList.remove('lifted')};
- if(!settle||!node.isConnected)return done();
- // The dropped photo glides into its spot.
- const to=node.getBoundingClientRect();
- ghost.style.transition='transform .15s ease';
- ghost.style.transform='translate3d('+(to.left-parseFloat(ghost.style.left))+'px,'+(to.top-parseFloat(ghost.style.top))+'px,0)';
- setTimeout(done,160);
+ if(!organizer)return;
+ if(start.join()!==organizer.order.join()){
+  const slot=list.querySelector('.mg-org-slot');
+  for(const id of organizerDisplay())list.insertBefore(tileNodes.get(id),slot);
+ }
+ refreshTiles();
 }
 function cancelDrag(){
  if(!drag)return false;
- if(drag.active&&organizer)organizer.order=drag.start;
+ if(organizer)organizer.order=drag.start;
  finishDrag();
  return true;
 }
@@ -499,7 +480,7 @@ async function loadTemplates(){
  const selected=new Set([...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].map(x=>x.value));
  if(detectedArtworkOrientation&&lastAutoOrientation!==detectedArtworkOrientation){
   selected.clear();
-  // Generate every compatible mockup (each takes about a second); the best 16
+  // Generate every compatible mockup (each takes about a second); the best 17
   // are chosen for Etsy afterwards.
   for(const t of templates.filter(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)))
    selected.add(t.id);
@@ -774,7 +755,7 @@ async function handToWorker(created,file){
   return response.ok;
  }catch{return false} // worker not running here, or the browser blocked it: upload to R2
 }
-let jobCreation=null,pendingApply=null;
+let jobCreation=null,pendingApply=null,pendingApplySaved=Promise.resolve();
 async function linkBatchToArtwork(batchId,artworkId){
  if(!batchId||!artworkId)return;
  if(!(job?.id===batchId&&job.artworkId===artworkId)){
@@ -784,10 +765,18 @@ async function linkBatchToArtwork(batchId,artworkId){
  // Mockups chosen (and arranged) before the draft existed are added now.
  if(pendingApply?.batchId===batchId){
   const pending=pendingApply;pendingApply=null;
-  if(pending.order)await saveOrderToServer(artworkId,pending);
-  else await syncGeneratedJpgs(batchId,pending.templateIds);
+  pendingApplySaved=pending.order?saveOrderToServer(artworkId,pending):syncGeneratedJpgs(batchId,pending.templateIds);
+  await pendingApplySaved;
  }
 }
+// Called by the Product Creator just before it creates the Etsy draft: the
+// mockups chosen and arranged for it are saved first, so draft setup adds them
+// straight after the preset photos instead of racing the draft.
+window.mockupSelectionBeforeDraft=async artworkId=>{
+ await (jobCreation||Promise.resolve()).catch(()=>{});
+ if(activeJobId&&artworkId)await linkBatchToArtwork(activeJobId,artworkId).catch(failure);
+ await pendingApplySaved.catch(()=>{});
+};
 function createJob(options){
  if(jobCreation)return jobCreation;
  jobCreation=createJobNow(options).finally(()=>{jobCreation=null});
@@ -945,7 +934,11 @@ $('mg-deselect-all').addEventListener('click',()=>{
  if(!job)return;selectionByJob.set(job.id,{chosen:new Set()});selectionChanged();
 });
 $('mg-apply-selected').addEventListener('click',()=>act(useResults));
-$('mg-org-modal').addEventListener('scroll',()=>{if(drag?.active)drag.box=$('mg-org-list').getBoundingClientRect()},{passive:true});
+$('mg-org-modal').addEventListener('scroll',()=>{
+ if(!drag)return;
+ drag.box=$('mg-org-list').getBoundingClientRect();
+ if(!drag.frame)drag.frame=requestAnimationFrame(dragFrame);
+},{passive:true});
 const backToSelection=()=>{closeOrganizer();message('Back to selection. Change the ticked mockups, then apply again.')};
 $('mg-org-back').addEventListener('click',backToSelection);
 $('mg-org-close').addEventListener('click',backToSelection);
@@ -974,7 +967,7 @@ initialLoad.then(()=>{
 let lastWorkerCheck=Date.now();
 const batchRunning=()=>!!job&&!job.paused&&job.templates.some(t=>t.status==='queued'||t.status==='processing');
 setInterval(()=>{
- if(preparing||document.hidden)return;
+ if(preparing||document.hidden||organizer)return;
  const running=batchRunning();
  // Finished mockups appear within about 2 s while a batch is running.
  if(running)void showJob(job.id,{quiet:true}).catch(failure);

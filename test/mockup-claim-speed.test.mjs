@@ -54,27 +54,27 @@ test('a waiting batch says when the PC worker is busy elsewhere',()=>{
  assert.match(server,/activeApp: online \? cropWorkerHeartbeat\.activeApp/);
 });
 
-test('every compatible template is generated; nothing is ticked until picked, at most 16',async()=>{
+test('every compatible template is generated; nothing is ticked until picked, at most 17',async()=>{
  const vm=await import('node:vm');
  const client=read('src/mockup-generator-client.js');
- assert.match(client,/const ETSY_MOCKUP_SLOTS=16;/);
+ assert.match(client,/const ETSY_MOCKUP_SLOTS=17;/);
  assert.doesNotMatch(client,/templateFitsOrientation\(t,detectedArtworkOrientation\)\)\.slice\(0,16\)/);
  // Run the selection model on its own.
- const start=client.indexOf('const ETSY_MOCKUP_SLOTS=16;'),end=client.indexOf('let lastStatus=');
+ const start=client.indexOf('const ETSY_MOCKUP_SLOTS=17;'),end=client.indexOf('let lastStatus=');
  const context={job:null,messages:[],message(text){context.messages.push(text)}};
  vm.runInNewContext(client.slice(start,end)+';this.api={isSelected,setSelected,selectionByJob,firstSlots};',context);
  const {isSelected,setSelected,selectionByJob,firstSlots}=context.api;
  context.job={id:'b',templates:Array.from({length:28},(_,i)=>({id:'t'+i,status:'completed'}))};
  const ticked=()=>context.job.templates.filter(t=>isSelected('b',t.id)).length;
  assert.equal(ticked(),0,'previews start unticked');
- selectionByJob.set('b',{chosen:firstSlots(context.job)}); // "Select first 16"
- assert.equal(ticked(),16);
+ selectionByJob.set('b',{chosen:firstSlots(context.job)}); // "Select first 17"
+ assert.equal(ticked(),17);
  assert.equal(isSelected('b','t20'),false);
- assert.equal(setSelected('b','t20',true),false,'a 17th mockup does not fit');
- assert.match(context.messages.at(-1),/room for 16 mockups/);
+ assert.equal(setSelected('b','t20',true),false,'an 18th mockup does not fit');
+ assert.match(context.messages.at(-1),/room for 17 mockups next to the 3 preset photos/);
  setSelected('b','t0',false);
  assert.equal(setSelected('b','t20',true),true,'swapping one in works');
- assert.equal(ticked(),16);
+ assert.equal(ticked(),17);
  assert.equal(isSelected('b','t20'),true);
 });
 

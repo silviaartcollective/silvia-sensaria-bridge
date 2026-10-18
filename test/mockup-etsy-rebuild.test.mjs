@@ -79,7 +79,7 @@ test('PSD jobs render natively on the PC worker with no browser fallback',()=>{
 test('only manually selected JPGs are attached to Etsy and saved for restart recovery',()=>{
  const server=read('src/server.mjs');
  assert.match(server,/if\(!chosen\.size\)throw Error\('Select completed mockups/);
- assert.match(server,/manifest\.selectedMockupTemplates\[job\.id\]=\[\.\.\.chosen\]/);
+ assert.match(server,/current\.selectedMockupTemplates\[job\.id\]=\[\.\.\.chosen\]/);
  assert.match(server,/Object\.entries\(manifest\.selectedMockupTemplates\|\|\{\}\)/);
  assert.doesNotMatch(server,/jobId:verifiedJob\.id\s*\}\)\.catch/);
 });
