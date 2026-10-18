@@ -61,6 +61,23 @@ test('a picked master waits in staging/ and is moved into its artwork folder at 
  assert.ok(!objects.has(staged.key),'the staged copy is removed');
 });
 
+test('the browser-made 2400 px Etsy copy moves with the master and is what Etsy receives',async()=>{
+ const master=Buffer.alloc(4000,3),etsy=Buffer.alloc(900,5);
+ const staged=await storage.stageMasterUpload({filename:'Dawn.png',contentType:'image/png',size:master.length});
+ assert.equal(staged.etsyKey,'staging/'+staged.stageId+'/etsy.jpg');
+ await fetch(staged.uploadUrl,{method:'PUT',headers:{'content-type':'image/png'},body:master});
+ await fetch(staged.etsyUploadUrl,{method:'PUT',headers:{'content-type':'image/jpeg'},body:etsy});
+ const reservation=await storage.reserveArtworkUpload({title:'Dawn',orientation:'portrait',
+  master:{filename:'Dawn.png',contentType:'image/png',size:master.length},stagedMaster:{stageId:staged.stageId}});
+ const masterKey=reservation.uploads.master.key;
+ const etsyKey=masterKey.replace(/-master\.png$/,'-etsy.jpg');
+ assert.notEqual(etsyKey,masterKey);
+ assert.deepEqual(objects.get(etsyKey).body,etsy);
+ assert.ok(!objects.has(staged.etsyKey),'the staged Etsy copy is removed');
+ const manifest=await storage.loadArtworkManifest(reservation.artworkId);
+ assert.equal(manifest.master.etsyKey,etsyKey);
+});
+
 test('a staged master of the wrong size falls back to a normal upload',async()=>{
  const staged=await storage.stageMasterUpload({filename:'a.jpg',contentType:'image/jpeg',size:100});
  await fetch(staged.uploadUrl,{method:'PUT',body:Buffer.alloc(120,1)});

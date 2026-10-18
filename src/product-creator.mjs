@@ -627,6 +627,52 @@ async function queueCropJob(artworkId){
 // folder is created until the Etsy draft is created; then the server moves the
 // staged file into artworks/<ID>/ without uploading it again.
 let stagedMaster=null;
+// EXIF orientation (1 = upright) from the TIFF block of a JPEG's APP1 segment.
+function exifOrientation(bytes,tiff){
+ try{
+  const view=new DataView(bytes.buffer,bytes.byteOffset),little=bytes[tiff]===0x49;
+  const ifd=tiff+view.getUint32(tiff+4,little),count=view.getUint16(ifd,little);
+  for(let i=0;i<count;i++){
+   const entry=ifd+2+i*12;
+   if(view.getUint16(entry,little)===0x0112)return view.getUint16(entry+8,little);
+  }
+ }catch{}
+ return 1;
+}
+// Width, height and orientation from a JPEG or PNG header, without decoding the image.
+async function imageHeaderSize(file){
+ const bytes=new Uint8Array(await file.slice(0,262144).arrayBuffer());
+ if(bytes[0]===0x89&&bytes[1]===0x50){
+  const view=new DataView(bytes.buffer);
+  return {width:view.getUint32(16),height:view.getUint32(20),orientation:1};
+ }
+ if(bytes[0]!==0xff||bytes[1]!==0xd8)return null;
+ let offset=2,orientation=1;
+ while(offset+9<bytes.length){
+  if(bytes[offset]!==0xff){offset++;continue}
+  const marker=bytes[offset+1];
+  if(marker===0xd8||marker===0x01||(marker>=0xd0&&marker<=0xd7)){offset+=2;continue}
+  const length=bytes[offset+2]*256+bytes[offset+3];
+  if(marker===0xe1&&bytes[offset+4]===0x45&&bytes[offset+5]===0x78)orientation=exifOrientation(bytes,offset+10);
+  if(marker>=0xc0&&marker<=0xcf&&marker!==0xc4&&marker!==0xc8&&marker!==0xcc)
+   return {height:bytes[offset+5]*256+bytes[offset+6],width:bytes[offset+7]*256+bytes[offset+8],orientation};
+  offset+=2+length;
+ }
+ return null;
+}
+async function etsyCopyOf(file){
+ try{
+  const size=await imageHeaderSize(file);
+  // A rotated or mirrored photo is left to the server, which applies its EXIF orientation.
+  if(!size||!size.width||!size.height||size.orientation!==1)return null;
+  const scale=Math.min(1,2400/Math.max(size.width,size.height));
+  const bitmap=await createImageBitmap(file,{imageOrientation:'none',resizeWidth:Math.max(1,Math.round(size.width*scale)),
+   resizeHeight:Math.max(1,Math.round(size.height*scale)),resizeQuality:'high'});
+  const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;
+  canvas.getContext('2d').drawImage(bitmap,0,0);bitmap.close();
+  return await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.92));
+ }catch{return null}
+}
 const masterSignature=file=>file?file.name+'|'+file.size+'|'+file.lastModified:'';
 window.stageMasterArtwork=()=>{
  const master=masterFileInput.files?.[0];
@@ -642,7 +688,11 @@ window.stageMasterArtwork=()=>{
    body:JSON.stringify({filename:master.name,contentType:master.type,size:master.size})});
   const data=await readJsonResponse(response,'Master upload');
   if(!response.ok)throw new Error(data.error||'Could not start the master upload');
+  // A 2400 px copy for Etsy, made here so the server never resizes the master.
+  const etsyCopy=etsyCopyOf(master).then(blob=>blob&&data.etsyUploadUrl?putFile(data.etsyUploadUrl,blob,'image/jpeg'):null)
+   .catch(()=>null);
   await putFile(data.uploadUrl,master,data.contentType);
+  await etsyCopy;
   if(stagedMaster===record){
    uploadStatus.className='status ok';
    uploadStatus.textContent='Master artwork uploaded to R2. Its artwork ID and folders are created when you create the Etsy draft.';

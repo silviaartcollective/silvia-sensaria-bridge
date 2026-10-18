@@ -158,6 +158,7 @@ import {
   uploadListingImage,
   setListingImageRank,
   uploadListingVideo,
+  attachListingVideo,
   updateListing,
   createDraftListing,
   getShopReceipt
@@ -987,6 +988,36 @@ function canonicalCustomMockupOrder(items) {
   return [...canonical, ...values.slice(canonicalCount)];
 }
 
+// Etsy-ready (2400 px) copies are made by the browser (master) and the PC
+// worker (generated mockups), so the server does not download and resize
+// full-size originals with Render's small CPU and memory. Preset photos are
+// resized once and kept in memory.
+const presetEtsyImages=new Map();
+async function etsyReadyImage(key,{etsyKey=''}={}){
+  if(etsyKey){
+    try{return {...await getArtworkObject(etsyKey),etsyReady:true}}catch{}
+  }
+  if(presetEtsyImages.has(key))return presetEtsyImages.get(key);
+  const optimized={...await optimizeEtsyImageObject(await getArtworkObject(key)),etsyReady:true};
+  if(PRESET_MEDIA.some(item=>item.key===key))presetEtsyImages.set(key,optimized);
+  return optimized;
+}
+const etsyKeyForMedia=(manifest,key)=>key===manifest?.master?.key?manifest.master.etsyKey||'':
+  (manifest?.mockups||[]).find(m=>m.key===key)?.etsyKey||'';
+
+// The preset video is uploaded to Etsy once per shop; later drafts attach it
+// by its video_id instead of downloading and uploading it again.
+const PRESET_VIDEO_IDS_KEY='presets/listing-media/etsy-video-ids.json';
+async function presetVideoId(shopId,key){
+  try{const ids=await getJsonObject(PRESET_VIDEO_IDS_KEY);const row=ids?.[String(shopId)];return row?.key===key?row.videoId:null}
+  catch{return null}
+}
+async function savePresetVideoId(shopId,key,videoId){
+  let ids={};try{ids=await getJsonObject(PRESET_VIDEO_IDS_KEY)||{}}catch{}
+  ids[String(shopId)]={key,videoId,savedAt:new Date().toISOString()};
+  await putJsonObject(PRESET_VIDEO_IDS_KEY,ids);
+}
+
 async function optimizeEtsyImageObject(object) {
   if (!object?.body) return object;
   try {
@@ -1236,16 +1267,19 @@ async function prepareMediaPlan({ session, manifest }) {
     ? sortResult.preparedBuffers
     : new Map();
 
+  const reusableVideoId = videoPreset ? await presetVideoId(session.shop.shop_id, videoPreset.key) : null;
   const needBuffers = mediaItems.filter((item) => {
     if (String(item.contentType || '').startsWith('video/')) {
+      if (reusableVideoId) return false; // attached by its Etsy video_id
       return !(manifest.etsyMedia?.video?.videoId && manifest.etsyMedia?.video?.key === item.key);
     }
     return !existingImages.get(item.key)?.listingImageId && !preparedBuffers.has(item.key);
   });
 
-  const fetched = await mapWithConcurrency(needBuffers, 6, async (item) => {
-    const object = await getArtworkObject(item.key);
-    return [item.key, object];
+  const fetched = await mapWithConcurrency(needBuffers, 4, async (item) => {
+    if (String(item.contentType || '').startsWith('image/'))
+      return [item.key, await etsyReadyImage(item.key, { etsyKey: etsyKeyForMedia(manifest, item.key) })];
+    return [item.key, await getArtworkObject(item.key)];
   });
   const objectByKey = new Map(fetched);
 
@@ -1259,14 +1293,15 @@ async function prepareMediaPlan({ session, manifest }) {
   const imageKeys = mediaItems
     .filter((item) => String(item.contentType || '').startsWith('image/'))
     .map((item) => item.key);
-  await mapWithConcurrency(imageKeys, 3, async (key) => {
+  await mapWithConcurrency(imageKeys, 2, async (key) => {
     const object = objectByKey.get(key);
-    if (!object) return;
+    if (!object || object.etsyReady) return;
     objectByKey.set(key, await optimizeEtsyImageObject(object));
   });
 
   return {
     mediaItems,
+    reusableVideoId,
     missingPresetRoles,
     installedPresetRoles:installedPresets.map(item=>item.role),
     objectByKey,
@@ -1340,20 +1375,31 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     videoItem &&
     !(manifest.etsyMedia.video?.videoId && manifest.etsyMedia.video?.key === videoItem.key)
   ) {
-    const object = plan.objectByKey.get(videoItem.key) || await getArtworkObject(videoItem.key);
     const filename = String(videoItem.originalFilename || videoItem.key.split('/').pop() || 'listing-video.mov');
-    const uploaded = await withEtsyListingRetry(() => uploadListingVideo({
-      shopId: session.shop.shop_id,
-      listingId,
-      videoBuffer: object.body,
-      filename,
-      contentType: object.contentType || videoItem.contentType || 'video/quicktime',
-      keystring: session.keystring,
-      sharedSecret: session.sharedSecret,
-      accessToken: session.accessToken
-    }), { attempts: 8, baseDelayMs: 180 });
+    let uploaded = null;
+    if (plan.reusableVideoId) {
+      uploaded = await withEtsyListingRetry(() => attachListingVideo({
+        shopId: session.shop.shop_id, listingId, videoId: plan.reusableVideoId, name: filename,
+        keystring: session.keystring, sharedSecret: session.sharedSecret, accessToken: session.accessToken
+      }), { attempts: 4, baseDelayMs: 180 }).catch(() => null);
+    }
+    if (!uploaded) {
+      const object = plan.objectByKey.get(videoItem.key) || await getArtworkObject(videoItem.key);
+      uploaded = await withEtsyListingRetry(() => uploadListingVideo({
+        shopId: session.shop.shop_id,
+        listingId,
+        videoBuffer: object.body,
+        filename,
+        contentType: object.contentType || videoItem.contentType || 'video/quicktime',
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      }), { attempts: 8, baseDelayMs: 180 });
+      if (videoItem.presetRole === 'video' && uploaded?.video_id)
+        await savePresetVideoId(session.shop.shop_id, videoItem.key, uploaded.video_id).catch(() => {});
+    }
     video = {
-      videoId: uploaded.video_id || null,
+      videoId: uploaded.video_id || plan.reusableVideoId || null,
       key: videoItem.key,
       filename
     };
@@ -1415,7 +1461,7 @@ async function syncRegularMockupsToEtsy(artworkId){
  // artwork. The first image should always be the actual master, not an
  // arbitrary regular mockup. Only add a cover when Etsy has ZERO images.
  if(remote.length===0&&manifest.master?.key){
-  const source=await optimizeEtsyImageObject(await getArtworkObject(manifest.master.key));
+  const source=await etsyReadyImage(manifest.master.key,{etsyKey:manifest.master.etsyKey||''});
   const filename=String(manifest.master.originalFilename||'master.jpg');
   const cover=await withEtsyListingRetry(()=>uploadListingImage({
    shopId:session.shop.shop_id,listingId,imageBuffer:source.body,filename,
@@ -1443,7 +1489,7 @@ async function syncRegularMockupsToEtsy(artworkId){
  for(const item of needed){
   if(count>=20)throw Error('Etsy draft reached its 20-photo limit; '+(needed.length-uploaded)+
    ' regular mockup(s) remain saved in R2.');
-  const optimized=await optimizeEtsyImageObject(await getArtworkObject(item.key));
+  const optimized=await etsyReadyImage(item.key,{etsyKey:item.etsyKey||''});
   const result=await withEtsyListingRetry(()=>uploadListingImage({
    shopId:session.shop.shop_id,listingId,imageBuffer:optimized.body,
    filename:item.originalFilename||item.key.split('/').pop(),
@@ -2034,6 +2080,12 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
         inflightDraftSetups.has(artworkId))){
         return {ok:true,pendingSetup:true,message:'Selected JPGs saved in R2; they will sync after draft setup.'};
       }
+      // Before the draft exists only the choice is kept. Copying the JPGs into the
+      // artwork now would turn the new draft from master + presets into a
+      // mockup-only draft; they are added (in the chosen order) once it exists.
+      if(!manifest.etsyDraftListingId)
+        return {ok:true,prepared:0,uploaded:0,pendingDraft:true,
+          r2Prefix:'artworks/'+artworkId+'/',message:'Selected PSD mockups are added when the Etsy draft is created.'};
       const current=(manifest.mockups||[]).slice(0,17);
       const existingSource=new Set(current.map(x=>x.generatedFromKey).filter(Boolean));
       const newOutputs=outputs.filter(item=>!existingSource.has(item.outputKey));
@@ -2046,15 +2098,18 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
         if(existingSource.has(t.outputKey)||current.length>=17)continue;
         const index=current.length,key=mockupObjectKey(artworkId,index,'jpg');
         await copyArtworkObject(t.outputKey,key);
+        // The worker's 2400 px Etsy copy is kept beside the artwork's mockup.
+        let etsyKey='';
+        if(t.etsyKey){
+          etsyKey=key.replace(/\.jpg$/,'.etsy.jpg');
+          await copyArtworkObject(t.etsyKey,etsyKey).catch(()=>{etsyKey=''});
+        }
         current.push({index,originalFilename:t.outputName,key,contentType:'image/jpeg',
-          generatedFromKey:t.outputKey,sourceJobId:job.id});
+          generatedFromKey:t.outputKey,sourceJobId:job.id,etsyKey});
         existingSource.add(t.outputKey);prepared++;
       }
       manifest.mockups=current;
       await saveArtworkManifest(manifest);
-      if(!manifest.etsyDraftListingId)
-        return {ok:true,prepared,uploaded:0,pendingDraft:true,
-          r2Prefix:'artworks/'+artworkId+'/',message:'Completed PSDs stored in R2 for the future Etsy draft.'};
       const session=await getEtsySession();
       const listingId=Number(manifest.etsyDraftListingId);
       const latestListing=await getListing({listingId,
@@ -2079,8 +2134,7 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
       let uploaded=0;
       const uploadedReceipts=[];
       for(const item of pendingSelected){
-        const original=await getArtworkObject(item.key);
-        const optimized=await optimizeEtsyImageObject(original);
+        const optimized=await etsyReadyImage(item.key,{etsyKey:item.etsyKey||''});
         const result=await withEtsyListingRetry(()=>uploadListingImage({
           shopId:session.shop.shop_id,listingId,imageBuffer:optimized.body,
           filename:item.originalFilename,contentType:optimized.contentType||'image/jpeg',
@@ -4880,11 +4934,11 @@ const server = http.createServer(async (req, res) => {
           void queueRegularMockupEtsySync(setupId).catch(
             error=>console.error('Regular mockup catch-up after draft setup failed:',error)
           );
-          if(manifest.etsyDraftSetup?.status==='completed'){
-            void reconcileCompletedMockupsForArtwork(setupId).catch(
-              error=>console.error('PSD catch-up after Etsy draft setup failed:',error)
-            );
-          }
+          // Selected PSD mockups (and the organizer's order) are added even when
+          // another setup step (e.g. the video) failed: the draft exists.
+          void reconcileCompletedMockupsForArtwork(setupId).catch(
+            error=>console.error('PSD catch-up after Etsy draft setup failed:',error)
+          );
         }
       })();
       return sendJson(res,201,{ok:true,processing:true,

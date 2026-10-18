@@ -321,13 +321,15 @@ async function processPSDJob(app,claim){
    return;
   }
   await stage('Uploading and verifying '+claim.item.outputName);
-  // The full JPG and a 900 px preview for the Product Creator go up together.
-  const preview=claim.output.previewUploadUrl?sharp(outputPath).resize(900,900,{fit:'inside',withoutEnlargement:true})
-   .jpeg({quality:82}).toBuffer().then(body=>uploadBuffer(claim.output.previewUploadUrl,body)).then(()=>true,
-    error=>{console.error('['+app.name+'] Preview upload failed (the full JPG is fine):',error.message);return false}):false;
-  const [,previewUploaded]=await Promise.all([uploadFile(claim.output.uploadUrl,outputPath),preview]);
+  // The full JPG goes up with a 900 px preview for the Product Creator and a
+  // 2400 px copy the server uploads to Etsy without resizing it on Render.
+  const sized=(url,side,quality,label)=>url?sharp(outputPath).resize(side,side,{fit:'inside',withoutEnlargement:true})
+   .jpeg({quality,chromaSubsampling:'4:4:4'}).toBuffer().then(body=>uploadBuffer(url,body)).then(()=>true,
+    error=>{console.error('['+app.name+'] '+label+' upload failed (the full JPG is fine):',error.message);return false}):false;
+  const [,previewUploaded,etsyUploaded]=await Promise.all([uploadFile(claim.output.uploadUrl,outputPath),
+   sized(claim.output.previewUploadUrl,900,82,'Preview'),sized(claim.output.etsyUploadUrl,2400,90,'Etsy copy')]);
   measure('generatedJpgR2UploadMs');
-  await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping,previewUploaded));
+  await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping,previewUploaded,etsyUploaded));
   measure('serverVerificationMs');
   completionRecorded=true;
   console.log('['+app.name+'] PSD_TIMINGS '+JSON.stringify({

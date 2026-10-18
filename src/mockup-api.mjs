@@ -8,7 +8,7 @@ import {
  controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
  classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput,
  hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT,knownMockupArtworkTarget,withMockupJobLock,
- jpegDimensions,mockupPreviewKey,linkMockupArtwork
+ jpegDimensions,mockupPreviewKey,mockupEtsyKey,linkMockupArtwork
 } from './mockup-generator.mjs';
 import {
  signedArtworkUploadUrl,signedArtworkUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
@@ -134,10 +134,11 @@ async function claimPayloads(jobId,claimed){
   // Known templates (e.g. mockup 19's layer "5") use the same layer the server verifies.
   const known=knownMockupArtworkTarget(stored.name);
   const template=stored.mapping?.path||!known?stored:{...stored,mapping:{path:known}};
-  const key=mockupOutputKey(jobId,template.id),previewKey=mockupPreviewKey(key);
+  const key=mockupOutputKey(jobId,template.id),previewKey=mockupPreviewKey(key),etsyKey=mockupEtsyKey(key);
   return {item,template,templateUrl:await signedArtworkUrl(template.key,3600),artworkUrl,
    output:{key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600),
-    previewKey,previewUploadUrl:await signedArtworkUploadUrl(previewKey,'image/jpeg',3600)}};
+    previewKey,previewUploadUrl:await signedArtworkUploadUrl(previewKey,'image/jpeg',3600),
+    etsyKey,etsyUploadUrl:await signedArtworkUploadUrl(etsyKey,'image/jpeg',3600)}};
  }));
 }
 function makeError(error){
@@ -350,11 +351,17 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
      const preview=await getArtworkObjectStart(mockupPreviewKey(key),4096).catch(()=>null);
      if(preview?.body?.[0]===255&&preview.body[1]===216&&preview.totalSize<5*1024*1024)previewKey=mockupPreviewKey(key);
     }
-    const old=item.outputKey,oldPreview=item.previewKey;
-    const result=await completeMockupItem(id,owner,itemId,{outputKey:key,previewKey,
+    let etsyKey=null;
+    if(body.etsyUploaded===true){
+     const copy=await getArtworkObjectStart(mockupEtsyKey(key),4096).catch(()=>null);
+     if(copy?.body?.[0]===255&&copy.body[1]===216&&copy.totalSize<20*1024*1024)etsyKey=mockupEtsyKey(key);
+    }
+    const old=item.outputKey,oldPreview=item.previewKey,oldEtsy=item.etsyKey;
+    const result=await completeMockupItem(id,owner,itemId,{outputKey:key,previewKey,etsyKey,
      dimensions:{width:metadata.width,height:metadata.height},mapping:str(body.mapping)});
     if(old&&old!==key)await deleteArtworkObject(old).catch(()=>{});
     if(oldPreview&&oldPreview!==previewKey)await deleteArtworkObject(oldPreview).catch(()=>{});
+    if(oldEtsy&&oldEtsy!==etsyKey)await deleteArtworkObject(oldEtsy).catch(()=>{});
     // Successful JPG verification is the trigger; do not wait for all PSDs.
     void Promise.resolve().then(()=>onMockupCompleted(result)).catch(
       error=>console.error('PSD completion notification failed:',error)
