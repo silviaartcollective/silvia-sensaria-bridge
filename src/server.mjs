@@ -2153,7 +2153,10 @@ async function etsyPhotoOrganizer({artworkId='',jobId='',templateIds=[]}){
   const manifest=artworkId?await loadArtworkManifest(artworkId).catch(()=>null):null;
   const saved=manifest?.etsyPhotoOrder?.tiles||[];
   const presets=(await presetMediaStatus()).items;
-  const video=presets.some(p=>p.role==='video'&&p.exists);
+  // The preset video, shown fixed in the second spot as Etsy does. The browser
+  // loads its first frame straight from R2.
+  const videoPreset=presets.find(p=>p.role==='video'&&p.exists);
+  const video=videoPreset?{label:'Preset video',src:await signedArtworkUrl(videoPreset.key,3600).catch(()=>null)}:null;
   const thumbFor=key=>'/api/etsy-photo-organizer/thumb?key='+encodeURIComponent(key);
   if(manifest?.etsyDraftListingId){
     const session=await getEtsySession();

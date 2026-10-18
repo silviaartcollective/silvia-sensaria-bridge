@@ -217,7 +217,13 @@ async function useResults(){
 }
 
 // ------------------------------------------------------------ photo organizer
+// Laid out like Etsy's "Photo and video" editor: square tiles in rows of six,
+// the first photo Featured, and the preset video fixed in the second spot, where
+// Etsy shows it. Photos are dragged (mouse, pen or touch) or moved with the
+// arrow keys; the other tiles slide out of the way.
 let organizer=null,localMaster={file:null,url:''};
+const VIDEO_TILE='video';
+let tileNodes=new Map(),drag=null;
 function localMasterPreview(){
  const file=$('master_file').files?.[0];
  if(!file)return '';
@@ -236,60 +242,186 @@ async function openOrganizer(batchId,templateIds){
  const data=await response.json().catch(()=>({}));
  if(!response.ok||!data.ok)throw Error(data.error||'Could not load the Etsy photos (HTTP '+response.status+').');
  organizer={batchId,templateIds,tiles:new Map(data.tiles.map(t=>[t.id,t])),order:[...data.order],
-  mode:data.mode,limit:data.limit||20,video:!!data.video};
- $('mg-preview-panel').classList.add('organizing');
+  mode:data.mode,limit:data.limit||20,video:data.video?(typeof data.video==='object'?data.video:{}):null};
+ const modal=$('mg-org-modal');
+ if(modal.parentElement!==document.body)document.body.append(modal);
+ modal.hidden=false;modal.scrollTop=0;document.body.classList.add('mg-org-open');
  renderOrganizer();
+ tileNodes.get(organizer.order[0])?.focus({preventScroll:true});
  message('Arrange the Etsy photos, then save the order.');
 }
 function closeOrganizer(){
- organizer=null;
- $('mg-preview-panel').classList.remove('organizing');
+ finishDrag();
+ organizer=null;tileNodes=new Map();
+ $('mg-org-modal').hidden=true;document.body.classList.remove('mg-org-open');
+ $('mg-org-list').replaceChildren();
  renderPreviews();
 }
-function moveTile(from,to){
- if(!organizer||from===to||to<0||to>=organizer.order.length)return;
- const [id]=organizer.order.splice(from,1);
- organizer.order.splice(to,0,id);
- renderOrganizer();
+// Tile ids in grid order: the photos, with the video in the second spot.
+function organizerDisplay(){
+ const ids=[...organizer.order];
+ if(organizer.video)ids.splice(Math.min(1,ids.length),0,VIDEO_TILE);
+ return ids;
 }
-let draggedIndex=-1;
+function photoTile(id){
+ const tile=organizer.tiles.get(id)||{label:id};
+ const node=create('div','',{class:'mg-org-tile',role:'listitem',tabindex:'0',title:tile.label||''});
+ const src=tile.thumb||(tile.kind==='master'?localMasterPreview():'');
+ if(src)node.append(create('img','',{src,alt:'',loading:'lazy',draggable:'false'}));
+ else node.append(create('div',tile.label||'Photo',{class:'mg-org-blank'}));
+ node.append(create('b','Featured',{class:'mg-org-badge'}),create('span',tile.label||'',{class:'mg-org-caption'}));
+ node.addEventListener('pointerdown',event=>pressTile(event,id,node));
+ node.addEventListener('keydown',event=>keyMove(event,id));
+ return node;
+}
+function videoTile(){
+ const label=organizer.video.label||'Preset video';
+ const node=create('div','',{class:'mg-org-tile mg-org-video',role:'listitem',
+  'aria-label':label+', Featured video. Etsy shows it second.',title:label+': Etsy shows it in the second spot.'});
+ if(organizer.video.src){
+  const video=create('video','',{src:organizer.video.src+'#t=0.5',preload:'metadata',muted:'',playsinline:'','aria-hidden':'true'});
+  video.muted=true;video.addEventListener('error',()=>video.remove());
+  node.append(video);
+ }
+ node.append(create('span','',{class:'mg-org-play','aria-hidden':'true'}),create('b','Featured',{class:'mg-org-badge'}),
+  create('span',label,{class:'mg-org-caption'}));
+ return node;
+}
 function renderOrganizer(){
  if(!organizer)return;
- const list=$('mg-org-list');list.replaceChildren();
- organizer.order.forEach((id,index)=>{
-  const tile=organizer.tiles.get(id)||{label:id};
-  const item=create('div','',{class:'mg-org-item',draggable:'true','data-index':String(index)});
-  const src=tile.thumb||(tile.kind==='master'?localMasterPreview():'');
-  if(src)item.append(create('img','',{src,alt:tile.label||'Etsy photo',loading:'lazy',draggable:'false'}));
-  else item.append(create('div',tile.label||'Photo',{class:'mg-org-blank'}));
-  item.append(create('b',index===0?'Featured':String(index+1),{class:'mg-org-rank'+(index===0?' featured':'')}));
-  item.append(create('span',tile.label||''));
-  const moves=create('div','',{class:'mg-org-move'});
-  const earlier=create('button','←',{type:'button','aria-label':'Move earlier'});
-  const later=create('button','→',{type:'button','aria-label':'Move later'});
-  earlier.disabled=index===0;later.disabled=index===organizer.order.length-1;
-  earlier.addEventListener('click',()=>moveTile(index,index-1));
-  later.addEventListener('click',()=>moveTile(index,index+1));
-  moves.append(earlier,later);item.append(moves);
-  item.addEventListener('dragstart',event=>{
-   draggedIndex=index;item.classList.add('dragging');
-   event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',String(index));
-  });
-  item.addEventListener('dragend',()=>{draggedIndex=-1;item.classList.remove('dragging')});
-  item.addEventListener('dragover',event=>{if(draggedIndex>=0){event.preventDefault();item.classList.add('drop-target')}});
-  item.addEventListener('dragleave',()=>item.classList.remove('drop-target'));
-  item.addEventListener('drop',event=>{
-   event.preventDefault();item.classList.remove('drop-target');
-   if(draggedIndex>=0)moveTile(draggedIndex,index);
-  });
-  list.append(item);
- });
+ tileNodes=new Map(organizer.order.map(id=>[id,photoTile(id)]));
+ if(organizer.video)tileNodes.set(VIDEO_TILE,videoTile());
+ const list=$('mg-org-list');
+ list.replaceChildren(...organizerDisplay().map(id=>tileNodes.get(id)));
  const remaining=organizer.limit-organizer.order.length;
- if(remaining>0)list.append(create('div',remaining+' photo slot'+(remaining===1?'':'s')+' remaining',{class:'mg-org-slot'}));
- $('mg-org-status').textContent=organizer.order.length+' of '+organizer.limit+' Etsy photos. The first is the Featured photo.'+
-  (organizer.video?' The video keeps its own spot on Etsy.':'')+
-  (organizer.mode==='live'?'':' Nothing is uploaded until the Etsy draft exists; this order is used then.');
+ if(remaining>0)list.append(create('div',remaining+' more photo'+(remaining===1?'':'s')+' can be added',
+  {class:'mg-org-slot','aria-hidden':'true'}));
+ refreshTiles();
+ $('mg-org-count').textContent=organizer.order.length+' of '+organizer.limit+' photos'+(organizer.video?' and 1 video':'');
+ $('mg-org-status').textContent=organizer.mode==='live'?'Saving re-orders the photos on the Etsy draft.':
+  'Nothing is uploaded yet. This order is used when the Etsy draft is created.';
  $('mg-org-save').textContent=organizer.mode==='live'?'Save order to Etsy':'Save order';
+}
+function refreshTiles(){
+ const total=organizer.order.length;
+ organizer.order.forEach((id,index)=>{
+  const node=tileNodes.get(id);
+  node.querySelector('.mg-org-badge').hidden=index!==0;
+  node.setAttribute('aria-label','Photo '+(index+1)+' of '+total+(index===0?', Featured':'')+': '+
+   (organizer.tiles.get(id)?.label||'Photo'));
+ });
+}
+// Puts the tiles in the current order; moved tiles slide from where they were.
+function arrange(){
+ const list=$('mg-org-list'),nodes=[...tileNodes.values()];
+ const animate=!matchMedia('(prefers-reduced-motion: reduce)').matches;
+ const before=new Map(nodes.map(node=>[node,node.getBoundingClientRect()]));
+ const slot=list.querySelector('.mg-org-slot');
+ for(const id of organizerDisplay())list.insertBefore(tileNodes.get(id),slot);
+ refreshTiles();
+ if(!animate)return;
+ for(const node of nodes){node.style.transition='none';node.style.transform=''}
+ const moved=[];
+ for(const node of nodes){
+  const was=before.get(node),now=node.getBoundingClientRect();
+  const dx=was.left-now.left,dy=was.top-now.top;
+  if(Math.abs(dx)<1&&Math.abs(dy)<1)continue;
+  node.style.transform='translate('+dx+'px,'+dy+'px)';moved.push(node);
+ }
+ void list.offsetWidth;
+ for(const node of moved){node.style.transition='transform .18s ease';node.style.transform=''}
+}
+function moveTo(id,to){
+ const from=organizer.order.indexOf(id);
+ to=Math.max(0,Math.min(organizer.order.length-1,to));
+ if(from<0||from===to)return false;
+ organizer.order.splice(from,1);organizer.order.splice(to,0,id);
+ arrange();
+ return true;
+}
+function announce(id){
+ const index=organizer.order.indexOf(id);
+ $('mg-org-live').textContent=(organizer.tiles.get(id)?.label||'Photo')+' moved to photo '+(index+1)+
+  (index===0?', the Featured photo.':'.');
+}
+function keyMove(event,id){
+ if(!organizer||drag)return;
+ const from=organizer.order.indexOf(id);
+ const columns=getComputedStyle($('mg-org-list')).gridTemplateColumns.split(' ').length||6;
+ const target={ArrowLeft:from-1,ArrowRight:from+1,ArrowUp:from-columns,ArrowDown:from+columns,
+  Home:0,End:organizer.order.length-1}[event.key];
+ if(target===undefined)return;
+ event.preventDefault();
+ if(moveTo(id,target))announce(id);
+ tileNodes.get(id).focus({preventScroll:false});
+}
+// A press becomes a drag once the pointer moves a few pixels.
+function pressTile(event,id,node){
+ if(!organizer||drag||event.button!==0)return;
+ drag={id,node,pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,active:false,
+  start:[...organizer.order]};
+ window.addEventListener('pointermove',dragMove);
+ window.addEventListener('pointerup',dragEnd);
+ window.addEventListener('pointercancel',dragEnd);
+}
+function startDrag(event){
+ const {node}=drag,rect=node.getBoundingClientRect();
+ drag.active=true;drag.offsetX=event.clientX-rect.left;drag.offsetY=event.clientY-rect.top;
+ const ghost=node.cloneNode(true);
+ ghost.className='mg-org-tile mg-org-ghost';ghost.removeAttribute('tabindex');ghost.setAttribute('aria-hidden','true');
+ Object.assign(ghost.style,{width:rect.width+'px',height:rect.height+'px',left:rect.left+'px',top:rect.top+'px',
+  transition:'none',transform:'scale(1.05)'});
+ document.body.append(ghost);drag.ghost=ghost;
+ node.classList.add('lifted');document.body.classList.add('mg-org-dragging');
+}
+function dragMove(event){
+ if(!drag||event.pointerId!==drag.pointerId)return;
+ if(!drag.active){
+  if(Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)<5)return;
+  startDrag(event);
+ }
+ drag.ghost.style.left=(event.clientX-drag.offsetX)+'px';
+ drag.ghost.style.top=(event.clientY-drag.offsetY)+'px';
+ const modal=$('mg-org-modal');
+ if(event.clientY<60)modal.scrollTop-=14;else if(event.clientY>innerHeight-60)modal.scrollTop+=14;
+ const target=dropIndex(event.clientX,event.clientY);
+ if(target>=0)moveTo(drag.id,target);
+}
+// The photo whose spot is nearest the pointer. Spots come from the grid layout
+// (offsetLeft/Top ignore the slide animation), so tiles do not flicker back and
+// forth. The video's spot is fixed.
+function dropIndex(x,y){
+ const box=$('mg-org-list').getBoundingClientRect(),px=x-box.left,py=y-box.top;
+ let nearest=null,best=Infinity;
+ for(const id of organizerDisplay()){
+  const node=tileNodes.get(id);
+  const distance=Math.hypot(px-node.offsetLeft-node.offsetWidth/2,py-node.offsetTop-node.offsetHeight/2);
+  if(distance<best){best=distance;nearest=id}
+ }
+ return nearest&&nearest!==VIDEO_TILE?organizer.order.indexOf(nearest):-1;
+}
+function dragEnd(event){
+ if(!drag||event.pointerId!==drag.pointerId)return;
+ const {id,active}=drag;
+ finishDrag();
+ if(active&&event.type==='pointerup')announce(id);
+ tileNodes.get(id)?.focus({preventScroll:true});
+}
+function finishDrag(){
+ window.removeEventListener('pointermove',dragMove);
+ window.removeEventListener('pointerup',dragEnd);
+ window.removeEventListener('pointercancel',dragEnd);
+ if(!drag)return;
+ drag.ghost?.remove();drag.node.classList.remove('lifted');
+ document.body.classList.remove('mg-org-dragging');
+ drag=null;
+}
+function cancelDrag(){
+ if(!drag)return false;
+ const {start,active}=drag;
+ finishDrag();
+ if(active&&organizer){organizer.order=start;arrange()}
+ return true;
 }
 async function saveOrderToServer(artworkId,{batchId,templateIds,order}){
  const response=await fetch('/api/etsy-photo-organizer',{method:'POST',headers:{'content-type':'application/json'},
@@ -775,7 +907,15 @@ $('mg-deselect-all').addEventListener('click',()=>{
  if(!job)return;selectionByJob.set(job.id,{chosen:new Set()});selectionChanged();
 });
 $('mg-apply-selected').addEventListener('click',()=>act(useResults));
-$('mg-org-back').addEventListener('click',()=>{closeOrganizer();message('Back to selection. Change the ticked mockups, then apply again.')});
+const backToSelection=()=>{closeOrganizer();message('Back to selection. Change the ticked mockups, then apply again.')};
+$('mg-org-back').addEventListener('click',backToSelection);
+$('mg-org-close').addEventListener('click',backToSelection);
+// Escape drops a photo being dragged back where it was, otherwise closes the organizer.
+document.addEventListener('keydown',event=>{
+ if(event.key!=='Escape'||!organizer)return;
+ event.preventDefault();
+ if(!cancelDrag())backToSelection();
+});
 $('mg-org-save').addEventListener('click',()=>act(saveOrganizer));
 for(const [id,method] of [
  ['mg-generate',()=>createJob()],['mg-refresh-jobs',loadJobs],['mg-pause',pause],
