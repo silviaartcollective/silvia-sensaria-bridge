@@ -23,6 +23,8 @@ if not exist "%~dp0node_modules\ag-psd" (
   exit /b 1
 )
 
+rem Let image work from every render thread run at once (Node defaults to 4).
+set "UV_THREADPOOL_SIZE=16"
 set "LOG=%~dp0worker.log"
 echo [%date% %time%] Launch requested>>"%LOG%"
 powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','node index.mjs >> worker.log 2>&1' -WorkingDirectory '%~dp0' -WindowStyle Hidden"

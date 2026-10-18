@@ -21,26 +21,28 @@ import {
   validateRatioSource
 } from './crop.mjs';
 import {renderMockupOnPC} from './mockup-processor.mjs';
+import {RENDER_THREADS} from './render-pool.mjs';
 import {downloadCached} from './asset-cache.mjs';
 
 const LOCK_PATH = path.join(os.tmpdir(), 'pod-crop-worker.lock');
 const tempPaths = new Set();
 const clients = new Map();
 let lastWorkAt = Date.now();
-let busy = false;
 let stopping = false;
-let nextAppIndex = 0;
-let activeJob = null;
+let nextAppIndex = 0, nextMockupAppIndex = 0;
 let heartbeatInFlight = false;
+// Crops and mockups run at the same time in separate lanes; mockups render
+// RENDER_THREADS at once. `active` lists everything in progress.
+const active = new Set();
+const inFlightByBatch = new Map(); // appUrl|batchId -> PSDs rendering now
 const mockupOwner = crypto.randomUUID();
-const mockupPollAt = new Map(),mockupUnsupported=new Map(); // Retry temporarily unavailable PSD endpoints.
+const mockupUnsupported=new Map(); // Retry temporarily unavailable PSD endpoints.
 // Each poll is outbound bandwidth on every shop's Render service. While a batch
 // has queued PSDs the next one is claimed immediately; otherwise queues are
 // checked every 5 s for a minute after the last job, then every 15 s.
 const MOCKUP_IDLE_POLL_MS = 5000;
 const IDLE_BACKOFF_AFTER_MS = 60000, IDLE_POLL_MS = 15000;
 const idlePollMs = base => Date.now() - lastWorkAt > IDLE_BACKOFF_AFTER_MS ? Math.max(base, IDLE_POLL_MS) : base;
-let preferMockupNext=false; // A crop backlog must not starve all pending PSD jobs.
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -323,8 +325,13 @@ async function processPSDJob(app,claim){
   }
  }finally{
   alive=false;clearInterval(keepAlive);
-  try{await queue(()=>api.mockupRelease(id,mockupOwner))}
-  catch(error){console.error('['+app.name+'] Could not release PSD batch:',error.message)}
+  const batch=app.appUrl+'|'+id,left=(inFlightByBatch.get(batch)||1)-1;
+  if(left>0)inFlightByBatch.set(batch,left);else inFlightByBatch.delete(batch);
+  // Other PSDs of this batch still rendering keep the batch leased.
+  if(!left){
+   try{await queue(()=>api.mockupRelease(id,mockupOwner))}
+   catch(error){console.error('['+app.name+'] Could not release PSD batch:',error.message)}
+  }
   for(const file of [outputPath]){
    if(file){
     await rm(file,{force:true}).catch(()=>{});
@@ -335,70 +342,84 @@ async function processPSDJob(app,claim){
  }
 }
 
+// What a shop's dashboard should show: its own mockup, else its own crop, else
+// whatever the worker is doing for another shop.
+function activeFor(app){
+  const list=[...active];
+  return list.find(a=>a.app.appUrl===app.appUrl&&a.type==='mockup')||
+    list.find(a=>a.app.appUrl===app.appUrl)||list[0]||null;
+}
 async function heartbeatAll(){
   if(heartbeatInFlight)return;
   heartbeatInFlight=true;
   try{
     await Promise.allSettled(APP_CONNECTIONS.map(async app=>{
-      try{await clientFor(app).heartbeat(heartbeatFor(app,activeJob));}
+      try{await clientFor(app).heartbeat(heartbeatFor(app,activeFor(app)));}
       catch(error){console.error('['+app.name+'] heartbeat failed:',error.message);}
     }));
   }finally{heartbeatInFlight=false;}
 }
-// Returns true when a crop or PSD was processed, so the caller polls again at once.
-async function pollOnce(){
-  if(busy||stopping)return false;
-  busy=true;
-  try{
-    const cycle=rotatingApps(APP_CONNECTIONS,nextAppIndex);
-    if(APP_CONNECTIONS.length)nextAppIndex=(nextAppIndex+1)%APP_CONNECTIONS.length;
-    // Fair scheduling: alternate crop and mockup work whenever both queues have jobs.
-    // Crop processing is never allowed to starve PSD generation indefinitely.
-    for(const kind of (preferMockupNext?['mockup','crop']:['crop','mockup'])){
-      if(kind==='crop'){
-      for(const app of cycle){
-        if(stopping)break;
-        try{
-          const api=clientFor(app);
-          const result=await api.claimJob();
-          if(!result.job)continue;
-          activeJob={app,job:result.job,type:'crop'};
-          await heartbeatAll();
-          try{await processJob(app,result.job);}
-          finally{activeJob=null;await heartbeatAll()}
-          preferMockupNext=true;
-          return true;
-        }catch(error){console.error('['+app.name+'] Crop polling failed:',error.message)}
-      }
-      }else{
-      for(const app of cycle){
-        if(stopping||(mockupUnsupported.get(app.appUrl)||0)>Date.now())continue;
-        if(Date.now()-(mockupPollAt.get(app.appUrl)||0)<idlePollMs(MOCKUP_IDLE_POLL_MS))continue;
-        mockupPollAt.set(app.appUrl,Date.now());
-        try{
-          const api=clientFor(app);
-          const claimed=await api.claimMockup(mockupOwner);
-          if(!claimed.item)continue;
-          // More PSDs may be queued: let the next poll claim without waiting.
-          mockupPollAt.delete(app.appUrl);
-          activeJob={app,job:{id:claimed.job.id},type:'mockup'};
-          await heartbeatAll();
-          try{await processPSDJob(app,claimed)}
-          finally{activeJob=null;await heartbeatAll()}
-          preferMockupNext=false;
-          return true;
-        }catch(error){
-          // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
-          if(/404|not found|non-json/i.test(error.message)){
-            mockupUnsupported.set(app.appUrl,Date.now()+60000);
-            console.log('['+app.name+'] PSD API unavailable; will retry in one minute. Crop service remains enabled.');
-          }else console.error('['+app.name+'] PSD polling failed:',error.message);
-        }
-      }
-      }
+function track(entry,task){
+  active.add(entry);void heartbeatAll();
+  return task.finally(()=>{active.delete(entry);lastWorkAt=Date.now();void heartbeatAll();});
+}
+
+// Crop lane: one production crop at a time, never waiting for mockups.
+async function claimCrop(){
+  const cycle=rotatingApps(APP_CONNECTIONS,nextAppIndex);
+  if(APP_CONNECTIONS.length)nextAppIndex=(nextAppIndex+1)%APP_CONNECTIONS.length;
+  for(const app of cycle){
+    if(stopping)return null;
+    try{
+      const result=await clientFor(app).claimJob();
+      if(result.job)return {app,job:result.job};
+    }catch(error){console.error('['+app.name+'] Crop polling failed:',error.message)}
+  }
+  return null;
+}
+async function cropLane(){
+  while(!stopping){
+    const claimed=await claimCrop();
+    if(claimed){await track({app:claimed.app,job:claimed.job,type:'crop'},processJob(claimed.app,claimed.job));continue;}
+    await sleep(idlePollMs(POLL_INTERVAL_MS));
+  }
+}
+
+// Mockup lane: claims queued PSDs until every render thread is busy.
+async function claimMockup(){
+  const cycle=rotatingApps(APP_CONNECTIONS,nextMockupAppIndex);
+  if(APP_CONNECTIONS.length)nextMockupAppIndex=(nextMockupAppIndex+1)%APP_CONNECTIONS.length;
+  for(const app of cycle){
+    if(stopping||(mockupUnsupported.get(app.appUrl)||0)>Date.now())continue;
+    try{
+      const claimed=await clientFor(app).claimMockup(mockupOwner);
+      if(claimed.item)return {app,claimed};
+    }catch(error){
+      // Arte Antica may not have the PSD endpoints yet. Its crop jobs still work.
+      if(/404|not found|non-json/i.test(error.message)){
+        mockupUnsupported.set(app.appUrl,Date.now()+60000);
+        console.log('['+app.name+'] PSD API unavailable; will retry in one minute. Crop service remains enabled.');
+      }else console.error('['+app.name+'] PSD polling failed:',error.message);
     }
-    return false;
-  }finally{busy=false;}
+  }
+  return null;
+}
+async function mockupLane(){
+  const running=new Set();
+  while(!stopping){
+    if(running.size>=RENDER_THREADS){await Promise.race(running);continue;}
+    const next=await claimMockup();
+    if(next){
+      const {app,claimed}=next,batch=app.appUrl+'|'+claimed.job.id;
+      inFlightByBatch.set(batch,(inFlightByBatch.get(batch)||0)+1);
+      const task=track({app,job:{id:claimed.job.id},type:'mockup'},processPSDJob(app,claimed)).catch(()=>{});
+      running.add(task);void task.finally(()=>running.delete(task));
+      continue; // claim the next queued PSD straight away
+    }
+    // Nothing queued: wait for a render to finish or the idle poll interval.
+    await Promise.race([sleep(idlePollMs(MOCKUP_IDLE_POLL_MS)),...running]);
+  }
+  await Promise.allSettled([...running]);
 }
 async function main(){
   validateWorkerConfig();
@@ -412,16 +433,17 @@ async function main(){
   // A crop can take many minutes; keep every Render dashboard connected during it.
   const ticker=setInterval(()=>{if(!stopping)void heartbeatAll();},8000);
   ticker.unref();
-  try{
-    while(!stopping){
-      if(await pollOnce())continue;
-      if(IDLE_EXIT_MS>0&&!busy&&Date.now()-lastWorkAt>=IDLE_EXIT_MS){
-        console.log('Shared crop worker exiting after explicitly configured idle limit.');
-        break;
-      }
-      await sleep(idlePollMs(POLL_INTERVAL_MS));
+  console.log('Rendering up to '+RENDER_THREADS+' mockups at once; crops run alongside.');
+  const idleCheck=IDLE_EXIT_MS>0?setInterval(()=>{
+    if(!active.size&&Date.now()-lastWorkAt>=IDLE_EXIT_MS){
+      console.log('Shared crop worker exiting after explicitly configured idle limit.');
+      stopping=true;
     }
+  },5000):null;
+  try{
+    await Promise.all([cropLane(),mockupLane()]);
   }finally{
+    if(idleCheck)clearInterval(idleCheck);
     clearInterval(ticker);
     await cleanup();
   }

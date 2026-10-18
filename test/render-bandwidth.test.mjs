@@ -26,5 +26,5 @@ test('an idle PC worker backs off to one poll per shop every 15 s',()=>{
  const worker=read('worker/index.mjs');
  assert.match(worker,/IDLE_BACKOFF_AFTER_MS = 60000, IDLE_POLL_MS = 15000/);
  assert.match(worker,/await sleep\(idlePollMs\(POLL_INTERVAL_MS\)\)/);
- assert.match(worker,/<idlePollMs\(MOCKUP_IDLE_POLL_MS\)/);
+ assert.match(worker,/sleep\(idlePollMs\(MOCKUP_IDLE_POLL_MS\)\)/);
 });

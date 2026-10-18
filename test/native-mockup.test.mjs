@@ -310,18 +310,50 @@ test('the PC worker renders PSDs itself: no Photoshop, Photopea or browser code 
  const processorSource=readFileSync(new URL('mockup-processor.mjs',worker),'utf8');
  const pkg=JSON.parse(readFileSync(new URL('package.json',worker),'utf8'));
  assert.doesNotMatch(processorSource.replace(/^\/\/.*$/gm,''),/puppeteer|photopea|photoshop|chrom/i);
- assert.match(processorSource,/renderMockupNative\(/);
+ assert.match(processorSource,/renderInPool\(/);
  assert.equal(pkg.dependencies['puppeteer-core'],undefined);
  assert.ok(pkg.dependencies['ag-psd']);
  for(const legacy of ['native-photoshop.mjs','photoshop-native.jsx','photoshop-runner.ps1','photopea-worker-page.js'])
   assert.throws(()=>readFileSync(new URL(legacy,worker)),{code:'ENOENT'},legacy);
 });
 
-test('the worker claims the next queued PSD immediately instead of waiting between mockups',()=>{
+test('the worker renders several mockups at once, alongside crops, and claims the next PSD immediately',()=>{
  const source=readFileSync(new URL('../worker/index.mjs',import.meta.url),'utf8');
- assert.match(source,/mockupPollAt\.delete\(app\.appUrl\)/);
- assert.match(source,/if\(await pollOnce\(\)\)continue;/);
+ const pool=readFileSync(new URL('../worker/render-pool.mjs',import.meta.url),'utf8');
+ assert.match(source,/await Promise\.all\(\[cropLane\(\),mockupLane\(\)\]\);/);
+ assert.match(source,/if\(running\.size>=RENDER_THREADS\)\{await Promise\.race\(running\);continue;\}/);
+ assert.match(source,/continue; \/\/ claim the next queued PSD straight away/);
+ assert.match(pool,/new Worker\(new URL\('\.\/render-thread\.mjs', import\.meta\.url\)\)/);
+ assert.match(pool,/if \(await isTemplatePrepared\(\{ psdPath, mapping \}\)\) return render\(\);/);
  assert.doesNotMatch(source,/<12000/);
+});
+
+test('a prepared template stays prepared when the download cache touches the PSD',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const psdPath=path.join(dir,'touched.psd'),art=path.join(dir,'art.png'),out=path.join(dir,'out.jpg');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(frameScene().psd));
+  await quadrantArtwork(art);
+  const first=await processor.renderMockupOnPC({psdPath,artworkPath:art,outputPath:out,templateName:'touched.psd'});
+  assert.equal(first.preparedFromCache,false);
+  const later=new Date(Date.now()+60000);
+  await fs.utimes(psdPath,later,later); // what downloadCached does on every reuse
+  assert.equal(await native.isTemplatePrepared({psdPath}),true);
+  const second=await processor.renderMockupOnPC({psdPath,artworkPath:art,outputPath:out,templateName:'touched.psd'});
+  assert.equal(second.preparedFromCache,true);
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
+});
+
+test('several mockups render in parallel on the thread pool',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const art=path.join(dir,'art.png');await quadrantArtwork(art);
+  const psds=[];
+  for(let n=0;n<4;n++){const p=path.join(dir,'t'+n+'.psd');await fs.writeFile(p,agPsd.writePsdBuffer(frameScene().psd));psds.push(p)}
+  const results=await Promise.all(psds.map((psdPath,n)=>processor.renderMockupOnPC({psdPath,artworkPath:art,
+   outputPath:path.join(dir,'o'+n+'.jpg'),templateName:'t'+n+'.psd'})));
+  assert.deepEqual(results.map(r=>r.dimensions.width),[240,240,240,240]);
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
 });
 
 test('with several smart objects the worker picks the artwork when it is clear, and the server accepts it',needsReader,async()=>{
@@ -357,4 +389,38 @@ test('the artwork-layer picker also lists layers saved before `kind` was stored'
  const client=readFileSync(new URL('../src/mockup-generator-client.js',import.meta.url),'utf8');
  assert.match(client,/filter\(t=>\(t\.kind==='smart'\|\|!t\.kind\)&&t\.visible\)/);
  assert.match(client,/some\(x=>\(x\.kind==='smart'\|\|!x\.kind\)&&x\.visible&&x\.path===path\)/);
+});
+
+test('an artwork layer in Multiply (and below 100% opacity) blends with the texture under it',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const W=200,H=160,quad=[[50,20],[150,20],[150,140],[50,140]];
+  const paper=(x,y)=>[230-((x*7+y*3)%40),220-((x*5)%30),210-((y*11)%35)];
+  const old=[200,200,200];
+  const build=(mode,opacity)=>({width:W,height:H,
+   imageData:image(W,H,(x,y)=>{
+    const p=paper(x,y);
+    if(!inQuad(quad,x,y))return p;
+    return p.map((v,i)=>lerp(v,mode==='multiply'?v*old[i]/255:old[i],opacity));
+   }),
+   children:[
+    {name:'Paper',left:0,top:0,right:W,bottom:H,imageData:image(W,H,paper)},
+    {name:'Design',blendMode:mode,opacity,left:50,top:20,right:150,bottom:140,imageData:image(100,120,()=>[...old,255]),
+     placedLayer:{id:GUID,type:'raster',transform:quad.flat(),width:400,height:500}}
+   ],linkedFiles:[{id:GUID,name:'art.png',data:new Uint8Array([1])}]});
+  const art=path.join(dir,'art.png');await quadrantArtwork(art);
+  for(const [mode,opacity] of [['multiply',1],['normal',0.7]]){
+   const psdPath=path.join(dir,mode+'.psd'),out=path.join(dir,mode+'.jpg');
+   await fs.writeFile(psdPath,agPsd.writePsdBuffer(build(mode,opacity)));
+   const result=await processor.renderMockupOnPC({psdPath,artworkPath:art,outputPath:out,templateName:mode+'.psd',fitMode:'cover'});
+   assert.ok(result.fidelity.meanPixelError<2,mode+' '+JSON.stringify(result.fidelity));
+   const {at}=await pixels(out);
+   for(const [x,y,colour] of [[70,40,QUADRANTS.tl],[130,40,QUADRANTS.tr],[70,120,QUADRANTS.bl],[130,120,QUADRANTS.br]]){
+    const p=paper(x,y);
+    const expected=p.map((v,i)=>lerp(v,mode==='multiply'?v*colour[i]/255:colour[i],opacity));
+    near(at(x,y),expected,12,mode+' at '+x+','+y);
+   }
+   near(at(10,10),paper(10,10),8,mode+' paper outside');
+  }
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
 });

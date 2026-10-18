@@ -28,5 +28,5 @@ test('selected finished JPGs attach only after Apply and browser never renders P
  assert.ok(!client.includes('https://www.photopea.com'));
  const worker=read('worker/index.mjs');
  assert.ok(worker.includes('renderMockupOnPC('));
- assert.ok(worker.includes('await processJob(app,result.job)'));
+ assert.ok(worker.includes('processJob(claimed.app,claimed.job)'));
 });

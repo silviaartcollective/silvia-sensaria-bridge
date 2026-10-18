@@ -36,12 +36,13 @@ The **same running worker** processes two queues: production artwork crops and P
   - its layer mask and clipping give the visible area;
   - layers above it (shadows, glare, frames, plants) are kept with their blend mode, opacity, masks and clipping.
 - Each preparation is checked against Photoshop's composite using the Smart Object's original pixels. If the template cannot be reproduced exactly, that PSD fails with the reason; a wrong mockup is never produced.
-- After that, each mockup is a warp and composite: typically **1–3 seconds** plus the R2 upload. The worker claims the next PSD as soon as one finishes.
+- After that, each mockup is a warp and composite, typically about a second plus the R2 upload.
+- **It uses the whole PC.** Several mockups render at once, one per render thread: half the CPU cores, between 2 and 6. Production crops run alongside instead of making mockups wait. Only one first-time template preparation runs at a time, because it reads the whole PSD into memory. Set `POD_MOCKUP_CONCURRENCY` to change the number of parallel renders.
 - If a PSD has several visible Smart Objects, choose the artwork layer once in the Product Creator. The choice is saved with the template.
 
 **Template requirements:**
 - RGB or grayscale, 8 or 16 bits/channel.
-- The artwork Smart Object uses Normal blending at 100% opacity, with no Warp transform (perspective is fine).
+- The artwork Smart Object has no Warp transform (perspective is fine). Its blend mode (e.g. Multiply, so paper texture shows through) and opacity are kept.
 
 PSDs saved with **Maximize PSD and PSB File Compatibility** turned on are reproduced most faithfully, including effects and adjustment layers. Without it, Photoshop saves no usable preview, so the worker builds the scene from the layers. Layer effects (e.g. drop shadows) and adjustment layers are then left out.
 
@@ -54,4 +55,4 @@ PSDs saved with **Maximize PSD and PSB File Compatibility** turned on are reprod
 3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
 4. Run `start-worker.cmd`.
 
-The dashboards should show **Crop + Mockup Worker v4.5.3**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+The dashboards should show **Crop + Mockup Worker v4.5.4**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
