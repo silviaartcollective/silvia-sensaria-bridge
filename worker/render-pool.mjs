@@ -58,16 +58,23 @@ function onePreparationAtATime(task) {
   return run;
 }
 
-export async function renderInPool({ psdPath, artworkPath, outputPath, mapping = null, fitMode = 'contain', onStage = () => {} }) {
-  const args = { psdPath, artworkPath, outputPath, mapping, fitMode };
-  const render = async () => {
-    const thread = await acquire();
-    return new Promise((resolve, reject) => {
-      const id = ++nextId;
-      thread.jobs.set(id, { resolve, reject, onStage });
-      thread.postMessage({ id, args });
-    });
-  };
-  if (await isTemplatePrepared({ psdPath, mapping })) return render();
+async function runOnThread(op, args, onStage) {
+  const thread = await acquire();
+  return new Promise((resolve, reject) => {
+    const id = ++nextId;
+    thread.jobs.set(id, { resolve, reject, onStage });
+    thread.postMessage({ id, op, args });
+  });
+}
+
+export async function renderInPool({ psdPath, artworkPath, outputPath, mapping = null, psdSize = 0, fitMode = 'contain', onStage = () => {} }) {
+  const args = { psdPath, artworkPath, outputPath, mapping, psdSize, fitMode };
+  const render = () => runOnThread('render', args, onStage);
+  if (await isTemplatePrepared({ psdPath, mapping, psdSize })) return render();
   return onePreparationAtATime(render);
+}
+
+// Prepares a template ahead of time (background warm-up), one at a time.
+export function prepareInPool({ psdPath, mapping = null, psdSize = 0 }) {
+  return onePreparationAtATime(() => runOnThread('prepare', { psdPath, mapping, psdSize }, () => {}));
 }

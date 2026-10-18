@@ -167,15 +167,29 @@ export function withMockupJobLock(id,task){
  return result;
 }
 export async function putMockupJob(job){job.updatedAt=iso();job.history=(job.history||[]).slice(-120);await putJsonObject(jobKey(job.id),job);return job}
-export async function markMockupArtworkUploaded(id){
+// `local`: the browser handed the artwork straight to the PC worker on this
+// computer, so nothing is in R2 yet (it is copied there when linked).
+export async function markMockupArtworkUploaded(id,{local=false}={}){
  return withMockupJobLock(id,async()=>{
  const r=await getMockupJob(id);
- if(!await artworkObjectExists(r.artworkKey))throw Error('Artwork upload missing.');
- r.artworkUploaded=true;r.status='queued';r.history.push({at:iso(),event:'artwork_uploaded'});
+ if(!local&&!await artworkObjectExists(r.artworkKey))throw Error('Artwork upload missing.');
+ r.artworkUploaded=true;r.artworkLocal=local===true;r.status='queued';
+ r.history.push({at:iso(),event:local?'artwork_given_to_pc_worker':'artwork_uploaded'});
  return putMockupJob(r);
 });
 }
 export const MOCKUP_LEASE_MS=120_000;
+// Ties a batch started straight from the selected file to the artwork record
+// once its R2 upload completes, so its JPGs can be applied to the Etsy draft.
+export async function linkMockupArtwork(id,{artworkId,masterKey,orientation}){
+ return withMockupJobLock(id,async()=>{
+ const j=await getMockupJob(id);
+ j.artworkId=artworkId;j.sourceMasterKey=masterKey;
+ if(orientation)j.artworkOrientation=normalizeTemplateOrientation(orientation);
+ j.history.push({at:iso(),event:'linked_to_artwork',artworkId});
+ return putMockupJob(j);
+});
+}
 export function hasActiveMockupLease(job,now=Date.now()){
  const lease=job?.lease;
  if(!lease?.owner)return false;

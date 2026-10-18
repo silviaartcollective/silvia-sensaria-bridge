@@ -1,5 +1,5 @@
 import { WORKER_ID } from './config.mjs';
-const WORKER_VERSION = '4.5.6';
+export const WORKER_VERSION = '4.5.7';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -9,15 +9,15 @@ function transientHttpStatus(status) {
   return [408, 425, 429, 500, 502, 503, 504].includes(Number(status));
 }
 
-async function request(app, path, { method = 'GET', body = undefined } = {}) {
+async function request(app, path, { method = 'GET', body = undefined, timeoutMs = 20000, attempts = 4 } = {}) {
   let lastError = null;
 
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let response;
     try {
       response = await fetch(app.appUrl + path, {
         method,
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(timeoutMs),
         headers: {
           Authorization: `Bearer ${app.workerToken}`,
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
@@ -26,7 +26,7 @@ async function request(app, path, { method = 'GET', body = undefined } = {}) {
       });
     } catch (error) {
       lastError = error;
-      if (attempt < 4) {
+      if (attempt < attempts) {
         await sleep(500 * attempt);
         continue;
       }
@@ -44,7 +44,7 @@ async function request(app, path, { method = 'GET', body = undefined } = {}) {
           `${app.name} returned non-JSON (HTTP ${response.status})` +
           (snippet ? `: ${snippet}` : '.')
         );
-        if (attempt < 4 && (response.ok || transientHttpStatus(response.status))) {
+        if (attempt < attempts && (response.ok || transientHttpStatus(response.status))) {
           await sleep(500 * attempt);
           continue;
         }
@@ -56,7 +56,7 @@ async function request(app, path, { method = 'GET', body = undefined } = {}) {
       lastError = new Error(
         payload.error || `${app.name} request failed (HTTP ${response.status}).`
       );
-      if (attempt < 4 && transientHttpStatus(response.status)) {
+      if (attempt < attempts && transientHttpStatus(response.status)) {
         await sleep(500 * attempt);
         continue;
       }
@@ -108,8 +108,13 @@ export function apiFor(app) {
       });
     },
     // The PSD generator shares this same worker, per-shop token, and scheduler.
-    claimMockup(owner,limit=1) {
-      return request(app,'/api/mockups/worker/claim',{method:'POST',body:{owner,version:WORKER_VERSION,limit}});
+    // `wait`: the server holds the request until a batch is queued (long poll).
+    claimMockup(owner,limit=1,wait=0) {
+      return request(app,'/api/mockups/worker/claim',{method:'POST',body:{owner,version:WORKER_VERSION,limit,wait},
+        timeoutMs:wait+20000,attempts:wait?1:4});
+    },
+    mockupTemplates() {
+      return request(app,'/api/mockups/worker/templates');
     },
     inspectMockupTemplate(templateId,objects) {
       return request(app,'/api/mockups/templates/'+encodeURIComponent(templateId)+'/inspect',{
