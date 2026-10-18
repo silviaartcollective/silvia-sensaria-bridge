@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node index.mjs",
+    "postinstall": "node patch-ag-psd.mjs"
   },
   "dependencies": {
-    "ag-psd": "^31.0.3",
+    "ag-psd": "31.0.3",
     "sharp": "^0.34.3"
   }
 }

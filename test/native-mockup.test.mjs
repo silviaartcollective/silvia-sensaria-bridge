@@ -424,3 +424,21 @@ test('an artwork layer in Multiply (and below 100% opacity) blends with the text
   }
  }finally{await fs.rm(dir,{recursive:true,force:true})}
 });
+
+test('a layer with an out-of-range secondary mask (canvas 2.psd) no longer fails the PSD',needsReader,async()=>{
+ const {patchAgPsd}=await import('../worker/patch-ag-psd.mjs');
+ assert.ok(patchAgPsd().every(line=>/patched/.test(line)),'the worker patches ag-psd');
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const scene=frameScene();
+  const wall=scene.psd.children[0];
+  // Photoshop writes "real" user masks with bounds far outside the canvas.
+  wall.mask={left:0,top:0,right:240,bottom:180,defaultColor:255,imageData:image(240,180,()=>[255,255,255])};
+  wall.realMask={left:-20000,top:0,right:20000,bottom:2,defaultColor:255,imageData:image(40000,2,()=>[255,255,255])};
+  const psdPath=path.join(dir,'canvas 2.psd'),art=path.join(dir,'art.png'),out=path.join(dir,'out.jpg');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(scene.psd));
+  await quadrantArtwork(art);
+  const result=await processor.renderMockupOnPC({psdPath,artworkPath:art,outputPath:out,templateName:'canvas 2.psd'});
+  assert.deepEqual(result.dimensions,{width:240,height:180});
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
+});

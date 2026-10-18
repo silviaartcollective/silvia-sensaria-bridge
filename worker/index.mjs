@@ -22,6 +22,7 @@ import {
 } from './crop.mjs';
 import {renderMockupOnPC} from './mockup-processor.mjs';
 import {RENDER_THREADS} from './render-pool.mjs';
+import {patchAgPsd} from './patch-ag-psd.mjs';
 import {downloadCached} from './asset-cache.mjs';
 
 const LOCK_PATH = path.join(os.tmpdir(), 'pod-crop-worker.lock');
@@ -424,6 +425,9 @@ async function mockupLane(){
 async function main(){
   validateWorkerConfig();
   await acquireSingleInstance();
+  // Before any render thread loads ag-psd (also applied by `npm install`).
+  try{console.log('ag-psd mask patch: '+patchAgPsd().join('; '))}
+  catch(error){console.error('ag-psd mask patch failed:',error.message)}
   process.on('SIGINT',()=>{stopping=true;});
   process.on('SIGTERM',()=>{stopping=true;});
   process.on('exit',()=>{try{fs.rmSync(LOCK_PATH,{force:true});}catch{}});
