@@ -9,7 +9,8 @@ test('API JSON is compact: every worker and browser poll is Render bandwidth',()
 
 test('Product Creator does not poll from a background tab or after a batch finishes',()=>{
  const client=read('src/mockup-generator-client.js');
- assert.match(client,/if\(preparing\|\|document\.hidden\)return;/);
+ // Nor while the photo organizer is open: nothing behind it needs refreshing.
+ assert.match(client,/if\(preparing\|\|document\.hidden\|\|organizer\)return;/);
  assert.match(client,/t\.status==='queued'\|\|t\.status==='processing'/);
  assert.match(client,/Date\.now\(\)-lastWorkerCheck>=30000/);
 });

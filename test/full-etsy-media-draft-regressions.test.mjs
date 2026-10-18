@@ -6,8 +6,8 @@ const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 test('Etsy photo plan supports all 20 photo slots, three preset plus 17 original mockups',()=>{
  const source=read('src/server.mjs'),client=read('src/mockup-generator-client.js'),ui=read('src/mockup-generator-ui.mjs');
  assert.match(source,/\.slice\(0,17\)/);
- // Generated JPGs join a draft that already holds the master and 3 presets: 16 fit.
- assert.match(client,/const ETSY_MOCKUP_SLOTS=16;/);
+ // Generated JPGs join a draft that holds the 3 presets (never the master): 17 fit.
+ assert.match(client,/const ETSY_MOCKUP_SLOTS=17;/);
  assert.match(client,/\.slice\(0,ETSY_MOCKUP_SLOTS\)/);
  assert.match(ui,/id="mg-select-seventeen"/);
  assert.match(source,/items:\[\.\.\.matched\.items,\.\.\.customImages\.slice\(12\)\]/);

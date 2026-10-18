@@ -158,6 +158,7 @@ import {
   updateListingInventory,
   uploadListingImage,
   setListingImageRank,
+  deleteListingImage,
   uploadListingVideo,
   attachListingVideo,
   updateListing,
@@ -1006,10 +1007,10 @@ function canonicalCustomMockupOrder(items) {
   return [...canonical, ...values.slice(canonicalCount)];
 }
 
-// Etsy-ready (2400 px) copies are made by the browser (master) and the PC
-// worker (generated mockups), so the server does not download and resize
-// full-size originals with Render's small CPU and memory. Preset photos are
-// resized once and kept in memory.
+// Etsy-ready (2400 px) copies of generated mockups are made by the PC worker,
+// so the server does not download and resize full-size originals with Render's
+// small CPU and memory. Preset photos are resized once and kept in memory. (The
+// master artwork is never an Etsy photo.)
 const presetEtsyImages=new Map();
 async function etsyReadyImage(key,{etsyKey=''}={}){
   if(etsyKey){
@@ -1020,8 +1021,7 @@ async function etsyReadyImage(key,{etsyKey=''}={}){
   if(PRESET_MEDIA.some(item=>item.key===key))presetEtsyImages.set(key,optimized);
   return optimized;
 }
-const etsyKeyForMedia=(manifest,key)=>key===manifest?.master?.key?manifest.master.etsyKey||'':
-  (manifest?.mockups||[]).find(m=>m.key===key)?.etsyKey||'';
+const etsyKeyForMedia=(manifest,key)=>(manifest?.mockups||[]).find(m=>m.key===key)?.etsyKey||'';
 
 // The preset video is uploaded to Etsy once per shop; later drafts attach it
 // by its video_id instead of downloading and uploading it again.
@@ -1204,7 +1204,7 @@ async function prepareMediaPlan({ session, manifest }) {
   let sortResult={
     items:customImages,
     applied:false,
-    reason:starterOnly?'Draft created from master artwork and preset images':
+    reason:starterOnly?'Draft created from the preset images (the master artwork is never an Etsy photo)':
       'No reliable locked reference; preserving uploaded mockup order',
     averageScore:null,
     matches:[],
@@ -1247,12 +1247,9 @@ async function prepareMediaPlan({ session, manifest }) {
   const orderedImages = starterOnly ? (
     presetStatus.configured
       ? starterDraftMedia(manifest.master,PRESET_MEDIA).filter(item=>item.presetRole!=='video')
-      : [
-          { ...manifest.master, starterArtwork:true },
-          ...installedPresets.filter(item=>item.role!=='video').map(item=>({
-            key:item.key,contentType:item.contentType,originalFilename:item.filename,presetRole:item.role
-          }))
-        ]
+      : installedPresets.filter(item=>item.role!=='video').map(item=>({
+          key:item.key,contentType:item.contentType,originalFilename:item.filename,presetRole:item.role
+        }))
   ) : [];
   let customIndex = 0;
   const totalImageCount = canonicalCustomItems.length + installedPresets.filter(item=>item.role!=='video').length;
@@ -1474,28 +1471,8 @@ async function syncRegularMockupsToEtsy(artworkId){
   listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
   accessToken:session.accessToken
  });
- let remote=await readImages();
- // Recover older drafts whose setup failed before uploading even the cover
- // artwork. The first image should always be the actual master, not an
- // arbitrary regular mockup. Only add a cover when Etsy has ZERO images.
- if(remote.length===0&&manifest.master?.key){
-  const source=await etsyReadyImage(manifest.master.key,{etsyKey:manifest.master.etsyKey||''});
-  const filename=String(manifest.master.originalFilename||'master.jpg');
-  const cover=await withEtsyListingRetry(()=>uploadListingImage({
-   shopId:session.shop.shop_id,listingId,imageBuffer:source.body,filename,
-   contentType:source.contentType||'image/jpeg',rank:1,altText:manifest.title||'',
-   keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
-  }),{attempts:8,baseDelayMs:180});
-  const listingImageId=cover?.listing_image_id||cover?.listingImageId||null;
-  if(!listingImageId)throw Error('Etsy did not confirm the recovered master artwork image.');
-  const receipt={key:manifest.master.key,filename,rank:1,listingImageId};
-  await updateArtworkManifest(artworkId,updated=>{
-    updated.etsyMedia||={images:[],video:null};
-    updated.etsyMedia.images=[...(updated.etsyMedia.images||[]).filter(r=>r.key!==receipt.key),receipt];
-  });
-  await verifyEtsyImageReceipts({receipts:[receipt],readImages});
-  remote=await readImages();
- }
+ // The master artwork is never added as an Etsy photo, even to a draft with none.
+ const remote=await readImages();
  const existingIds=receivedEtsyImageIds(remote);
  const recorded=new Map((await loadArtworkManifest(artworkId)).etsyMedia?.images?.map(row=>[row.key,row])||[]);
  // Include new uploads and legacy manually uploaded images, but NEVER
@@ -2074,7 +2051,7 @@ conversionQueueTimer.unref?.();
 // Serialize all server-side Etsy uploads and R2 manifest changes for one artwork.
 // The PC worker can finish PSDs while Product Creator is closed.
 const generatedMockupSyncTail=new Map();
-async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
+async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[],inSetup=false}){
   const previous=generatedMockupSyncTail.get(artworkId)||Promise.resolve();
   const work=previous.catch(()=>{}).then(async()=>{
     const chosen=new Set((Array.isArray(templateIds)?templateIds:[]).map(String));
@@ -2091,30 +2068,31 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
       if(!outputs.length)throw Error('No verified JPGs are ready in this batch.');
       // Persist the user's explicit selection before checking Etsy draft state,
       // so closing Product Creator will not turn selected mockups into "all".
-      manifest.selectedMockupTemplates ||= {};
-      manifest.selectedMockupTemplates[job.id]=[...chosen];
-      await saveArtworkManifest(manifest);
-      if(manifest.etsyDraftListingId&&(
-        inflightDraftSetups.has(artworkId))){
+      // Every manifest change here is a queued update of the latest manifest:
+      // writing back a copy read earlier could undo a draft ID saved meanwhile.
+      const selected=await updateArtworkManifest(artworkId,current=>{
+        current.selectedMockupTemplates ||= {};
+        current.selectedMockupTemplates[job.id]=[...chosen];
+      });
+      if(selected.etsyDraftListingId&&!inSetup&&inflightDraftSetups.has(artworkId)){
         return {ok:true,pendingSetup:true,message:'Selected JPGs saved in R2; they will sync after draft setup.'};
       }
-      // Before the draft exists only the choice is kept. Copying the JPGs into the
-      // artwork now would turn the new draft from master + presets into a
-      // mockup-only draft; they are added (in the chosen order) once it exists.
-      if(!manifest.etsyDraftListingId)
+      // Before the draft exists only the choice is kept; draft setup adds the
+      // JPGs (in the chosen order) straight after the preset photos.
+      if(!selected.etsyDraftListingId)
         return {ok:true,prepared:0,uploaded:0,pendingDraft:true,
           r2Prefix:'artworks/'+artworkId+'/',message:'Selected PSD mockups are added when the Etsy draft is created.'};
-      const current=(manifest.mockups||[]).slice(0,17);
+      const current=(selected.mockups||[]).slice(0,17);
       const existingSource=new Set(current.map(x=>x.generatedFromKey).filter(Boolean));
       const newOutputs=outputs.filter(item=>!existingSource.has(item.outputKey));
       if(newOutputs.length>Math.max(0,17-current.length))
         throw Error('There are only '+Math.max(0,17-current.length)+
           ' saved artwork mockup slot(s) left, but '+newOutputs.length+
           ' selected PSD images need space. Reduce the selection or remove older mockups.');
-      let prepared=0;
+      const added=[];
       for(const t of outputs){
-        if(existingSource.has(t.outputKey)||current.length>=17)continue;
-        const index=current.length,key=mockupObjectKey(artworkId,index,'jpg');
+        if(existingSource.has(t.outputKey)||current.length+added.length>=17)continue;
+        const index=current.length+added.length,key=mockupObjectKey(artworkId,index,'jpg');
         await copyArtworkObject(t.outputKey,key);
         // The worker's 2400 px Etsy copy is kept beside the artwork's mockup.
         let etsyKey='';
@@ -2122,14 +2100,18 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
           etsyKey=key.replace(/\.jpg$/,'.etsy.jpg');
           await copyArtworkObject(t.etsyKey,etsyKey).catch(()=>{etsyKey=''});
         }
-        current.push({index,originalFilename:t.outputName,key,contentType:'image/jpeg',
+        added.push({index,originalFilename:t.outputName,key,contentType:'image/jpeg',
           generatedFromKey:t.outputKey,sourceJobId:job.id,etsyKey});
-        existingSource.add(t.outputKey);prepared++;
+        existingSource.add(t.outputKey);
       }
-      manifest.mockups=current;
-      await saveArtworkManifest(manifest);
+      const prepared=added.length;
+      const fresh=prepared?await updateArtworkManifest(artworkId,latest=>{
+        const have=new Set((latest.mockups||[]).map(m=>m.generatedFromKey).filter(Boolean));
+        latest.mockups=[...(latest.mockups||[]),...added.filter(m=>!have.has(m.generatedFromKey))];
+      }):selected;
+      const mockups=(fresh.mockups||[]).slice(0,17);
       const session=await getEtsySession();
-      const listingId=Number(manifest.etsyDraftListingId);
+      const listingId=Number(fresh.etsyDraftListingId);
       const latestListing=await getListing({listingId,
         keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
       if(!['draft','active'].includes(String(latestListing.state)))
@@ -2138,49 +2120,86 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
         keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
       const available=Math.max(0,20-existingPhotos.length);
       const liveIds=receivedEtsyImageIds(existingPhotos);
-      const savedByKey=new Map((manifest.etsyMedia?.images||[]).map(row=>[row.key,row]));
-      const uploadedSource=new Set((manifest.etsyGeneratedSourceKeys||[]).filter(sourceKey=>{
-        const mockup=current.find(item=>item.generatedFromKey===sourceKey);
+      const savedByKey=new Map((fresh.etsyMedia?.images||[]).map(row=>[row.key,row]));
+      const uploadedSource=new Set((fresh.etsyGeneratedSourceKeys||[]).filter(sourceKey=>{
+        const mockup=mockups.find(item=>item.generatedFromKey===sourceKey);
         const receipt=mockup?savedByKey.get(mockup.key):null;
         return receipt?.listingImageId&&liveIds.has(String(receipt.listingImageId));
       }));
-      const pendingSelected=current.filter(m=>m.sourceJobId===job.id&&
+      const pendingSelected=mockups.filter(m=>m.sourceJobId===job.id&&
         m.generatedFromKey&&!uploadedSource.has(m.generatedFromKey)&&chosen.has(m.sourceJobId?job.templates.find(t=>t.outputKey===m.generatedFromKey)?.id:''));
       if(pendingSelected.length>available)
         throw Error('Selected '+pendingSelected.length+' mockups but only '+available+
           ' Etsy photo slot(s) remain. Deselect images and apply again.');
+      // Each photo goes straight to its place in the chosen order (Etsy shifts
+      // the others along), so no re-ranking is needed afterwards. Without a
+      // chosen order: the usual layout, with a mockup as the Featured photo.
+      const receiptKeys=new Map((fresh.etsyMedia?.images||[]).map(row=>[String(row.listingImageId),row.key]));
+      const onEtsy=existingPhotos.slice().sort((a,b)=>Number(a.rank)-Number(b.rank)).map(image=>{
+        const key=receiptKeys.get(String(image.listing_image_id));
+        return key?'key:'+key:'etsy:'+image.listing_image_id;
+      });
+      const mockupKeyFor=templateId=>{
+        const output=job.templates.find(t=>t.id===templateId)?.outputKey;
+        return output?mockups.find(m=>m.generatedFromKey===output)?.key||'':'';
+      };
+      const chosenOrder=(fresh.etsyPhotoOrder?.tiles||[]).map(id=>
+        id.startsWith('generated:')&&mockupKeyFor(id.slice(10))?'key:'+mockupKeyFor(id.slice(10)):id);
+      const presetIds=new Set(PRESET_MEDIA.map(item=>'key:'+item.key));
+      const wanted=chosenOrder.length?chosenOrder:defaultPlannedOrder({
+        presets:PRESET_MEDIA.filter(item=>item.role!=='video'),
+        generated:[...onEtsy.filter(id=>!presetIds.has(id)),...pendingSelected.map(m=>'key:'+m.key)]});
+      const place=new Map(wanted.map((id,index)=>[id,index]));
+      const placeOf=id=>place.has(id)?place.get(id):Infinity;
+      pendingSelected.sort((a,b)=>placeOf('key:'+a.key)-placeOf('key:'+b.key));
+      const rankFor=item=>{
+        const id='key:'+item.key,at=placeOf(id);
+        const rank=at===Infinity?onEtsy.length+1:onEtsy.filter(other=>placeOf(other)<at).length+1;
+        onEtsy.splice(rank-1,0,id);
+        return rank;
+      };
       let uploaded=0;
       const uploadedReceipts=[];
-      for(const item of pendingSelected){
-        const optimized=await etsyReadyImage(item.key,{etsyKey:item.etsyKey||''});
+      // Etsy photo uploads to one listing stay one at a time (Etsy rejects
+      // concurrent listing edits); the next photo is read from R2 meanwhile.
+      const readPhoto=item=>{
+        const read=etsyReadyImage(item.key,{etsyKey:item.etsyKey||''});
+        read.catch(()=>{});
+        return read;
+      };
+      let nextPhoto=pendingSelected.length?readPhoto(pendingSelected[0]):null;
+      for(const [position,item] of pendingSelected.entries()){
+        const optimized=await nextPhoto;
+        nextPhoto=position+1<pendingSelected.length?readPhoto(pendingSelected[position+1]):null;
+        const rank=rankFor(item);
         const result=await withEtsyListingRetry(()=>uploadListingImage({
           shopId:session.shop.shop_id,listingId,imageBuffer:optimized.body,
           filename:item.originalFilename,contentType:optimized.contentType||'image/jpeg',
-          rank:existingPhotos.length+uploaded+1,altText:manifest.title||'',
+          rank,altText:fresh.title||'',
           keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken
         }),{attempts:8,baseDelayMs:180});
         const listingImageId=result?.listing_image_id||result?.listingImageId||null;
         if(!listingImageId)throw Error('Etsy did not provide a generated mockup image ID for '+item.originalFilename);
         uploaded++;
-        const receipt={key:item.key,rank:existingPhotos.length+uploaded,
-          listingImageId,filename:item.originalFilename};
+        const receipt={key:item.key,rank,listingImageId,filename:item.originalFilename};
         uploadedReceipts.push(receipt);
-        manifest.etsyMedia ||= {images:[],video:null};
-        manifest.etsyMedia.images.push(receipt);
-        manifest.etsyGeneratedSourceKeys=[...(manifest.etsyGeneratedSourceKeys||[]),item.generatedFromKey];
-        if(manifest.etsyDraftSetup?.status==='completed'&&manifest.etsyDraftSetup.media)
-          manifest.etsyDraftSetup.media.imageCount=existingPhotos.length+uploaded;
-        await saveArtworkManifest(manifest);
+        const imageCount=existingPhotos.length+uploaded;
+        await updateArtworkManifest(artworkId,latest=>{
+          latest.etsyMedia ||= {images:[],video:null};
+          latest.etsyMedia.images=[...(latest.etsyMedia.images||[]).filter(row=>row.key!==receipt.key),receipt];
+          latest.etsyGeneratedSourceKeys=[...new Set([...(latest.etsyGeneratedSourceKeys||[]),item.generatedFromKey])];
+          if(latest.etsyDraftSetup?.status==='completed'&&latest.etsyDraftSetup.media)
+            latest.etsyDraftSetup.media.imageCount=imageCount;
+        });
       }
       if(uploadedReceipts.length)
         await verifyEtsyImageReceipts({receipts:uploadedReceipts,readImages:()=>
           getEtsyListingImages({listingId,keystring:session.keystring,
             sharedSecret:session.sharedSecret,accessToken:session.accessToken})});
       // Image attachment is only complete after the requested subset was handled.
-      const finalManifest=await loadArtworkManifest(artworkId);
-      finalManifest.selectedMockupTemplates ||= {};
-      delete finalManifest.selectedMockupTemplates[job.id];
-      await saveArtworkManifest(finalManifest);
+      await updateArtworkManifest(artworkId,latest=>{
+        if(latest.selectedMockupTemplates)delete latest.selectedMockupTemplates[job.id];
+      });
       return {ok:true,prepared,uploaded,verified:true,
         photoCount:existingPhotos.length+uploaded,full:existingPhotos.length+uploaded>=20,
         r2Prefix:'artworks/'+artworkId+'/'};
@@ -2190,14 +2209,17 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[]}){
   try{return await work}
   finally{if(generatedMockupSyncTail.get(artworkId)===work)generatedMockupSyncTail.delete(artworkId)}
 }
-async function reconcileCompletedMockupsForArtwork(artworkId){
+// Adds the selected PSD mockups and applies the organizer's order. Draft setup
+// calls this straight after the preset photos (inSetup), and again once setup
+// has finished for a selection that arrived late.
+async function reconcileCompletedMockupsForArtwork(artworkId,{inSetup=false}={}){
   const manifest=await loadArtworkManifest(artworkId);
   if(!manifest?.master?.key)return;
   // Recover ONLY mockups explicitly selected with Apply, never all generated
   // PSD outputs. Unselected JPGs remain safely stored in R2 for later review.
   for(const [jobId,templateIds] of Object.entries(manifest.selectedMockupTemplates||{})){
     if(!Array.isArray(templateIds)||!templateIds.length)continue;
-    try{await syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds})}
+    try{await syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds,inSetup})}
     catch(error){console.error('Selected Etsy PSD catch-up failed '+artworkId+' '+jobId+':',error)}
   }
   // The photo order chosen in the organizer before the draft existed.
@@ -2239,54 +2261,80 @@ async function etsyPhotoOrganizer({artworkId='',jobId='',templateIds=[]}){
     const presetByKey=new Map(presets.map(p=>[p.key,p]));
     const keyForGenerated=organizerKeyForGenerated(manifest,job);
     const onEtsy=new Set();
-    const tiles=live.map(image=>{
+    // The master artwork is never an Etsy photo. An older draft's master photo
+    // is not shown, and saving the order removes it from that draft.
+    const isMaster=image=>Boolean(manifest.master?.key)&&receiptById.get(String(image.listing_image_id))?.key===manifest.master.key;
+    const tiles=live.filter(image=>!isMaster(image)).map(image=>{
       const receipt=receiptById.get(String(image.listing_image_id));
       if(receipt?.key)onEtsy.add(receipt.key);
       const preset=receipt?presetByKey.get(receipt.key):null;
       return {id:receipt?.key?'key:'+receipt.key:'etsy:'+image.listing_image_id,
-        kind:receipt?.key===manifest.master?.key?'master':preset?'preset':'photo',
-        label:receipt?.key===manifest.master?.key?'Master artwork':preset?PRESET_LABELS[preset.role]||'Preset photo':
-          receipt?.filename||'Photo on Etsy',
+        kind:preset?'preset':'photo',
+        label:preset?PRESET_LABELS[preset.role]||'Preset photo':receipt?.filename||'Photo on Etsy',
         thumb:image.url_570xN||image.url_fullxfull||null,onEtsy:true};
     });
     // Selected mockups not on Etsy yet join at the end until placed.
     for(const tile of generated)if(!onEtsy.has(keyForGenerated(tile.id.slice(10))))tiles.push(tile);
-    // An order saved before the draft names the master and new mockups by their
-    // planned ids; on Etsy they are known by their R2 keys.
-    const savedLive=saved.map(id=>id==='master'&&manifest.master?.key?'key:'+manifest.master.key:
-      id.startsWith('generated:')&&keyForGenerated(id.slice(10))?'key:'+keyForGenerated(id.slice(10)):id);
+    // An order saved before the draft names new mockups by their planned ids;
+    // on Etsy they are known by their R2 keys.
+    const savedLive=saved.map(id=>id.startsWith('generated:')&&keyForGenerated(id.slice(10))?'key:'+keyForGenerated(id.slice(10)):id);
     return {mode:'live',tiles,order:mergeOrder(savedLive,tiles.map(t=>t.id)),limit:ETSY_PHOTO_LIMIT,video};
   }
-  // No draft yet: the photos a new draft gets, plus the chosen mockups.
+  // No draft yet: the preset photos a new draft gets, plus the chosen mockups
+  // (never the master artwork).
   const manual=(manifest?.mockups||[]).filter(m=>!m.generatedFromKey&&String(m.contentType||'').startsWith('image/'));
   const presetImages=presets.filter(p=>p.exists&&p.role!=='video');
-  const masterKey=manifest?.master?.key||'';
   const tiles=[
-    ...(manual.length?[]:[{id:masterKey?'key:'+masterKey:'master',kind:'master',label:'Master artwork',
-      thumb:masterKey?thumbFor(masterKey):null}]),
     ...manual.map(m=>({id:'key:'+m.key,kind:'mockup',label:m.originalFilename||'Mockup',thumb:thumbFor(m.key)})),
     ...presetImages.map(p=>({id:'key:'+p.key,kind:'preset',label:PRESET_LABELS[p.role]||'Preset photo',thumb:thumbFor(p.key)})),
     ...generated
   ];
-  const planned=defaultPlannedOrder({masterKey:manual.length?'':masterKey||'master',presets:presetImages,
-    generated:[...manual.map(m=>'key:'+m.key),...generated.map(t=>t.id)]})
-    .map(id=>id==='key:master'?'master':id);
+  const planned=defaultPlannedOrder({presets:presetImages,
+    generated:[...manual.map(m=>'key:'+m.key),...generated.map(t=>t.id)]});
   return {mode:'planned',tiles,order:mergeOrder(saved.length?saved:planned,tiles.map(t=>t.id)),limit:ETSY_PHOTO_LIMIT,video};
 }
 // Re-ranks the listing's photos on Etsy to the saved organizer order.
 async function applyEtsyPhotoOrder(artworkId){
   const manifest=await loadArtworkManifest(artworkId);
-  const order=manifest?.etsyPhotoOrder?.tiles;
-  if(!Array.isArray(order)||!order.length||!manifest.etsyDraftListingId)return {applied:false};
+  if(!manifest?.etsyDraftListingId)return {applied:false};
   const session=await getEtsySession();
   const listingId=Number(manifest.etsyDraftListingId);
   const read=async()=>(await getEtsyListingImages({listingId,keystring:session.keystring,
     sharedSecret:session.sharedSecret,accessToken:session.accessToken}))
     .slice().sort((a,b)=>Number(a.rank)-Number(b.rank));
-  const live=await read();
-  const job=await organizerJob(manifest.etsyPhotoOrder.jobId);
-  const tiles=order.map(id=>id==='master'&&manifest.master?.key?'key:'+manifest.master.key:id);
-  const desired=desiredImageOrder({order:tiles,liveImages:live,receipts:manifest.etsyMedia?.images||[],
+  let live=await read();
+  let receipts=manifest.etsyMedia?.images||[];
+  // The master artwork is never an Etsy photo: a draft that got it before this
+  // rule loses it (published listings are left alone).
+  const masterKey=manifest.master?.key||'';
+  const masterPhoto=masterKey&&receipts.find(r=>r.key===masterKey&&
+    live.some(image=>String(image.listing_image_id)===String(r.listingImageId)));
+  if(masterPhoto){
+    const listing=await getListing({listingId,keystring:session.keystring,
+      sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+    if(String(listing.state)==='draft'){
+      await withEtsyListingRetry(()=>deleteListingImage({shopId:session.shop.shop_id,listingId,
+        listingImageId:masterPhoto.listingImageId,keystring:session.keystring,
+        sharedSecret:session.sharedSecret,accessToken:session.accessToken}),{attempts:4,baseDelayMs:220});
+      await updateArtworkManifest(artworkId,updated=>{
+        if(updated.etsyMedia?.images)updated.etsyMedia.images=updated.etsyMedia.images.filter(r=>r.key!==masterKey);
+      });
+      receipts=receipts.filter(r=>r.key!==masterKey);
+      live=await read();
+    }
+  }
+  let tiles=(manifest.etsyPhotoOrder?.tiles||[]).filter(id=>id!=='master'&&id!=='key:'+masterKey);
+  if(!tiles.length){
+    // No order chosen: only step in when a preset photo would be Featured, and
+    // then use the usual layout (mockups first, presets at their usual places).
+    const presetKeys=new Map(PRESET_MEDIA.map(p=>[p.key,p]));
+    const keyOf=image=>receipts.find(r=>String(r.listingImageId)===String(image.listing_image_id))?.key||'';
+    if(!live.length||!presetKeys.has(keyOf(live[0])))return {applied:false};
+    tiles=defaultPlannedOrder({presets:PRESET_MEDIA.filter(p=>p.role!=='video'),
+      generated:live.filter(image=>!presetKeys.has(keyOf(image))).map(image=>'etsy:'+image.listing_image_id)});
+  }
+  const job=await organizerJob(manifest.etsyPhotoOrder?.jobId);
+  const desired=desiredImageOrder({order:tiles,liveImages:live,receipts,
     keyForGenerated:organizerKeyForGenerated(manifest,job)});
   const updates=rankUpdates(live.map(i=>String(i.listing_image_id)),desired);
   for(const update of updates){
@@ -4487,7 +4535,9 @@ const server = http.createServer(async (req, res) => {
       const order=(Array.isArray(body.order)?body.order:[]).map(String).filter(id=>id.length<600).slice(0,ETSY_PHOTO_LIMIT);
       const templateIds=(Array.isArray(body.templateIds)?body.templateIds:[]).map(String).slice(0,40);
       await updateArtworkManifest(artworkId,current=>{
-        current.etsyPhotoOrder={tiles:order,jobId:String(body.jobId||''),savedAt:new Date().toISOString()};
+        const master=current.master?.key?'key:'+current.master.key:'';
+        current.etsyPhotoOrder={tiles:order.filter(id=>id!=='master'&&id!==master),jobId:String(body.jobId||''),
+          savedAt:new Date().toISOString()};
       });
       const sync=templateIds.length?await syncGeneratedMockupsForArtwork({artworkId,jobId:String(body.jobId||''),templateIds}):{ok:true};
       const manifest=await loadArtworkManifest(artworkId);
@@ -4746,8 +4796,6 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res,202,{ok:true,processing:true,status:'running',
           listingId:manifest.etsyDraftListingId,message:'Draft setup is already running.'});
       }
-      // The master is used as the featured image when optional PSD mockups are pending.
-
       // Repair/ensure the production crop queue independently of Etsy draft creation.
       // A crop failure must never block creation of the Etsy draft.
       let cropQueue = null;
@@ -4842,6 +4890,29 @@ const server = http.createServer(async (req, res) => {
       void (async()=>{
         try{
           startMediaPlan();
+      // Photos first, as soon as the draft exists: the preset photos and video,
+      // then the selected PSD mockups in the organizer's order. Inventory and
+      // attributes follow. A photo or video problem is reported once those are
+      // done, so it never leaves the draft without its variants.
+      let mediaError = null, mediaPlan = null, media = null;
+      try {
+        const mediaPrepared = await mediaPlanPromise;
+        mediaPrepMs = mediaPrepared.ms;
+        if (!mediaPrepared.ok) throw mediaPrepared.error;
+        mediaPlan = mediaPrepared.plan;
+        media = await uploadPreparedMediaToEtsy({
+          session,
+          listingId: draft.listing_id,
+          manifest,
+          plan: mediaPlan
+        });
+      } catch (error) {
+        mediaError = error;
+      }
+      await reconcileCompletedMockupsForArtwork(setupId, { inSetup: true }).catch(
+        error => console.error('Selected PSD mockups could not be added during draft setup:', error)
+      );
+
       // Taxonomy/media preparation above can stay parallel because it does not
       // mutate Etsy. Etsy listing writes themselves must be serialized: Etsy
       // returns HTTP 409 when two processes edit the same listing at once.
@@ -4882,17 +4953,7 @@ const server = http.createServer(async (req, res) => {
       });
       const attributesMs = Date.now() - attributesStartedAt;
 
-      const mediaPrepared = await mediaPlanPromise;
-      mediaPrepMs = mediaPrepared.ms;
-      if (!mediaPrepared.ok) throw mediaPrepared.error;
-      const mediaPlan = mediaPrepared.plan;
-
-      const media = await uploadPreparedMediaToEtsy({
-        session,
-        listingId: draft.listing_id,
-        manifest,
-        plan: mediaPlan
-      });
+      if (mediaError) throw mediaError;
 
       manifest.etsyConfiguredAt = new Date().toISOString();
       manifest.etsyConfiguration = {

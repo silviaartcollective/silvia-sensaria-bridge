@@ -93,7 +93,7 @@ body.mg-org-dragging .mg-org-caption{opacity:0;transition:none}
 .mg-org-head strong{font-size:15px}
 .mg-org-head span{font-size:13px;color:#595959}
 .mg-org-list{position:relative;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;user-select:none;-webkit-user-select:none}
-.mg-org-tile{position:relative;aspect-ratio:1/1;border:1px solid #d6d4cf;border-radius:12px;overflow:hidden;background:#fff;cursor:grab;touch-action:none;outline:none}
+.mg-org-tile{position:relative;aspect-ratio:1/1;border:1px solid #d6d4cf;border-radius:12px;overflow:hidden;background:#fff;cursor:grab;touch-action:none;outline:none;will-change:transform}
 .mg-org-tile:focus-visible{box-shadow:0 0 0 3px #222}
 .mg-org-tile img,.mg-org-tile video{display:block;width:100%;height:100%;object-fit:cover;pointer-events:none}
 .mg-org-blank{display:flex;align-items:center;justify-content:center;height:100%;padding:8px;text-align:center;font-size:11px;color:#74776f;background:#f0efeb}
@@ -105,10 +105,8 @@ body.mg-org-dragging .mg-org-caption{opacity:0;transition:none}
 .mg-org-video{cursor:default;background:#3a3631}
 .mg-org-play{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.35)}
 .mg-org-play::after{content:'';position:absolute;left:13px;top:10px;border-style:solid;border-width:7px 0 7px 11px;border-color:transparent transparent transparent #222}
-.mg-org-list.sorting .mg-org-tile{transition:transform .2s cubic-bezier(.2,0,0,1);will-change:transform}
-.mg-org-tile.lifted{background:#efede8;border:2px dashed #a9a59c}
-.mg-org-tile.lifted>*{visibility:hidden}
-.mg-org-ghost{position:fixed;z-index:1001;margin:0;pointer-events:none;will-change:transform;box-shadow:0 10px 28px rgba(0,0,0,.3)}
+.mg-org-list.sorting .mg-org-tile{transition:transform .12s cubic-bezier(.2,0,0,1)}
+.mg-org-list.sorting .mg-org-tile.dragging{z-index:5;transition:none;box-shadow:0 10px 28px rgba(0,0,0,.3)}
 .mg-org-slot{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;border:1px dashed #b9b6ae;border-radius:12px;padding:8px;text-align:center;font-size:12px;color:#595959}
 .mg-org-help{margin:14px 0 0;font-size:12px;color:#595959;line-height:1.45}
 .mg-org-foot{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid #e1ded7}
@@ -144,13 +142,13 @@ return `
  <aside class="mg-preview" id="mg-preview-panel" aria-label="Generated mockup previews">
   <div class="mg-preview-head"><strong>Generated mockups</strong><span id="mg-preview-count" class="hint">0 ready</span></div>
   <div class="mg-preview-actions">
-   <button class="btn secondary" type="button" id="mg-select-all">Select first 16</button>
+   <button class="btn secondary" type="button" id="mg-select-all">Select first 17</button>
    <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
   </div>
   <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
    <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
   </div>
-  <div id="mg-selection-status" class="uploadmeta">A starter draft contains 1 master photo and 3 preset photos, leaving 16 slots for generated JPGs (20 Etsy photos total). Older batches remain in troubleshooting.</div>
+  <div id="mg-selection-status" class="uploadmeta">A new Etsy draft gets the 3 preset photos and the video, leaving 17 photo slots for generated JPGs (20 Etsy photos total). The master artwork is never an Etsy photo. Older batches remain in troubleshooting.</div>
   <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside>
  <div class="mg-org-modal" id="mg-org-modal" hidden>

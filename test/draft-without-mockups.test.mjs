@@ -6,17 +6,19 @@ import {renderProductCreator} from '../src/product-creator.mjs';
 import {starterDraftMedia} from '../src/draft-starter-media.mjs';
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 
-test('immediate draft uses master artwork as hero plus 3 preset images and video',()=>{
+test('immediate draft gets the 3 preset images and video, never the master artwork',()=>{
  const media=starterDraftMedia({key:'artworks/SAC0001/master.png',contentType:'image/png',originalFilename:'Painting.png'},[
   {role:'choose-option',key:'a',contentType:'image/jpeg',filename:'option.jpg'},
   {role:'choose-frame',key:'b',contentType:'image/png',filename:'frame.png'},
   {role:'promotion',key:'c',contentType:'image/jpeg',filename:'promotion.jpg'},
   {role:'video',key:'d',contentType:'video/quicktime',filename:'video.mov'}
  ]);
- assert.equal(media.length,5);
- assert.equal(media[0].key,'artworks/SAC0001/master.png');
- assert.equal(media[0].starterArtwork,true);
- assert.deepEqual(media.slice(1).map(x=>x.presetRole),['choose-option','choose-frame','promotion','video']);
+ assert.deepEqual(media.map(x=>x.presetRole),['choose-option','choose-frame','promotion','video']);
+ assert.ok(!media.some(x=>x.key==='artworks/SAC0001/master.png'));
+ // Nor does the fallback without all presets, or the regular mockup sync.
+ const server=read('src/server.mjs');
+ assert.doesNotMatch(server,/\{ \.\.\.manifest\.master, starterArtwork:true \}/);
+ assert.doesNotMatch(server,/recovered master artwork image/);
  assert.throws(()=>starterDraftMedia({key:'x',contentType:'image/jpeg'},[]),/Missing required preset/);
  assert.throws(()=>starterDraftMedia(null,[]),/master artwork/);
 });

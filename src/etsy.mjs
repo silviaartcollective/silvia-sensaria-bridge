@@ -735,6 +735,16 @@ export async function setListingImageRank({
   return response.json();
 }
 
+export async function deleteListingImage({
+  shopId, listingId, listingImageId, keystring, sharedSecret, accessToken
+}) {
+  const response = await fetch(
+    `${ETSY_API_BASE}/application/shops/${encodeURIComponent(shopId)}/listings/${encodeURIComponent(listingId)}/images/${encodeURIComponent(listingImageId)}`,
+    { method: 'DELETE', headers: apiHeaders({ keystring, sharedSecret, accessToken }) }
+  );
+  if (!response.ok && response.status !== 404) throw new Error(`Etsy photo removal failed (${response.status}): ${await response.text()}`);
+}
+
 // Attaches a video already uploaded to this shop (by its video_id) to a listing.
 export async function attachListingVideo({
   shopId, listingId, videoId, name = 'Listing video', keystring, sharedSecret, accessToken

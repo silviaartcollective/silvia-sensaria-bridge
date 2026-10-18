@@ -1,4 +1,6 @@
-// Allow an Etsy draft to be created before optional PSD mockups finish.
+// Allow an Etsy draft to be created before optional PSD mockups finish. The
+// master artwork is the production file and is never an Etsy photo: a new
+// draft gets the preset photos and video, and the chosen mockups follow.
 export function starterDraftMedia(master,presets){
  if(!master?.key||!String(master.contentType||'').startsWith('image/'))
   throw Error('A completed master artwork image is required.');
@@ -6,11 +8,8 @@ export function starterDraftMedia(master,presets){
  const roles=['choose-option','choose-frame','promotion','video'];
  const missing=roles.filter(role=>!byRole.get(role)?.key);
  if(missing.length)throw Error('Missing required preset listing media: '+missing.join(', '));
- return [
-  {key:master.key,contentType:master.contentType,originalFilename:master.originalFilename||'artwork.jpg',starterArtwork:true},
-  ...roles.map(role=>{
-   const item=byRole.get(role);
-   return {key:item.key,contentType:item.contentType,originalFilename:item.filename,presetRole:role};
-  })
- ];
+ return roles.map(role=>{
+  const item=byRole.get(role);
+  return {key:item.key,contentType:item.contentType,originalFilename:item.filename,presetRole:role};
+ });
 }
