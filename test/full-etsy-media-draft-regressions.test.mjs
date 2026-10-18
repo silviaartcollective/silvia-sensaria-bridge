@@ -36,7 +36,9 @@ test('Etsy draft responds before media uploads; uses existing artwork manifest a
 test('PSD automatic generator waits for the shared verified R2 master and never duplicates direct uploads',()=>{
  const client=read('src/mockup-generator-client.js');
  assert.doesNotThrow(()=>new vm.Script(client));
- assert.match(client,/window\.startProductArtworkUpload\(\)/);
+ // Picking the master stages it in R2 (no artwork ID or folders until the draft).
+ assert.doesNotMatch(client,/window\.startProductArtworkUpload\(\)/);
+ assert.match(read('src/product-creator.mjs'),/window\.stageMasterArtwork=/);
  assert.match(client,/api\('jobs\/from-artwork','POST'/);
  assert.match(client,/window\.addEventListener\('pod-artwork-uploaded'/);
 });

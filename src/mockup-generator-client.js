@@ -211,11 +211,17 @@ async function useResults(){
  if(!selected.length){markRequested();throw Error('Select at least one generated JPG.')}
  attaching=true;renderPreviews();
  try{
-  // A batch started from the selected file is linked once the master is in R2.
-  if(!job.artworkId&&window.startProductArtworkUpload){
-   message('Finishing the master artwork upload before applying…');
-   const uploadedId=await window.startProductArtworkUpload().catch(()=>null);
-   if(uploadedId)await linkBatchToArtwork(batchId,uploadedId).catch(()=>{});
+  const artworkIdNow=$('artwork_id').value.trim();
+  if(!job.artworkId&&artworkIdNow)await linkBatchToArtwork(batchId,artworkIdNow).catch(()=>{});
+  if(!job.artworkId&&!artworkIdNow){
+   // No artwork ID or folders until the Etsy draft is created: keep the choice
+   // and add these JPGs as soon as the draft's artwork is created.
+   pendingApply={batchId,templateIds:selected.slice(0,ETSY_MOCKUP_SLOTS).map(t=>t.id)};
+   lastAppliedBatchId=batchId;appliedCount=pendingApply.templateIds.length;
+   ready=true;requested=true;
+   panel.dataset.generationRequested='true';panel.dataset.generationReady='true';
+   message(appliedCount+' mockups chosen. They are added to the Etsy draft when you create it.');
+   return;
   }
   const chosen=selected.slice(0,ETSY_MOCKUP_SLOTS),artworkId=$('artwork_id').value.trim();
   if(job.artworkId&&job.artworkId===artworkId){
@@ -522,11 +528,18 @@ async function handToWorker(created,file){
   return response.ok;
  }catch{return false} // worker not running here, or the browser blocked it: upload to R2
 }
-let jobCreation=null;
+let jobCreation=null,pendingApply=null;
 async function linkBatchToArtwork(batchId,artworkId){
- if(!batchId||!artworkId||(job?.id===batchId&&job.artworkId===artworkId))return;
- job=(await api('jobs/'+batchId+'/link-artwork','POST',{artworkId})).job;
- await showJob(batchId,{quiet:true});
+ if(!batchId||!artworkId)return;
+ if(!(job?.id===batchId&&job.artworkId===artworkId)){
+  job=(await api('jobs/'+batchId+'/link-artwork','POST',{artworkId})).job;
+  await showJob(batchId,{quiet:true});
+ }
+ // Mockups chosen before the draft existed are added now.
+ if(pendingApply?.batchId===batchId){
+  const {templateIds}=pendingApply;pendingApply=null;
+  await syncGeneratedJpgs(batchId,templateIds);
+ }
 }
 function createJob(options){
  if(jobCreation)return jobCreation;
@@ -639,14 +652,14 @@ $('master_file').addEventListener('change',()=>{
  // completes later, the artwork-uploaded event must not create a second job.
  const file=$('master_file').files?.[0];
  if(file&&$('mg-auto-queue').checked){
-  // Mockups start straight away from the selected file; the R2 upload for the
-  // Etsy draft and crops runs alongside and is linked to the batch when done.
+  // Mockups start straight away from the selected file. The master also goes to
+  // R2 staging now (Product Creator); its artwork ID and folders are created with
+  // the Etsy draft, and the batch is linked to the artwork then.
   void initialLoad.then(async()=>{
    await orientationDetection;
    if([...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].length)
     await createJob({automatic:true});
   }).catch(failure);
-  void initialLoad.then(()=>window.startProductArtworkUpload()).catch(failure);
  }
 });
 window.addEventListener('pod-artwork-uploaded',event=>{

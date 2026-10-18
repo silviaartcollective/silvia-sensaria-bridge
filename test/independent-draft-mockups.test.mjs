@@ -22,7 +22,8 @@ test('selecting a master queues PSDs before the Etsy draft action',()=>{
  assert.doesNotThrow(()=>new vm.Script(js));
  assert.ok(js.includes("const art=$('master_file').files?.[0]"));
  assert.ok(js.includes("if(file&&$('mg-auto-queue').checked)"));
- assert.ok(js.includes("window.startProductArtworkUpload()"));
+ assert.ok(!js.includes("window.startProductArtworkUpload()")); // no artwork ID before the draft
+ assert.ok(product.includes("void window.stageMasterArtwork()"));
  assert.ok(js.includes('async function createJobNow(')&&js.includes('function createJob(options)'));
  assert.ok(js.includes("api('jobs','POST'"));
  assert.ok(js.includes("api('jobs/from-artwork','POST'"));
