@@ -63,11 +63,25 @@ test('the organizer looks like Etsy\'s photo editor: rows of six, drag to reorde
  assert.match(ui,/\.mg-org-list\{[^}]*grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/);
  // The video sits in the second spot and is never a drop target.
  assert.match(client,/if\(organizer\.video\)ids\.splice\(Math\.min\(1,ids\.length\),0,VIDEO_TILE\)/);
- assert.match(client,/return nearest&&nearest!==VIDEO_TILE\?organizer\.order\.indexOf\(nearest\):-1;/);
+ assert.match(client,/if\(id===undefined\|\|id===VIDEO_TILE\|\|id===drag\.id\)return;/);
  // Pointer events, so mouse, pen and touch all drag; arrow keys move too.
  assert.match(client,/node\.addEventListener\('pointerdown',event=>pressTile\(event,id,node\)\)/);
  assert.match(client,/ArrowLeft:from-1,ArrowRight:from\+1/);
  assert.doesNotMatch(client,/draggable:'true'/);
  // The browser loads the preset video's frame from R2, not through the server.
  assert.match(server,/src:await signedArtworkUrl\(videoPreset\.key,3600\)/);
+});
+
+test('dragging moves layers only: spots are measured once and updates run once per frame',()=>{
+ const client=readFileSync(new URL('../src/mockup-generator-client.js',import.meta.url),'utf8');
+ const ui=readFileSync(new URL('../src/mockup-generator-ui.mjs',import.meta.url),'utf8');
+ const frame=client.slice(client.indexOf('function dragFrame(){'),client.indexOf('function nearestSlot(){'));
+ // No layout reads or position writes while the pointer moves.
+ assert.doesNotMatch(frame,/getBoundingClientRect|offsetLeft|offsetTop|style\.left|style\.top/);
+ assert.match(frame,/drag\.ghost\.style\.transform='translate3d\(/);
+ assert.match(client,/if\(!drag\.frame\)drag\.frame=requestAnimationFrame\(dragFrame\);/);
+ assert.match(client,/drag\.slots=display\.map\(id=>\{const tile=tileNodes\.get\(id\);return \{x:tile\.offsetLeft,y:tile\.offsetTop\}\}\);/);
+ assert.match(ui,/\.mg-org-list\.sorting \.mg-org-tile\{transition:transform [^}]*will-change:transform\}/);
+ assert.match(ui,/\.mg-org-ghost\{[^}]*will-change:transform/);
+ assert.doesNotMatch(ui,/body\.mg-org-dragging \*/);
 });
