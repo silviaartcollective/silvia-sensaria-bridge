@@ -77,27 +77,44 @@ return `
 .mg-preview-item span{display:block;width:100%;font-size:12px;line-height:1.35;font-weight:600;overflow-wrap:anywhere}
 .mg-preview-item small{display:block;font-size:10px;font-weight:400;color:#74776f;margin-top:3px}
 .mg-preview #mg-selection-status{font-size:12px}
-.mg-preview .mg-organizer-only{display:none}
-.mg-preview.organizing .mg-select-only{display:none}
-.mg-preview.organizing .mg-organizer-only{display:block}
-.mg-preview.organizing .mg-org-list{display:grid}
-.mg-preview.organizing .mg-org-actions{display:flex}
-.mg-org-intro{font-size:12px;color:#5f645c;line-height:1.5}
-.mg-org-list{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-content:start;overflow-y:auto;max-height:74dvh;padding:3px 7px 7px 3px;scrollbar-gutter:stable}
-.mg-org-item{position:relative;display:flex;flex-direction:column;gap:6px;border:2px solid #e4e0d7;border-radius:11px;padding:6px;background:#fff;cursor:grab;min-width:0}
-.mg-org-item.dragging{opacity:.45}
-.mg-org-item.drop-target{border-color:#546f59;box-shadow:0 0 0 2px #546f59}
-.mg-org-item img,.mg-org-blank{display:block;width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;background:#f0efeb}
-.mg-org-blank{display:flex;align-items:center;justify-content:center;font-size:11px;color:#74776f;text-align:center;padding:6px}
-.mg-org-rank{position:absolute;top:11px;left:11px;background:#fff;border-radius:999px;padding:2px 9px;font-size:11px;box-shadow:0 1px 5px #0003}
-.mg-org-rank.featured{background:#2f3a31;color:#fff}
-.mg-org-item span{font-size:11px;line-height:1.3;font-weight:600;overflow-wrap:anywhere}
-.mg-org-move{display:flex;gap:5px}
-.mg-org-move button{flex:1;padding:4px 0;font-size:13px;border:1px solid #d9d5cc;border-radius:7px;background:#faf8f4;cursor:pointer}
-.mg-org-move button:disabled{opacity:.35;cursor:default}
-.mg-org-slot{display:flex;align-items:center;justify-content:center;text-align:center;aspect-ratio:1/1;border:2px dashed #d9d5cc;border-radius:11px;font-size:12px;color:#74776f;padding:8px}
-.mg-org-actions{gap:8px}
-.mg-org-actions .btn{flex:1;font-size:13px;padding:12px}
+.mg-org-modal{position:fixed;inset:0;z-index:1000;background:rgba(34,34,34,.55);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:4vh 16px}
+.mg-org-modal[hidden]{display:none}
+body.mg-org-open{overflow:hidden}
+body.mg-org-dragging,body.mg-org-dragging *{cursor:grabbing!important}
+/* Laid out like Etsy's "Photo and video" listing editor. */
+.mg-org-dialog{width:min(920px,100%);background:#f8f7f4;color:#222;border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.3);padding:26px 30px 22px}
+.mg-org-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.mg-org-top h2{font-size:21px;font-weight:600;margin:0 0 4px}
+.mg-org-top p{margin:0;font-size:13px;color:#595959;line-height:1.45}
+.mg-org-close{flex:none;width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:#222;font-size:26px;line-height:1;cursor:pointer}
+.mg-org-close:hover{background:rgba(0,0,0,.06)}
+.mg-org-head{display:grid;gap:4px;margin:22px 0 12px}
+.mg-org-head strong{font-size:15px}
+.mg-org-head span{font-size:13px;color:#595959}
+.mg-org-list{position:relative;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;user-select:none;-webkit-user-select:none}
+.mg-org-tile{position:relative;aspect-ratio:1/1;border:1px solid #d6d4cf;border-radius:12px;overflow:hidden;background:#fff;cursor:grab;touch-action:none;outline:none}
+.mg-org-tile:focus-visible{box-shadow:0 0 0 3px #222}
+.mg-org-tile img,.mg-org-tile video{display:block;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.mg-org-blank{display:flex;align-items:center;justify-content:center;height:100%;padding:8px;text-align:center;font-size:11px;color:#74776f;background:#f0efeb}
+.mg-org-badge{position:absolute;top:7px;right:7px;background:#fff;color:#222;font-size:11px;font-weight:600;line-height:1;padding:5px 8px;border-radius:999px;box-shadow:0 1px 4px rgba(0,0,0,.28)}
+.mg-org-badge[hidden]{display:none}
+.mg-org-caption{position:absolute;left:0;right:0;bottom:0;padding:18px 8px 6px;font-size:11px;line-height:1.25;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.62));opacity:0;transition:opacity .15s;overflow-wrap:anywhere}
+.mg-org-tile:hover .mg-org-caption,.mg-org-tile:focus-visible .mg-org-caption{opacity:1}
+.mg-org-video{cursor:default;background:#3a3631}
+.mg-org-play{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.35)}
+.mg-org-play::after{content:'';position:absolute;left:13px;top:10px;border-style:solid;border-width:7px 0 7px 11px;border-color:transparent transparent transparent #222}
+.mg-org-tile.lifted{background:#efede8;border:2px dashed #a9a59c}
+.mg-org-tile.lifted>*{visibility:hidden}
+.mg-org-ghost{position:fixed;z-index:1001;margin:0;pointer-events:none;box-shadow:0 10px 28px rgba(0,0,0,.3)}
+.mg-org-slot{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;border:1px dashed #b9b6ae;border-radius:12px;padding:8px;text-align:center;font-size:12px;color:#595959}
+.mg-org-help{margin:14px 0 0;font-size:12px;color:#595959;line-height:1.45}
+.mg-org-foot{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid #e1ded7}
+.mg-org-status{flex:1;font-size:12px;color:#595959;line-height:1.45}
+.mg-org-btn{border:2px solid #222;border-radius:999px;background:#222;color:#fff;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer}
+.mg-org-btn.secondary{background:transparent;color:#222}
+.mg-org-btn:disabled{opacity:.5;cursor:progress}
+.mg-org-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media(max-width:760px){.mg-org-dialog{padding:20px 16px}.mg-org-list{grid-template-columns:repeat(3,minmax(0,1fr))}.mg-org-foot{flex-wrap:wrap}.mg-org-status{flex-basis:100%}}
 .mg-preview #mg-apply-selected{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0}
 @media(max-width:760px){.mg-preview-list{--preview-row-height:clamp(220px,34dvh,320px);gap:7px;max-height:620px;min-height:260px}.mg-preview-item{padding:5px}.mg-preview-item span{font-size:11px}.mg-preview-item input{width:19px;height:19px;top:7px;right:7px}}
 #mockup-generator-panel .mg-actions{display:flex;flex-wrap:wrap;gap:10px}
@@ -122,24 +139,34 @@ return `
 export function renderMockupPreviewPanel(){
 return `
  <aside class="mg-preview" id="mg-preview-panel" aria-label="Generated mockup previews">
-  <div class="mg-preview-head"><strong class="mg-select-only">Generated mockups</strong><strong class="mg-organizer-only">Arrange Etsy photos</strong><span id="mg-preview-count" class="hint mg-select-only">0 ready</span></div>
-  <div class="mg-organizer-only mg-org-intro">Drag photos (or use the arrows) into the order they should appear on Etsy.</div>
-  <div id="mg-org-list" class="mg-org-list mg-organizer-only" aria-live="polite"></div>
-  <div id="mg-org-status" class="uploadmeta mg-organizer-only"></div>
-  <div class="mg-org-actions mg-organizer-only">
-   <button class="btn secondary" type="button" id="mg-org-back">&larr; Back to selection</button>
-   <button class="btn" type="button" id="mg-org-save">Save order</button>
-  </div>
-  <div class="mg-preview-actions mg-select-only">
+  <div class="mg-preview-head"><strong>Generated mockups</strong><span id="mg-preview-count" class="hint">0 ready</span></div>
+  <div class="mg-preview-actions">
    <button class="btn secondary" type="button" id="mg-select-all">Select first 16</button>
    <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
   </div>
-  <div id="mg-preview-list" class="mg-preview-list mg-select-only" aria-live="polite">
+  <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
    <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
   </div>
-  <div id="mg-selection-status" class="uploadmeta mg-select-only">A starter draft contains 1 master photo and 3 preset photos, leaving 16 slots for generated JPGs (20 Etsy photos total). Older batches remain in troubleshooting.</div>
-  <button class="btn mg-select-only" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
+  <div id="mg-selection-status" class="uploadmeta">A starter draft contains 1 master photo and 3 preset photos, leaving 16 slots for generated JPGs (20 Etsy photos total). Older batches remain in troubleshooting.</div>
+  <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside>
+ <div class="mg-org-modal" id="mg-org-modal" hidden>
+  <div class="mg-org-dialog" role="dialog" aria-modal="true" aria-labelledby="mg-org-title">
+   <div class="mg-org-top">
+    <div><h2 id="mg-org-title">Photo and video</h2><p>The order shoppers will see on Etsy. The first photo is the listing's Featured photo.</p></div>
+    <button class="mg-org-close" type="button" id="mg-org-close" aria-label="Back to selection">&times;</button>
+   </div>
+   <div class="mg-org-head"><strong id="mg-org-count">Etsy photos</strong><span>Drag to reorder.</span></div>
+   <div id="mg-org-list" class="mg-org-list" role="list" aria-describedby="mg-org-help"></div>
+   <p id="mg-org-help" class="mg-org-help">Drag a photo to move it, or select it and use the arrow keys. Your preset video stays in the second spot, where Etsy shows it.</p>
+   <div id="mg-org-live" class="mg-org-sr" aria-live="assertive"></div>
+   <div class="mg-org-foot">
+    <div id="mg-org-status" class="mg-org-status"></div>
+    <button class="mg-org-btn secondary" type="button" id="mg-org-back">Back to selection</button>
+    <button class="mg-org-btn" type="button" id="mg-org-save">Save order</button>
+   </div>
+  </div>
+ </div>
 `;
 }
 

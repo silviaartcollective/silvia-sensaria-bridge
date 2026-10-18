@@ -53,3 +53,21 @@ test('Apply selected opens the organizer; saving re-ranks Etsy photos or keeps t
  assert.match(server,/await applyEtsyPhotoOrder\(artworkId\)/);
  assert.match(etsy,/form\.append\('listing_image_id', String\(listingImageId\)\);/);
 });
+
+test('the organizer looks like Etsy\'s photo editor: rows of six, drag to reorder, the preset video fixed second',()=>{
+ const client=readFileSync(new URL('../src/mockup-generator-client.js',import.meta.url),'utf8');
+ const ui=readFileSync(new URL('../src/mockup-generator-ui.mjs',import.meta.url),'utf8');
+ const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
+ assert.match(ui,/id="mg-org-modal" hidden/);
+ assert.match(ui,/<span>Drag to reorder\.<\/span>/);
+ assert.match(ui,/\.mg-org-list\{[^}]*grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/);
+ // The video sits in the second spot and is never a drop target.
+ assert.match(client,/if\(organizer\.video\)ids\.splice\(Math\.min\(1,ids\.length\),0,VIDEO_TILE\)/);
+ assert.match(client,/return nearest&&nearest!==VIDEO_TILE\?organizer\.order\.indexOf\(nearest\):-1;/);
+ // Pointer events, so mouse, pen and touch all drag; arrow keys move too.
+ assert.match(client,/node\.addEventListener\('pointerdown',event=>pressTile\(event,id,node\)\)/);
+ assert.match(client,/ArrowLeft:from-1,ArrowRight:from\+1/);
+ assert.doesNotMatch(client,/draggable:'true'/);
+ // The browser loads the preset video's frame from R2, not through the server.
+ assert.match(server,/src:await signedArtworkUrl\(videoPreset\.key,3600\)/);
+});
