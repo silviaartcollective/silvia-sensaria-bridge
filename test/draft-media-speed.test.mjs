@@ -81,9 +81,10 @@ test('the mockup sync never writes back an old copy of the artwork record',()=>{
 test('each mockup is uploaded straight into its place in the chosen order, the next one read meanwhile',()=>{
  const server=read('src/server.mjs');
  const sync=server.slice(server.indexOf('async function syncGeneratedMockupsForArtwork'),server.indexOf('async function reconcileCompletedMockupsForArtwork'));
- assert.match(sync,/const rank=rankFor\(item\);/);
- assert.match(sync,/pendingSelected\.sort\(\(a,b\)=>placeOf\('key:'\+a\.key\)-placeOf\('key:'\+b\.key\)\)/);
- assert.match(sync,/nextPhoto=position\+1<pendingSelected\.length\?readPhoto\(pendingSelected\[position\+1\]\):null;/);
+ assert.match(sync,/rank:\(\)=>rankFor\(item\)/);
+ assert.match(sync,/\.sort\(\(a,b\)=>placeOf\('key:'\+a\.key\)-placeOf\('key:'\+b\.key\)\)\.slice\(0,available\)/);
+ // Photos are read from R2 ahead of their turn by the shared uploader.
+ assert.match(server,/readAhead\(index\);readAhead\(index\+lanes\);/);
 });
 
 test('the Product Creator saves the chosen mockups and order before it creates the draft',()=>{
@@ -92,4 +93,43 @@ test('the Product Creator saves the chosen mockups and order before it creates t
  assert.ok(submit.indexOf('await window.mockupSelectionBeforeDraft(')<submit.indexOf("button.textContent='Creating Etsy draft…';"));
  assert.match(client,/window\.mockupSelectionBeforeDraft=async artworkId=>\{/);
  assert.match(client,/await pendingApplySaved\.catch\(\(\)=>\{\}\);/);
+});
+
+test('photos upload two at a time, and one at a time for good once Etsy refuses a simultaneous edit',()=>{
+ const server=read('src/server.mjs');
+ const uploader=server.slice(server.indexOf('async function uploadPhotosToListing'),server.indexOf('async function ensureListingPhotoOrder'));
+ assert.match(server,/const ETSY_PHOTO_LANES=2;/);
+ assert.match(uploader,/lanes=1;etsyAcceptsParallelPhotos=false;/);
+ // The refused photo is sent again only after the other upload has finished.
+ assert.match(uploader,/await Promise\.allSettled\(\[\.\.\.inFlight\]\);\s*result=await oneAtATime\(\(\)=>send\(photo,object,true\)\);/);
+ assert.match(uploader,/const attempt=lanes>1\?send\(photo,object,false\):oneAtATime\(\(\)=>send\(photo,object,true\)\);/);
+ // Preset photos and mockups both go through it, and the order is checked after
+ // simultaneous uploads.
+ assert.equal((server.match(/await uploadPhotosToListing\(\{/g)||[]).length,2);
+ assert.equal((server.match(/await ensureListingPhotoOrder\(\{/g)||[]).length,2);
+});
+
+test('the preset video goes on after the mockups',()=>{
+ const server=read('src/server.mjs');
+ const setup=server.slice(server.indexOf("startMediaPlan();\n      // Photos first"));
+ const mockups=setup.indexOf('await reconcileCompletedMockupsForArtwork(setupId, { inSetup: true })');
+ const video=setup.indexOf('await uploadPreparedVideoToEtsy(');
+ assert.ok(mockups>0&&video>mockups&&video<setup.indexOf('updateListingInventory('));
+ assert.doesNotMatch(server.slice(server.indexOf('async function uploadPreparedMediaToEtsy'),
+  server.indexOf('async function uploadPreparedVideoToEtsy')),/uploadListingVideo|attachListingVideo/);
+});
+
+test('up to 20 mockups: photos the organizer puts past Etsy\'s 20 are not added, and come off a draft',()=>{
+ const server=read('src/server.mjs');
+ assert.match(server,/const pastLimit = new Set\(\(manifest\?\.etsyPhotoOrder\?\.tiles \|\| \[\]\)\.slice\(ETSY_PHOTO_LIMIT\)\);/);
+ assert.match(server,/const pastLimit=m=>place\.has\('key:'\+m\.key\)&&place\.get\('key:'\+m\.key\)>=ETSY_PHOTO_LIMIT;/);
+ assert.match(server,/removeUnwantedDraftPhotos\(\{session,listingId,manifest:fresh,live:existingPhotos,order:chosenOrder\}\)/);
+ const sync=server.slice(server.indexOf('async function syncGeneratedMockupsForArtwork'),server.indexOf('async function reconcileCompletedMockupsForArtwork'));
+ assert.doesNotMatch(sync,/17/);
+ const client=read('src/mockup-generator-client.js'),ui=read('src/mockup-generator-ui.mjs');
+ assert.match(client,/node\.classList\.toggle\('over',index>=organizer\.limit\)/);
+ assert.match(client,/class:'mg-org-limit',role:'separator'/);
+ assert.match(ui,/id="mg-select-all">Select first 20</);
+ // A draft whose preset photos were all moved past the line still completes.
+ assert.match(server,/const confirmed=uploadedImages\.some\(Boolean\)\?await verifyEtsyImageReceipts\(/);
 });

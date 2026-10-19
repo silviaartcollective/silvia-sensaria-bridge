@@ -24,12 +24,20 @@ test('the organizer never shows the master, and saving removes it from an older 
  assert.doesNotMatch(organizer,/Master artwork|kind:'master'/);
  assert.match(organizer,/live\.filter\(image=>!isMaster\(image\)\)/);
  const apply=server.slice(server.indexOf('async function applyEtsyPhotoOrder'));
- assert.match(apply,/if\(String\(listing\.state\)==='draft'\)\{\s*await withEtsyListingRetry\(\(\)=>deleteListingImage\(/);
+ assert.match(apply,/await removeUnwantedDraftPhotos\(\{session,listingId,manifest,live,order:tiles\}\)/);
+ const remove=server.slice(server.indexOf('async function removeUnwantedDraftPhotos'));
+ assert.match(remove,/if\(String\(listing\.state\)!=='draft'\)return \[\];/);
+ assert.match(remove,/return tile===masterTile\|\|overflow\.has\(tile\)/);
  assert.match(server,/tiles:order\.filter\(id=>id!=='master'&&id!==master\)/);
 });
-test('a saved order keeps only photos that still exist, and new photos follow it',()=>{
+test('a saved order keeps only photos that still exist, and new photos follow it; photos past 20 are kept',()=>{
  assert.deepEqual(mergeOrder(['c','gone','a'],['a','b','c']),['c','a','b']);
- assert.equal(mergeOrder([],Array.from({length:25},(_,i)=>'x'+i)).length,ETSY_PHOTO_LIMIT);
+ // The organizer shows photos past Etsy's 20 below its line; they are not cut off.
+ assert.equal(mergeOrder([],Array.from({length:23},(_,i)=>'x'+i)).length,23);
+ assert.equal(ETSY_PHOTO_LIMIT,20);
+ const order=defaultPlannedOrder({presets,generated:Array.from({length:20},(_,i)=>'generated:t'+i)});
+ assert.equal(order.length,23);
+ assert.deepEqual(order.slice(20),['generated:t17','generated:t18','generated:t19']);
 });
 
 test('the chosen order maps to Etsy photo ids, and unmanaged photos keep their place after it',()=>{

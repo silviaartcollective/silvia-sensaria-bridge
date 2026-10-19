@@ -41,11 +41,12 @@ async function inspectArtworkOrientation(file){
  }
 }
 
-// Etsy allows 20 photos: the 3 preset photos leave 17 for mockups (the master
-// artwork is never an Etsy photo). Every compatible template is generated and
-// nothing is ticked until the customer picks; "Select first 17" ticks the first
-// 17 finished JPGs.
-const ETSY_MOCKUP_SLOTS=17;
+// Etsy shows 20 photos and up to 20 mockups can be picked (the master artwork
+// is never an Etsy photo). With the preset photos that can be more than 20: the
+// organizer shows which ones make it. Every compatible template is generated and
+// nothing is ticked until the customer picks; "Select first 20" ticks the first
+// 20 finished JPGs.
+const ETSY_MOCKUP_SLOTS=20;
 const selectionByJob=new Map();
 const selectionFor=id=>{
  if(!selectionByJob.has(id))selectionByJob.set(id,{chosen:new Set()});
@@ -56,7 +57,7 @@ const isSelected=(id,itemId)=>selectionFor(id).chosen.has(itemId);
 function setSelected(id,itemId,checked){
  const selection=selectionFor(id);
  if(checked&&!selection.chosen.has(itemId)&&selection.chosen.size>=ETSY_MOCKUP_SLOTS){
-  message('Etsy has room for '+ETSY_MOCKUP_SLOTS+' mockups next to the 3 preset photos. Untick one first.',true);
+  message('Up to '+ETSY_MOCKUP_SLOTS+' mockups can be picked (Etsy shows 20 photos). Untick one first.',true);
   return false;
  }
  if(checked)selection.chosen.add(itemId);else selection.chosen.delete(itemId);
@@ -283,23 +284,46 @@ function renderOrganizer(){
  tileNodes=new Map(organizer.order.map(id=>[id,photoTile(id)]));
  if(organizer.video)tileNodes.set(VIDEO_TILE,videoTile());
  const list=$('mg-org-list');
- list.replaceChildren(...organizerDisplay().map(id=>tileNodes.get(id)));
- const remaining=organizer.limit-organizer.order.length;
+ list.replaceChildren();
+ const count=organizer.order.length,over=Math.max(0,count-organizer.limit),remaining=organizer.limit-count;
+ // Etsy shows 20 photos: photos moved below this line are not added.
+ if(over)list.append(create('div','Etsy shows '+organizer.limit+' photos · the '+over+' below this line '+
+  (over===1?'is':'are')+' not added',{class:'mg-org-limit',role:'separator'}));
  if(remaining>0)list.append(create('div',remaining+' more photo'+(remaining===1?'':'s')+' can be added',
   {class:'mg-org-slot','aria-hidden':'true'}));
+ placeTiles();
  refreshTiles();
- $('mg-org-count').textContent=organizer.order.length+' of '+organizer.limit+' photos'+(organizer.video?' and 1 video':'');
- $('mg-org-status').textContent=organizer.mode==='live'?'Saving re-orders the photos on the Etsy draft.':
-  'Nothing is uploaded yet. This order is used when the Etsy draft is created.';
+ $('mg-org-count').textContent=Math.min(count,organizer.limit)+' of '+organizer.limit+' photos'+
+  (organizer.video?' and 1 video':'')+(over?' · '+over+' more below the line':'');
+ $('mg-org-status').textContent=(over?'Drag the photos you want into the first '+organizer.limit+'. ':'')+
+  (organizer.mode==='live'?'Saving re-orders the photos on the Etsy draft.':
+  'Nothing is uploaded yet. This order is used when the Etsy draft is created.');
  $('mg-org-save').textContent=organizer.mode==='live'?'Save order to Etsy':'Save order';
 }
-function refreshTiles(){
- const total=organizer.order.length;
+// Puts the tiles in the page in the current order, with Etsy's 20-photo line
+// after the 20th photo.
+function placeTiles(){
+ const list=$('mg-org-list'),line=list.querySelector('.mg-org-limit'),end=list.querySelector('.mg-org-slot');
+ let photos=0;
+ for(const id of organizerDisplay()){
+  list.insertBefore(tileNodes.get(id),end);
+  if(id!==VIDEO_TILE&&++photos===organizer.limit&&line)list.insertBefore(line,end);
+ }
+}
+// The Featured badge on the first photo; photos past Etsy's 20 are dimmed.
+function markTiles(){
  organizer.order.forEach((id,index)=>{
   const node=tileNodes.get(id);
   node.querySelector('.mg-org-badge').hidden=index!==0;
-  node.setAttribute('aria-label','Photo '+(index+1)+' of '+total+(index===0?', Featured':'')+': '+
-   (organizer.tiles.get(id)?.label||'Photo'));
+  node.classList.toggle('over',index>=organizer.limit);
+ });
+}
+function refreshTiles(){
+ markTiles();
+ const total=organizer.order.length;
+ organizer.order.forEach((id,index)=>{
+  tileNodes.get(id).setAttribute('aria-label','Photo '+(index+1)+' of '+total+(index===0?', Featured':'')+
+   (index>=organizer.limit?', not added (Etsy shows '+organizer.limit+')':'')+': '+(organizer.tiles.get(id)?.label||'Photo'));
  });
 }
 // Puts the tiles in the current order; moved tiles slide from where they were.
@@ -307,8 +331,7 @@ function arrange(){
  const list=$('mg-org-list'),nodes=[...tileNodes.values()];
  const animate=!matchMedia('(prefers-reduced-motion: reduce)').matches;
  const before=new Map(nodes.map(node=>[node,node.getBoundingClientRect()]));
- const slot=list.querySelector('.mg-org-slot');
- for(const id of organizerDisplay())list.insertBefore(tileNodes.get(id),slot);
+ placeTiles();
  refreshTiles();
  if(!animate)return;
  for(const node of nodes){node.style.transition='none';node.style.transform=''}
@@ -406,7 +429,7 @@ function slideTiles(){
   const dx=to.x-from.x,dy=to.y-from.y;
   tile.style.transform=dx||dy?'translate3d('+dx+'px,'+dy+'px,0)':'';
  });
- organizer.order.forEach((id,index)=>{tileNodes.get(id).querySelector('.mg-org-badge').hidden=index!==0});
+ markTiles();
 }
 function dragEnd(event){
  if(!drag||event.pointerId!==drag.pointerId)return;
@@ -429,10 +452,7 @@ function finishDrag(){
  list.classList.remove('sorting');node.classList.remove('dragging');document.body.classList.remove('mg-org-dragging');
  for(const tile of tileNodes.values())tile.style.transform='';
  if(!organizer)return;
- if(start.join()!==organizer.order.join()){
-  const slot=list.querySelector('.mg-org-slot');
-  for(const id of organizerDisplay())list.insertBefore(tileNodes.get(id),slot);
- }
+ if(start.join()!==organizer.order.join())placeTiles();
  refreshTiles();
 }
 function cancelDrag(){
@@ -480,7 +500,7 @@ async function loadTemplates(){
  const selected=new Set([...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].map(x=>x.value));
  if(detectedArtworkOrientation&&lastAutoOrientation!==detectedArtworkOrientation){
   selected.clear();
-  // Generate every compatible mockup (each takes about a second); the best 17
+  // Generate every compatible mockup (each takes about a second); up to 20
   // are chosen for Etsy afterwards.
   for(const t of templates.filter(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)))
    selected.add(t.id);
