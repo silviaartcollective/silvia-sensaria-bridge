@@ -15,27 +15,28 @@ const PRESET_RANKS = { 'choose-option': 2, 'choose-frame': 5, promotion: 15 };
 
 // The usual layout: preset photos at their usual places and the mockups
 // filling the other slots in order, so a mockup is the Featured photo. The
-// master artwork is never an Etsy photo.
+// master artwork is never an Etsy photo. Photos past Etsy's 20 stay in the
+// order (the organizer shows them below the line; they are not added).
 export function defaultPlannedOrder({ presets = [], generated = [] }) {
   const slots = [], fill = [...generated];
   const placed = new Map(presets.filter(p => PRESET_RANKS[p.role]).map(p => [PRESET_RANKS[p.role], 'key:' + p.key]));
   const total = fill.length + placed.size;
-  for (let rank = 1; rank <= total && slots.length < ETSY_PHOTO_LIMIT; rank++) {
+  for (let rank = 1; rank <= total; rank++) {
     if (placed.has(rank)) { slots.push(placed.get(rank)); placed.delete(rank); }
     else if (fill.length) slots.push(fill.shift());
   }
   // Presets whose usual place is past the end go last.
-  for (const id of placed.values()) if (slots.length < ETSY_PHOTO_LIMIT) slots.push(id);
+  slots.push(...placed.values());
   return slots;
 }
 
 // The saved order, keeping only photos that still exist, then anything new in
-// its current position order. Never more than Etsy's 20 photos.
+// its current position order. Photos past Etsy's 20 are kept, after the others.
 export function mergeOrder(saved = [], available = []) {
   const present = new Set(available), seen = new Set(), order = [];
   for (const id of saved) if (present.has(id) && !seen.has(id)) { seen.add(id); order.push(id); }
   for (const id of available) if (!seen.has(id)) { seen.add(id); order.push(id); }
-  return order.slice(0, ETSY_PHOTO_LIMIT);
+  return order;
 }
 
 // Listing image ids in the order wanted on Etsy. `liveImages` are the listing's

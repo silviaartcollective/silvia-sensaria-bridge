@@ -107,6 +107,9 @@ body.mg-org-dragging .mg-org-caption{opacity:0;transition:none}
 .mg-org-play::after{content:'';position:absolute;left:13px;top:10px;border-style:solid;border-width:7px 0 7px 11px;border-color:transparent transparent transparent #222}
 .mg-org-list.sorting .mg-org-tile{transition:transform .12s cubic-bezier(.2,0,0,1)}
 .mg-org-list.sorting .mg-org-tile.dragging{z-index:5;transition:none;box-shadow:0 10px 28px rgba(0,0,0,.3)}
+.mg-org-tile.over{opacity:.4}
+.mg-org-limit{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:12px;font-weight:600;color:#8a4b2a}
+.mg-org-limit::before,.mg-org-limit::after{content:'';flex:1;border-top:2px dashed #d9a07f}
 .mg-org-slot{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;border:1px dashed #b9b6ae;border-radius:12px;padding:8px;text-align:center;font-size:12px;color:#595959}
 .mg-org-help{margin:14px 0 0;font-size:12px;color:#595959;line-height:1.45}
 .mg-org-foot{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid #e1ded7}
@@ -142,13 +145,13 @@ return `
  <aside class="mg-preview" id="mg-preview-panel" aria-label="Generated mockup previews">
   <div class="mg-preview-head"><strong>Generated mockups</strong><span id="mg-preview-count" class="hint">0 ready</span></div>
   <div class="mg-preview-actions">
-   <button class="btn secondary" type="button" id="mg-select-all">Select first 17</button>
+   <button class="btn secondary" type="button" id="mg-select-all">Select first 20</button>
    <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
   </div>
   <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
    <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
   </div>
-  <div id="mg-selection-status" class="uploadmeta">A new Etsy draft gets the 3 preset photos and the video, leaving 17 photo slots for generated JPGs (20 Etsy photos total). The master artwork is never an Etsy photo. Older batches remain in troubleshooting.</div>
+  <div id="mg-selection-status" class="uploadmeta">Pick up to 20 mockups. Etsy shows 20 photos: with the 3 preset photos, the organizer shows which ones make it (photos below its line are not added). The master artwork is never an Etsy photo. Older batches remain in troubleshooting.</div>
   <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside>
  <div class="mg-org-modal" id="mg-org-modal" hidden>
