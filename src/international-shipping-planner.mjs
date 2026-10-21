@@ -5,13 +5,21 @@ import {
 } from './pricing.mjs';
 
 const rates=JSON.parse(readFileSync(new URL('../config/shipping-rates.json',import.meta.url),'utf8'));
+const latestSensariaCapture=JSON.parse(readFileSync(new URL('../config/sensaria-shipping.json',import.meta.url),'utf8'));
 const existing=JSON.parse(readFileSync(new URL('../config/etsy-shipping-profile.json',import.meta.url),'utf8'));
 const sizeMatrix=JSON.parse(readFileSync(new URL('../config/size-matrix.json',import.meta.url),'utf8'));
 const round=n=>Number(Number(n).toFixed(2));
 const VALID_FORMATS=new Set(['P','C','FC']);
 const isoRegion=new Intl.DisplayNames(['en'],{type:'region'});
 const knownExisting=new Set((existing.destinations||[]).map(x=>x.countryIso));
-export const shippingRateCapture=rates.source.capturedAt;
+// The October Sensaria snapshot confirms the same rate matrix as the earlier
+// pricing file; do not silently substitute a newer snapshot if rates diverge.
+export const shippingRateSnapshotsAgree=Object.entries(rates.basicRatesUsd||{}).every(
+ ([group,values])=>Object.entries(values).every(([zone,price])=>
+   latestSensariaCapture.basicRates?.[group]?.[zone]===price)
+);
+export const shippingRateCapture=shippingRateSnapshotsAgree?
+  latestSensariaCapture.capturedAt:rates.source.capturedAt;
 export const internationalShippingWarning='PLANNING ONLY. Captured shipping rates are not a current confirmed supplier quote. Etsy charges a single shipping-profile price for all variations within a listing; taxes, customs, regulatory requirements and shop currency must be verified before publishing.';
 
 export function previewShippingCountry({format='FC',size='40x60',country='US',state='',feePercent=12,bufferPercent=15,maxSupplierCostUsd=150}={}){
