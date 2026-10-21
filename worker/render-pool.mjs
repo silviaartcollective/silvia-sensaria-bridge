@@ -67,14 +67,14 @@ async function runOnThread(op, args, onStage) {
   });
 }
 
-export async function renderInPool({ psdPath, artworkPath, outputPath, mapping = null, psdSize = 0, fitMode = 'contain', onStage = () => {} }) {
-  const args = { psdPath, artworkPath, outputPath, mapping, psdSize, fitMode };
+export async function renderInPool({ psdPath, artworkPath, outputPath, mapping = null, psdSize = 0, psdVersion = '', fitMode = 'contain', onStage = () => {} }) {
+  const args = { psdPath, artworkPath, outputPath, mapping, psdSize, psdVersion, fitMode };
   const render = () => runOnThread('render', args, onStage);
-  if (await isTemplatePrepared({ psdPath, mapping, psdSize })) return render();
+  if (await isTemplatePrepared({ psdPath, mapping, psdSize, psdVersion })) return render();
   return onePreparationAtATime(render);
 }
 
 // Prepares a template ahead of time (background warm-up), one at a time.
-export function prepareInPool({ psdPath, mapping = null, psdSize = 0 }) {
-  return onePreparationAtATime(() => runOnThread('prepare', { psdPath, mapping, psdSize }, () => {}));
+export function prepareInPool({ psdPath, mapping = null, psdSize = 0, psdVersion = '' }) {
+  return onePreparationAtATime(() => runOnThread('prepare', { psdPath, mapping, psdSize, psdVersion }, () => {}));
 }

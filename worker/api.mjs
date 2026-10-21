@@ -1,5 +1,5 @@
 import { WORKER_ID } from './config.mjs';
-export const WORKER_VERSION = '4.6.0';
+export const WORKER_VERSION = '4.7.0';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -115,6 +115,14 @@ export function apiFor(app) {
     },
     mockupTemplates() {
       return request(app,'/api/mockups/worker/templates');
+    },
+    // The PSDs in this PC's mockup folder for the shop.
+    localTemplates(files) {
+      return request(app, '/api/mockups/worker/local-templates', { method: 'POST', body: { files }, attempts: 2 });
+    },
+    templateOrientation(templateId, orientation, squareCompatible = false) {
+      return request(app, '/api/mockups/worker/templates/' + encodeURIComponent(templateId) + '/orientation', {
+        method: 'POST', body: { orientation, squareCompatible }, attempts: 2 });
     },
     inspectMockupTemplate(templateId,objects) {
       return request(app,'/api/mockups/templates/'+encodeURIComponent(templateId)+'/inspect',{

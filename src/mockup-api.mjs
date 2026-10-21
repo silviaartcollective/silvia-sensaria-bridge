@@ -8,7 +8,8 @@ import {
  controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
  classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput,
  hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT,knownMockupArtworkTarget,withMockupJobLock,
- jpegDimensions,mockupPreviewKey,mockupEtsyKey,linkMockupArtwork
+ jpegDimensions,mockupPreviewKey,mockupEtsyKey,linkMockupArtwork,syncPcTemplates,setDetectedTemplateOrientation,
+ getPcMockupFolder,setPcMockupFolder
 } from './mockup-generator.mjs';
 import {
  signedArtworkUploadUrl,signedArtworkUrl,getArtworkObject,artworkObjectExists,deleteArtworkObject,r2Client,r2Config
@@ -135,7 +136,8 @@ async function claimPayloads(jobId,claimed){
   const known=knownMockupArtworkTarget(stored.name);
   const template=stored.mapping?.path||!known?stored:{...stored,mapping:{path:known}};
   const key=mockupOutputKey(jobId,template.id),previewKey=mockupPreviewKey(key),etsyKey=mockupEtsyKey(key);
-  return {item,template,templateUrl:await signedArtworkUrl(template.key,3600),artworkUrl,
+  // A PC folder template is read by the worker from its own disk.
+  return {item,template,templateUrl:template.source==='pc'?null:await signedArtworkUrl(template.key,3600),artworkUrl,
    output:{key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600),
     previewKey,previewUploadUrl:await signedArtworkUploadUrl(previewKey,'image/jpeg',3600),
     etsyKey,etsyUploadUrl:await signedArtworkUploadUrl(etsyKey,'image/jpeg',3600)}};
@@ -199,16 +201,33 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     const ready=(await listMockupTemplates()).filter(t=>t.status==='ready');
     const templates=await Promise.all(ready.map(async t=>{
      const known=knownMockupArtworkTarget(t.name);
-     return {id:t.id,name:t.name,key:t.key,size:t.size,mapping:t.mapping?.path?t.mapping:known?{path:known}:null,
-      url:await signedArtworkUrl(t.key,3600)};
+     const mapping=t.mapping?.path?t.mapping:known?{path:known}:null;
+     if(t.source==='pc')return {id:t.id,name:t.name,source:'pc',localPath:t.localPath,size:t.size,mtimeMs:t.mtimeMs,
+      orientation:t.orientation,orientationSource:t.orientationSource||'',mapping};
+     return {id:t.id,name:t.name,key:t.key,size:t.size,mapping,url:await signedArtworkUrl(t.key,3600)};
     }));
     return send(200,{templates}),true;
+   }
+   // The PSDs in the PC's mockup folder for this shop.
+   if(req.method==='POST'&&parts[1]==='local-templates'&&parts.length===2){
+    const body=await readJson(req);
+    return send(200,await syncPcTemplates(body.files)),true;
+   }
+   if(req.method==='POST'&&parts[1]==='templates'&&parts[3]==='orientation'&&parts.length===4&&isId(parts[2])){
+    const body=await readJson(req);
+    const template=await setDetectedTemplateOrientation(parts[2],str(body.orientation),body.squareCompatible===true);
+    return send(200,{template:{id:template.id,orientation:template.orientation}}),true;
    }
    if(req.method==='POST'&&parts.length===5&&parts[2]==='templates'&&parts[4]==='progress'&&isId(parts[1])&&isId(parts[3])){
     const body=await readJson(req);
     return send(200,{job:await updateMockupItemProgress(parts[1],ownerCheck(body),parts[3],str(body.stage))}),true;
    }
    sendJson(res,404,{ok:false,error:'Unknown PC worker mockup operation.'});return true;
+  }
+  // The mockup folder on the PC: its PSDs are used without uploading them.
+  if(parts[0]==='pc-folder'&&parts.length===1){
+   if(req.method==='GET')return send(200,{folder:await getPcMockupFolder()}),true;
+   if(req.method==='POST')return send(200,{folder:await setPcMockupFolder((await readJson(req)).folder)}),true;
   }
   if(parts[0]==='templates'){
    if(req.method==='GET'&&parts.length===1)return send(200,{templates:await listMockupTemplates()}),true;
@@ -411,6 +430,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     if(!isId(id))throw Error('Invalid source ID.');
     if(kind==='template'){
       const t=await getMockupTemplate(id);if(t.status!=='ready')throw Error('Template not ready.');
+      if(t.source==='pc')throw Error('"'+t.name+'" is in the mockup folder on the PC, not stored online.');
       await streamObject(res,t.key);return true;
     }
     if(kind==='preview'){

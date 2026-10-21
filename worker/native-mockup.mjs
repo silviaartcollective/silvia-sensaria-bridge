@@ -639,10 +639,12 @@ export function prepareFromPsd(psd, mapping = null) {
 // made every render prepare the template again.)
 // `psdSize` (from the template record) lets the worker find a prepared template
 // without the PSD on disk, so prepared templates are never downloaded again.
-async function preparedLocation(psdPath, mapping, psdSize = 0) {
+// `psdVersion` identifies a PSD edited in place (a PC folder template: its path
+// and modified time), so an edited file is prepared again.
+async function preparedLocation(psdPath, mapping, psdSize = 0, psdVersion = '') {
   const stat = Number(psdSize) > 0 ? { size: Number(psdSize) } : await fs.stat(psdPath);
   const hash = crypto.createHash('sha256').update(JSON.stringify([
-    path.basename(psdPath), stat.size, mapping?.path ?? '', PREP_VERSION
+    path.basename(psdPath), stat.size, mapping?.path ?? '', PREP_VERSION, ...(psdVersion ? [String(psdVersion)] : [])
   ])).digest('hex');
   const folder = path.join(BASE, hash);
   return { stat, folder, manifestPath: path.join(folder, 'manifest.json') };
@@ -655,12 +657,18 @@ async function readPrepared(location) {
   return null;
 }
 // Lets the worker run at most one (memory-heavy) first-time preparation at once.
-export async function isTemplatePrepared({ psdPath, mapping = null, psdSize = 0 }) {
-  return !!(await readPrepared(await preparedLocation(psdPath, mapping, psdSize)));
+export async function isTemplatePrepared({ psdPath, mapping = null, psdSize = 0, psdVersion = '' }) {
+  return !!(await readPrepared(await preparedLocation(psdPath, mapping, psdSize, psdVersion)));
+}
+// The artwork layer's shape of a prepared template (for its orientation).
+export async function preparedArtworkShape({ psdPath, mapping = null, psdSize = 0, psdVersion = '' }) {
+  const prepared = await readPrepared(await preparedLocation(psdPath, mapping, psdSize, psdVersion));
+  return prepared && !prepared.needsMapping && prepared.contentWidth > 0 && prepared.contentHeight > 0
+    ? { width: prepared.contentWidth, height: prepared.contentHeight } : null;
 }
 
-export async function prepareNativePsd({ psdPath, mapping = null, psdSize = 0, onStage = async () => {} }) {
-  const location = await preparedLocation(psdPath, mapping, psdSize);
+export async function prepareNativePsd({ psdPath, mapping = null, psdSize = 0, psdVersion = '', onStage = async () => {} }) {
+  const location = await preparedLocation(psdPath, mapping, psdSize, psdVersion);
   const { stat, folder, manifestPath } = location;
   if (stat.size > MAX_FILE_BYTES) unsupported('PSD is larger than the 1.5 GB limit.');
   const cached = await readPrepared(location);
@@ -851,9 +859,9 @@ export async function renderPreparedMockup({ prepared, artworkPath, outputPath, 
     .jpeg(jpeg).toFile(outputPath);
 }
 
-export async function renderMockupNative({ psdPath, artworkPath, outputPath, mapping = null, psdSize = 0, fitMode = 'contain', onStage = async () => {} }) {
+export async function renderMockupNative({ psdPath, artworkPath, outputPath, mapping = null, psdSize = 0, psdVersion = '', fitMode = 'contain', onStage = async () => {} }) {
   const started = Date.now();
-  const prepared = await prepareNativePsd({ psdPath, mapping, psdSize, onStage });
+  const prepared = await prepareNativePsd({ psdPath, mapping, psdSize, psdVersion, onStage });
   if (prepared.needsMapping) return { engine: 'native', needsMapping: true, objects: prepared.objects, usedMapping: null, reason: prepared.reason };
   await onStage(prepared.preparedFromCache ? 'Rendering mockup on PC (template already prepared)' : 'Template checked; rendering mockup on PC');
   const result = await renderPreparedMockup({ prepared, artworkPath, outputPath, fitMode });

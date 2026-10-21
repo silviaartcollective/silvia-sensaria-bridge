@@ -3,7 +3,12 @@ return `
 <section class="uploadbox" id="mockup-generator-panel" aria-label="Generate mockups">
  <div class="mg-workspace"><div class="mg-main"><div><strong>Generate listing mockups</strong>
  <div class="uploadmeta">Optional: choose only the PSD templates you need, then queue them on your PC. You can create the Etsy draft immediately without waiting for rendering. Keep the draft unpublished until its final mockups are ready.</div></div>
- <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically generate every selected mockup after each master artwork uploads (about a second each). Then tick up to 16 for Etsy (the master artwork and 3 preset photos fill the other 4 of its 20 photo slots).</span></label></div>
+ <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically generate every selected mockup after each master artwork uploads (about a second each). Then tick up to 20 for Etsy; the photo organizer shows which fit Etsy's 20 photos.</span></label></div>
+ <div class="mg-pc-folder">
+  <label for="mg-pc-folder">Mockup folder on the PC <span class="hint">PSDs in it and its subfolders are used straight from the PC: no uploads, and edits are picked up automatically. Subfolders named Vertical, Horizontal or Square set the orientation.</span></label>
+  <div class="mg-pc-folder-row"><input id="mg-pc-folder" type="text" maxlength="300" placeholder="e.g. D:\Mockups\Silvia" spellcheck="false"><button class="btn secondary" type="button" id="mg-pc-folder-save">Save folder</button></div>
+  <div id="mg-pc-folder-status" class="uploadmeta" aria-live="polite"></div>
+ </div>
  <div class="uploadrow">
   <label>Vertical PSD / PSB templates <span class="hint">portrait artwork</span>
    <input id="mg-psds" type="file" accept=".psd,.psb" multiple>
@@ -122,6 +127,12 @@ body.mg-org-dragging .mg-org-caption{opacity:0;transition:none}
 .mg-preview #mg-apply-selected{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0}
 @media(max-width:760px){.mg-preview-list{--preview-row-height:clamp(220px,34dvh,320px);gap:7px;max-height:620px;min-height:260px}.mg-preview-item{padding:5px}.mg-preview-item span{font-size:11px}.mg-preview-item input{width:19px;height:19px;top:7px;right:7px}}
 #mockup-generator-panel .mg-actions{display:flex;flex-wrap:wrap;gap:10px}
+#mockup-generator-panel .mg-pc-folder{display:grid;gap:6px}
+#mockup-generator-panel .mg-pc-folder-row{display:flex;gap:8px}
+#mockup-generator-panel .mg-pc-folder-row input{flex:1}
+#mockup-generator-panel .mg-pc-folder-row .btn{flex:none;padding:9px 14px;font-size:13px}
+#mockup-generator-panel #mg-pc-folder-status.warn{color:#945026}
+#mockup-generator-panel .mg-pc-tag{font-size:10px;font-weight:700;letter-spacing:.04em;color:#344d38;background:#e4ece0;border-radius:4px;padding:1px 5px;margin-left:4px}
 #mockup-generator-panel #mg-library-upload-status{font-size:13px;line-height:1.5;min-height:36px;padding:12px;border-radius:9px;background:#f4f6f1;color:#344d38}
 #mockup-generator-panel #mg-library-upload-status.warn{background:#fff0df;color:#945026}
 #mockup-generator-panel #mg-save-templates:disabled{opacity:.6;cursor:progress}

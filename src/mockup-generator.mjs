@@ -104,7 +104,11 @@ export async function confirmMockupTemplateUpload(id){
 export async function updateMockupTemplate(id,params){
  const record=await getMockupTemplate(id);
  if(own(params,'collection'))record.collection=limitText(params.collection,100)||'Unsorted';
- if(own(params,'orientation'))record.orientation=normalizeTemplateOrientation(params.orientation);
+ if(own(params,'orientation')){
+  record.orientation=normalizeTemplateOrientation(params.orientation);
+  // Chosen in the app: the PC folder name or the detected shape no longer change it.
+  record.orientationSource='user';
+ }
  if(own(params,'squareCompatible'))record.squareCompatible=params.squareCompatible===true;
  if(own(params,'mapping')){
   record.mapping=params.mapping?{path:validateMappingPath(params.mapping.path),verifiedFrom:'admin-selected'}:null;
@@ -116,10 +120,85 @@ export async function updateMockupTemplate(id,params){
  record.updatedAt=iso();await putJsonObject(templateKey(record.id),record);return record;
 }
 export async function deleteMockupTemplate(id){
- const r=await getMockupTemplate(id);r.status='deleted';r.updatedAt=iso();await putJsonObject(templateKey(id),r);
+ const r=await getMockupTemplate(id);
+ if(r.source==='pc')throw Error('"'+r.name+'" comes from the mockup folder on the PC: delete or move the file there.');
+ r.status='deleted';r.updatedAt=iso();await putJsonObject(templateKey(id),r);
  await deleteArtworkObject(r.key);
  if(r.previewKey)await deleteArtworkObject(r.previewKey);
  return {id,deleted:true};
+}
+// ------------------------------------------------------- PC folder templates
+// PSDs kept in a folder on the PC (the worker's "mockupFolder" for this shop).
+// The worker reports the files; each keeps a stable ID from its path in the
+// folder, so its artwork layer and orientation survive edits. The PSD never
+// goes to R2: the worker renders straight from the file.
+const PC_TEMPLATE_PATH=/^(?!.*(?:^|\/)\.\.(?:\/|$))[^\\:*?"<>|]{1,400}\.(psd|psb)$/i;
+export function pcTemplateId(relativePath){
+ const h=crypto.createHash('sha256').update('pc-folder|'+String(relativePath).toLowerCase()).digest('hex');
+ return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20,32);
+}
+// "Vertical", "Horizontal" or "Square" in the folder path gives the orientation.
+export function orientationFromFolder(relativePath){
+ const folders=String(relativePath).split('/').slice(0,-1).join('/').toLowerCase();
+ if(/\b(vertical|portrait)s?\b/.test(folders))return 'portrait';
+ if(/\b(horizontal|landscape)s?\b/.test(folders))return 'landscape';
+ if(/\bsquares?\b/.test(folders))return 'square';
+ return '';
+}
+export async function syncPcTemplates(files){
+ if(!Array.isArray(files))throw Error('The PC folder list is missing.');
+ const records=(await listJSON(ROOT+'/templates/',/\/meta\.json$/,1800)).filter(r=>r.source==='pc');
+ const byId=new Map(records.map(r=>[r.id,r])),seen=new Set();
+ let changed=0;
+ for(const file of files.slice(0,600)){
+  const relativePath=String(file?.path||'').replace(/\\/g,'/').replace(/^\/+/,'');
+  const size=Number(file?.size),mtimeMs=Math.round(Number(file?.mtimeMs));
+  if(!PC_TEMPLATE_PATH.test(relativePath)||!Number.isSafeInteger(size)||size<100||!Number.isFinite(mtimeMs))continue;
+  const id=pcTemplateId(relativePath),previous=byId.get(id),folderOrientation=orientationFromFolder(relativePath);
+  seen.add(id);
+  const name=safeFilename(relativePath.split('/').pop());
+  const record=previous?{...previous}:{id,source:'pc',localPath:relativePath,name,key:null,
+   collection:relativePath.includes('/')?relativePath.split('/').slice(0,-1).join(' / ').slice(0,100):'PC folder',
+   orientation:'unclassified',squareCompatible:false,smartObjects:[],previewKey:null,createdAt:iso(),
+   mapping:knownMockupArtworkTarget(name)?{path:'5',verifiedFrom:'known-template'}:null};
+  record.localPath=relativePath;record.name=name;record.size=size;record.mtimeMs=mtimeMs;record.status='ready';
+  if(folderOrientation&&record.orientationSource!=='user'){record.orientation=folderOrientation;record.orientationSource='folder'}
+  const differs=!previous||['status','size','mtimeMs','localPath','orientation'].some(k=>previous[k]!==record[k]);
+  if(differs){record.updatedAt=iso();await putJsonObject(templateKey(id),record);changed++}
+ }
+ // A PSD no longer in the folder is no longer offered.
+ for(const record of records)if(!seen.has(record.id)&&record.status!=='deleted'){
+  record.status='deleted';record.updatedAt=iso();await putJsonObject(templateKey(record.id),record);changed++;
+ }
+ return {templates:seen.size,changed};
+}
+// The folder on the PC (set in the Product Creator); the worker learns it from
+// its heartbeat reply. A "mockupFolder" in the worker's own config wins.
+const PC_FOLDER_KEY=ROOT+'/pc-folder.json';
+let pcFolderCache=null;
+export async function getPcMockupFolder(){
+ if(pcFolderCache===null){
+  try{pcFolderCache=String((await optional(PC_FOLDER_KEY))?.folder||'')}catch{return ''}
+ }
+ return pcFolderCache;
+}
+export async function setPcMockupFolder(folder){
+ const value=String(folder||'').trim().replace(/^"(.*)"$/,'$1').slice(0,300);
+ if(/[\u0000-\u001f<>|?*]/.test(value))throw Error('That folder path contains characters a Windows folder cannot have.');
+ await putJsonObject(PC_FOLDER_KEY,{folder:value,updatedAt:iso()});
+ pcFolderCache=value;
+ return value;
+}
+// The worker detects a PC template's orientation from its artwork layer's shape
+// once it has prepared it; a folder name or the app's choice comes first.
+export async function setDetectedTemplateOrientation(id,orientation,squareCompatible=false){
+ const record=await getMockupTemplate(id);
+ if(record.source!=='pc'||['user','folder'].includes(record.orientationSource))return record;
+ const detected=normalizeTemplateOrientation(orientation);
+ if(record.orientation===detected&&record.orientationSource==='detected')return record;
+ record.orientation=detected;record.orientationSource='detected';
+ record.squareCompatible=record.squareCompatible||squareCompatible===true;
+ record.updatedAt=iso();await putJsonObject(templateKey(id),record);return record;
 }
 export async function registerMockupTemplatePreview(id,key){
  const r=await getMockupTemplate(id);r.previewKey=key;r.updatedAt=iso();await putJsonObject(templateKey(id),r);return r;

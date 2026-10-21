@@ -110,7 +110,7 @@ test('the worker installs a downloaded update only when idle, then hands over an
  assert.match(worker,/if\(app===UPDATE_SOURCE\)void considerUpdate\(reply\?\.latestWorkerVersion\)/);
  assert.match(worker,/if\(!stagedUpdate\|\|stopping\|\|active\.size\|\|Date\.now\(\)-lastWorkAt<UPDATE_IDLE_MS\)return;/);
  assert.match(worker,/'--apply',update\.dir,'--after',String\(process\.pid\)/);
- assert.match(worker,/await Promise\.race\(\[sleep\(WARM_UP_EVERY_MS\),stopped\]\)/);
+ assert.match(worker,/await Promise\.race\(\[sleep\(WARM_UP_EVERY_MS\),stopped,warmUpRequested\]\)/);
  assert.match(worker,/update:updateState,autoUpdate:AUTO_UPDATE/);
  assert.match(read('worker/update-worker.cmd'),/node update-worker\.mjs %\*/);
  assert.match(read('.gitignore'),/worker\/\.update\//);

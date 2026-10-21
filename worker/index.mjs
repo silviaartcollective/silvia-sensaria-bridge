@@ -24,7 +24,8 @@ import {
 } from './crop.mjs';
 import {renderMockupOnPC} from './mockup-processor.mjs';
 import {RENDER_THREADS,prepareInPool} from './render-pool.mjs';
-import {isTemplatePrepared} from './native-mockup.mjs';
+import {isTemplatePrepared,preparedArtworkShape} from './native-mockup.mjs';
+import {scanMockupFolder,mockupFolderFile,localPsdVersion,orientationFromShape} from './local-templates.mjs';
 import {startLocalIntake} from './local-intake.mjs';
 import {patchAgPsd} from './patch-ag-psd.mjs';
 import {downloadCached,cachedFilePath} from './asset-cache.mjs';
@@ -289,13 +290,20 @@ async function processPSDJob(app,claim){
  };
  try{
   await stage('Preparing PSD template on PC');
-  const extension=path.extname(claim.template.name).toLowerCase()==='.psb'?'.psb':'.psd';
-  const templateMeta={shop:app.appUrl,id:claim.template.id,key:claim.template.key,
-   size:claim.template.size,ext:extension};
-  psdPath=cachedFilePath(templateMeta);
-  // A prepared template renders from its prepared data: no PSD download.
-  if(!await isTemplatePrepared({psdPath,mapping:claim.template.mapping||null,psdSize:claim.template.size}))
-   psdPath=(await downloadCached(claim.templateUrl,templateMeta,stage)).path;
+  let psdSize=claim.template.size,psdVersion='';
+  if(claim.template.source==='pc'){
+   // In this PC's mockup folder: read straight from the file (no R2 at all).
+   const local=await localTemplateFile(app,claim.template);
+   psdPath=local.path;psdSize=local.size;psdVersion=local.version;
+  }else{
+   const extension=path.extname(claim.template.name).toLowerCase()==='.psb'?'.psb':'.psd';
+   const templateMeta={shop:app.appUrl,id:claim.template.id,key:claim.template.key,
+    size:claim.template.size,ext:extension};
+   psdPath=cachedFilePath(templateMeta);
+   // A prepared template renders from its prepared data: no PSD download.
+   if(!await isTemplatePrepared({psdPath,mapping:claim.template.mapping||null,psdSize:claim.template.size}))
+    psdPath=(await downloadCached(claim.templateUrl,templateMeta,stage)).path;
+  }
   measure('templateReadMs');
   await stage('Preparing master artwork on PC');
   artworkPath=(await downloadCached(claim.artworkUrl,{
@@ -306,7 +314,7 @@ async function processPSDJob(app,claim){
   tempPaths.add(outputPath);
   const render=await renderMockupOnPC({
    psdPath,artworkPath,outputPath,templateName:claim.template.name,mapping:claim.template.mapping||null,
-   psdSize:claim.template.size,
+   psdSize,psdVersion,
    fitMode:claim.job.fitMode||'contain',
    onStage:stage
   });
@@ -394,8 +402,17 @@ async function heartbeatAll(){
   try{
     await Promise.allSettled(APP_CONNECTIONS.map(async app=>{
       try{
-        const reply=await clientFor(app).heartbeat({...heartbeatFor(app,activeFor(app)),update:updateState,autoUpdate:AUTO_UPDATE});
+        const reply=await clientFor(app).heartbeat({...heartbeatFor(app,activeFor(app)),update:updateState,autoUpdate:AUTO_UPDATE,
+          mockupFolder:app.mockupFolder?{path:app.mockupFolder,count:folderStatus.get(app.appUrl)?.count||0,
+            error:folderStatus.get(app.appUrl)?.error||'',fromConfig:!!app.configMockupFolder}:null});
         if(app===UPDATE_SOURCE)void considerUpdate(reply?.latestWorkerVersion);
+        // The folder chosen in the Product Creator, unless config.local.json sets one.
+        if(!app.configMockupFolder&&typeof reply?.mockupFolder==='string'&&reply.mockupFolder!==app.mockupFolder){
+          app.mockupFolder=reply.mockupFolder;folderReports.delete(app.appUrl);folderStatus.delete(app.appUrl);
+          if(app.mockupFolder)console.log('['+app.name+'] Mockup folder set in the Product Creator: '+app.mockupFolder);
+          // No folder any more: the shop stops offering its PSDs.
+          else void clientFor(app).localTemplates([]).catch(()=>{});
+        }
       }catch(error){console.error('['+app.name+'] heartbeat failed:',error.message);}
     }));
   }finally{heartbeatInFlight=false;}
@@ -510,9 +527,13 @@ async function mockupLane(){
 // Warm-up: while no mockups are rendering, prepare every saved template so a
 // new artwork never waits for a PSD download or first-time preparation.
 const WARM_UP_EVERY_MS=10*60*1000;
+let warmUpRequested=null,requestWarmUp=()=>{};
+const nextWarmUpRequest=()=>{warmUpRequested=new Promise(resolve=>{requestWarmUp=resolve})};
+nextWarmUpRequest();
 async function warmUpLane(){
-  await sleep(15000);
+  await Promise.race([sleep(15000),stopped]);
   while(!stopping){
+    nextWarmUpRequest();
     for(const app of APP_CONNECTIONS){
       if(stopping||(mockupUnsupported.get(app.appUrl)||0)>Date.now())continue;
       let templates=[];
@@ -523,9 +544,18 @@ async function warmUpLane(){
         if(stopping)break;
         // Real mockups first: wait until nothing is rendering.
         while(!stopping&&[...active].some(a=>a.type==='mockup'))await sleep(2000);
+        const mapping=template.mapping||null;
+        if(template.source==='pc'){
+          try{if(await prepareLocalTemplate(app,template))prepared++}
+          catch(error){
+            // Deleted since the last scan: the next scan removes it from the shop.
+            if(!/no longer in the mockup folder/.test(error.message))
+              console.error('['+app.name+'] Could not prepare '+template.name+' from the mockup folder:',error.message);
+          }
+          continue;
+        }
         const ext=path.extname(template.name).toLowerCase()==='.psb'?'.psb':'.psd';
         const meta={shop:app.appUrl,id:template.id,key:template.key,size:template.size,ext};
-        const mapping=template.mapping||null;
         try{
           if(await isTemplatePrepared({psdPath:cachedFilePath(meta),mapping,psdSize:template.size}))continue;
           const psdPath=(await downloadCached(template.url,meta)).path;
@@ -535,7 +565,74 @@ async function warmUpLane(){
       }
       if(prepared)console.log('['+app.name+'] Prepared '+prepared+' PSD template(s) in advance.');
     }
-    await Promise.race([sleep(WARM_UP_EVERY_MS),stopped]);
+    // A changed mockup folder is prepared straight away.
+    await Promise.race([sleep(WARM_UP_EVERY_MS),stopped,warmUpRequested]);
+  }
+}
+
+// ---------------------------------------------------- PC mockup folder
+// A shop's PSDs can live in a folder on this PC (config "mockupFolder"). The
+// folder is scanned every 15 s and the shop told about any change; renders read
+// the files directly, and an edited PSD is prepared again while idle.
+async function localTemplateFile(app,template){
+  if(!app.mockupFolder)throw Error('"'+template.name+'" is in a PC mockup folder, but no mockupFolder is set for '+
+    app.name+' in config.local.json on this PC.');
+  const file=mockupFolderFile(app.mockupFolder,template.localPath);
+  const stat=await fs.promises.stat(file).catch(()=>null);
+  if(!stat)throw Error('"'+template.localPath+'" is no longer in the mockup folder ('+app.mockupFolder+').');
+  return {path:file,size:stat.size,version:localPsdVersion(template.localPath,stat.mtimeMs)};
+}
+// Prepares one PC folder template if needed, and tells the shop its orientation
+// from the artwork layer's shape unless a folder name or the app set it.
+async function prepareLocalTemplate(app,template){
+  const local=await localTemplateFile(app,template),mapping=template.mapping||null;
+  const ref={psdPath:local.path,mapping,psdSize:local.size,psdVersion:local.version};
+  let prepared=false;
+  if(!await isTemplatePrepared(ref)){await prepareInPool(ref);prepared=true}
+  if(!['user','folder'].includes(template.orientationSource||'')){
+    const shape=await preparedArtworkShape(ref);
+    const orientation=shape?orientationFromShape(shape):'unclassified';
+    if(orientation!=='unclassified'&&orientation!==template.orientation){
+      await clientFor(app).templateOrientation(template.id,orientation);
+      console.log('['+app.name+'] '+template.localPath+': '+orientation+' (from its artwork layer).');
+    }
+  }
+  return prepared;
+}
+const folderReports=new Map(); // appUrl -> {signature, at, retryAt}
+const folderStatus=new Map(); // appUrl -> {count, error}: shown in the Product Creator
+for(const app of APP_CONNECTIONS)app.configMockupFolder=app.mockupFolder||'';
+const FOLDER_SCAN_MS=15000,FOLDER_REPORT_REFRESH_MS=10*60*1000;
+async function mockupFolderLane(){
+  while(!stopping){
+    for(const app of APP_CONNECTIONS){
+      if(stopping||!app.mockupFolder)continue;
+      const last=folderReports.get(app.appUrl)||{};
+      if((last.retryAt||0)>Date.now())continue;
+      let files;
+      try{files=await scanMockupFolder(app.mockupFolder);folderStatus.set(app.appUrl,{count:files.length,error:''})}
+      catch(error){
+        // Not found (yet): reported in the Product Creator and checked again next scan.
+        if(folderStatus.get(app.appUrl)?.error!==error.message)console.error('['+app.name+'] '+error.message);
+        folderStatus.set(app.appUrl,{count:0,error:error.message});
+        continue;
+      }
+      try{
+        const signature=JSON.stringify(files);
+        if(signature===last.signature&&Date.now()-(last.at||0)<FOLDER_REPORT_REFRESH_MS)continue;
+        const result=await clientFor(app).localTemplates(files);
+        folderReports.set(app.appUrl,{signature,at:Date.now()});
+        if(signature!==last.signature){
+          console.log('['+app.name+'] Mockup folder: '+files.length+' PSD(s)'+
+            (result.changed?' · '+result.changed+' new or changed':'')+'.');
+          if(result.changed)requestWarmUp();
+        }
+      }catch(error){
+        folderReports.set(app.appUrl,{...last,retryAt:Date.now()+(/404|not found|unknown/i.test(error.message)?10*60*1000:60*1000)});
+        console.error('['+app.name+'] Mockup folder could not be reported:',error.message);
+      }
+    }
+    await Promise.race([sleep(FOLDER_SCAN_MS),stopped]);
   }
 }
 async function main(){
@@ -567,7 +664,7 @@ async function main(){
   const updateCheck=setInterval(installUpdateWhenIdle,5000);
   updateCheck.unref();
   try{
-    await Promise.all([cropLane(),mockupLane(),warmUpLane()]);
+    await Promise.all([cropLane(),mockupLane(),warmUpLane(),mockupFolderLane()]);
   }finally{
     if(idleCheck)clearInterval(idleCheck);
     clearInterval(ticker);

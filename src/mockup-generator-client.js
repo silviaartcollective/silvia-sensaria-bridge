@@ -514,7 +514,9 @@ async function loadTemplates(){
   const compatible=!detectedArtworkOrientation||templateFitsOrientation(template,detectedArtworkOrientation);
   cb.disabled=template.status!=='ready'||!compatible;
   cb.checked=!cb.disabled&&selected.has(template.id);
-  const title=create('span',template.name+(template.mapping?' · mapped':' · map Smart Object'));
+  const title=create('span',(template.source==='pc'?template.localPath:template.name)+(template.mapping?' · mapped':' · map Smart Object'));
+  // From the mockup folder on the PC: used straight from the file.
+  if(template.source==='pc')title.append(create('span','PC',{class:'mg-pc-tag',title:'In the mockup folder on the PC'}));
   const orientation=create('select','',{'aria-label':'Template orientation for '+template.name});
   for(const [id,label] of [['unclassified','Unclassified'],['portrait','Vertical'],['landscape','Horizontal'],['square','Square']]){
    const opt=create('option',label,{value:id});
@@ -671,12 +673,37 @@ async function workerStatus(){
     :worker.configured?'Shared PC worker offline · use Launch Shared Crop Worker above'
     :'Shared PC worker not configured in Render';
   $('mg-worker-status').textContent=text;
+  showPcFolderStatus(worker);
   $('mg-worker-status').style.color=fixed&&!worker.updateText?'#477153':'#a46b3d';
   return fixed;
  }catch{
   $('mg-worker-status').textContent='Could not check PC worker connection';
   return false;
  }
+}
+// ------------------------------------------------ mockup folder on the PC
+let pcFolderSaved='';
+async function loadPcFolder(){
+ try{pcFolderSaved=(await api('pc-folder')).folder||'';$('mg-pc-folder').value=pcFolderSaved;showPcFolderStatus(lastWorker)}
+ catch{} // older servers have no folder setting
+}
+function showPcFolderStatus(worker){
+ const status=$('mg-pc-folder-status'),found=worker?.mockupFolder;
+ status.classList.remove('warn');
+ if(found?.fromConfig){status.textContent='The PC worker uses '+found.path+' (set in its config.local.json) · '+found.count+' PSD'+(found.count===1?'':'s')+'.';return}
+ if(!pcFolderSaved){status.textContent='Optional. Leave empty to upload PSDs below instead.';return}
+ if(!worker?.online){status.textContent='Saved. The PC worker reads the folder once it is online.';return}
+ if(!found||found.path!==pcFolderSaved){status.textContent='Saved. The PC worker picks it up within a few seconds.';return}
+ if(found.error){status.classList.add('warn');status.textContent=found.error+' Check the path on the PC.';return}
+ status.textContent='The PC worker sees '+found.count+' PSD'+(found.count===1?'':'s')+' in this folder; new and edited ones appear below within 15 seconds.';
+}
+async function savePcFolder(){
+ pcFolderSaved=(await api('pc-folder','POST',{folder:$('mg-pc-folder').value})).folder||'';
+ $('mg-pc-folder').value=pcFolderSaved;
+ showPcFolderStatus(lastWorker);
+ message(pcFolderSaved?'Mockup folder saved. Its PSDs appear in the saved templates list within a few seconds.':'Mockup folder cleared.');
+ // The worker reports the folder on its next scan; refresh the list after it.
+ setTimeout(()=>{void loadTemplates().then(()=>workerStatus()).catch(()=>{})},20000);
 }
 function renderResults(){
  const list=$('mg-results');list.replaceChildren();
@@ -947,6 +974,8 @@ $('mg-save-templates').addEventListener('click',()=>act(uploadTemplates));
 $('mg-select-seven').addEventListener('click',selectSeven);
 $('mg-select-seventeen').addEventListener('click',selectAllCompatible);
 $('mg-clear-templates').addEventListener('click',clearTemplates);
+$('mg-pc-folder-save').addEventListener('click',()=>act(savePcFolder));
+$('mg-pc-folder').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();void act(savePcFolder)}});
 $('mg-select-all').addEventListener('click',()=>{
  if(!job)return;selectionByJob.set(job.id,{chosen:firstSlots(job)});selectionChanged();
 });
@@ -976,6 +1005,7 @@ for(const [id,method] of [
 // Template readiness controls auto-queue; a failed worker-status request must not
 // disable uploads or generation.
 initialLoad=loadTemplates();
+void loadPcFolder();
 void Promise.allSettled([loadJobs(),workerStatus()]);
 initialLoad.then(()=>{
  renderPreviews();
