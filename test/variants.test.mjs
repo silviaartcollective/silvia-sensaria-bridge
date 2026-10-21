@@ -53,17 +53,30 @@ test('includes mapped 8x10 poster with exact converted USD retail price', () => 
   assert.equal(eightByTen.sku, 'SAC0042-P-810');
   assert.equal(eightByTen.offerings[0].is_enabled, true);
   assert.equal(eightByTen.offerings[0].quantity, 999);
-  assert.equal(eightByTen.offerings[0].price, 35.63);
+  assert.equal(eightByTen.offerings[0].price, 36.98);
 });
 
 test('poster prices rise with size despite supplier cost anomalies', () => {
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_CAD.P['8x10'], 52.95);
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10'], 35.63);
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'], 39);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_CAD.P['8x10'], 54.95);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10'], 36.98);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'], 40.34);
   assert.ok(
     SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'] >
     SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10']
   );
+});
+
+test('every adjacent small poster size increases in the regular CAD price ladder', () => {
+  const p=SILVIA_RETAIL_PRICE_LADDER_CAD.P;
+  for (const sequence of [
+    ['5x7', '8x10', '8x12', '11x14', '12x16'],
+    ['5x5', '8x8', '10x10', '12x12', '16x16']
+  ]) {
+    for (let i = 1; i < sequence.length; i++) {
+      assert.ok(p[sequence[i]] > p[sequence[i - 1]],
+        sequence[i] + ' should cost more than ' + sequence[i - 1]);
+    }
+  }
 });
 
 test('24x36 canvas uses the approved Silvia CAD-equivalent USD retail price', () => {
