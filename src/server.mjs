@@ -34,6 +34,7 @@ import {assertSeoShopSection} from './seo-shop-section.mjs';
 import {starterDraftMedia} from './draft-starter-media.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
+import {listingLayoutForManifest} from './panoramic-layout.mjs';
 import {planDefaultTemplateInventory,templateInventoryFingerprint} from './default-listing-pricing.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
 import {renderListingsPage} from './listings-page.mjs';
@@ -2014,7 +2015,7 @@ async function performListingConversion(body){
         catalog: products,
         readinessStateId,
         defaultQuantity: 999,
-        orientation: manifest.orientation
+        orientation: listingLayoutForManifest(manifest)
       });
 
       await withEtsyListingRetry(() => updateListingInventory({
@@ -3870,8 +3871,8 @@ const server = http.createServer(async (req, res) => {
     });
     if(!link?.artworkId||!link.manifest?.master?.key)
       throw Error('Listing is not a verified Product Creator or converted artwork template.');
-    const master=link.manifest,orientation=String(master.orientation||'').toLowerCase();
-    if(!['portrait','landscape','square'].includes(orientation))
+    const master=link.manifest,orientation=listingLayoutForManifest(master);
+    if(!['portrait','landscape','square','panoramic'].includes(orientation))
       throw Error('Stored artwork orientation is not verified.');
     if(!(await artworkObjectExists(master.master.key)))
       throw Error('Linked artwork master is missing from R2.');
@@ -5163,7 +5164,7 @@ const server = http.createServer(async (req, res) => {
         catalog: products,
         readinessStateId: body.readiness_state_id,
         defaultQuantity: 999,
-        orientation: manifest.orientation
+        orientation: listingLayoutForManifest(manifest)
       });
       body.price = variantInventory.minimumPrice;
       body.quantity = 999;
