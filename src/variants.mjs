@@ -1,7 +1,9 @@
 const SIZE_PROPERTY_ID = 513;
 const STYLE_PROPERTY_ID = 514;
 
-export const SILVIA_PANORAMIC_SIZES = Object.freeze(["8x16","10x20","12x24","16x32","18x36","20x40","24x48","30x60","8x24","10x30","12x36","16x48","20x60"]);
+// Keep all 2:1 and 3:1 sizes together in ascending short-edge order.
+// Etsy shows size options in the order they first occur in the inventory.
+export const SILVIA_PANORAMIC_SIZES = Object.freeze(["8x16","8x24","10x20","10x30","12x24","12x36","16x32","16x48","18x36","20x40","20x60","24x48","30x60"]);
 
 export const SILVIA_SQUARE_SIZES = Object.freeze(["5x5","8x8","10x10","12x12","16x16","18x18","20x20","24x24","30x30","36x36","40x40"]);
 
