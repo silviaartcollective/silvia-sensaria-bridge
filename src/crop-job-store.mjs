@@ -146,13 +146,16 @@ export function findReusableCropJob(store, input = {}) {
   const size = input.size ? normalizeCropSize(input.size) : null;
   const orientation = normalizeOrientation(input.orientation,Boolean(size));
   const masterKey = String(input.masterKey || '').trim();
+  const requiredRatios=size?[sizeCropRatioKey(size)]:[...fulfillmentRatiosForOrientation(orientation)];
 
   return (store?.jobs || []).find(job =>
     job.artworkId === artworkId &&
     ACTIVE_STATUSES.has(job.status) &&
     normalizeOrientation(job.orientation,Boolean(job.size)) === orientation &&
     String(job.masterKey || '') === masterKey &&
-    (job.size ? normalizeCropSize(job.size) : null) === size
+    (job.size ? normalizeCropSize(job.size) : null) === size &&
+    requiredRatios.length===(job.ratios||[]).length &&
+    requiredRatios.every(r=>(job.ratios||[]).includes(r))
   ) || null;
 }
 
