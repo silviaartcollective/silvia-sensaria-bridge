@@ -57,3 +57,12 @@ test('PC templates render from the file: no R2 link, prepared again when edited,
  assert.match(worker,/if\(!app\.configMockupFolder&&typeof reply\?\.mockupFolder==='string'/);
  assert.match(read('src/mockup-generator-ui.mjs'),/id="mg-pc-folder"/);
 });
+
+test('one folder: its Vertical, Horizontal and Square subfolders sort the PSDs, and the example path shows its backslashes',async()=>{
+ for(const [file,kind] of [['Vertical/a.psd','portrait'],['VERTICAL MOCKUPS/a.psd','portrait'],['Horizontal/b.psd','landscape'],
+  ['Horizontals/Living/c.psd','landscape'],['Square/d.psb','square'],['Other/e.psd','']])
+  assert.equal(orientationFromFolder(file),kind,file);
+ const {renderMockupGeneratorSection}=await import('../src/mockup-generator-ui.mjs');
+ assert.match(renderMockupGeneratorSection(),/placeholder="e\.g\. D:\\Mockups\\Silvia"/);
+ assert.match(read('src/mockup-generator-client.js'),/\[count\('portrait'\),'vertical'\],\[count\('landscape'\),'horizontal'\],\[count\('square'\),'square'\]/);
+});
