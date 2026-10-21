@@ -125,13 +125,17 @@ function notGenerated(){
    'Waiting for the PC worker.'}));
  const inBatch=new Set(job.templates.map(t=>t.id));
  const art=job.artworkOrientation&&job.artworkOrientation!=='unclassified'?job.artworkOrientation:detectedArtworkOrientation;
- for(const t of templates.filter(t=>t.source==='pc'&&t.status==='ready'&&!inBatch.has(t.id)))
-  rows.push({name:t.localPath,id:t.id,status:'left-out',reason:t.orientation==='unclassified'
+ for(const t of templates.filter(t=>t.source==='pc'&&t.status==='ready'&&!inBatch.has(t.id))){
+  const other=t.orientation!=='unclassified'&&art&&!templateFitsOrientation(t,art);
+  const kind=ORIENTATION_WORD[t.orientation]||t.orientation;
+  rows.push({name:t.localPath,id:t.id,status:other?'other-orientation':'left-out',kind,reason:t.orientation==='unclassified'
    ?'Not in this batch: not sorted yet. Put it in a Vertical, Horizontal or Square folder, or choose its orientation in the saved templates list.'
-   :!art||templateFitsOrientation(t,art)?'Not in this batch: it was added to the folder or sorted after the batch started. Queue the mockups again to include it.'
-   :'Not in this batch: it is a '+({portrait:'vertical',landscape:'horizontal',square:'square'}[t.orientation]||t.orientation)+' template.'});
+   :!other?'Not in this batch: it was added to the folder or sorted after the batch started. Queue the mockups again to include it.'
+   :'Not in this batch: it is a '+kind+' template.'});
+ }
  return rows;
 }
+const ORIENTATION_WORD={portrait:'vertical',landscape:'horizontal',square:'square'};
 function renderPreviews(){
  const completed=job?job.templates.filter(t=>t.status==='completed'):[];
  const missing=notGenerated();
@@ -183,8 +187,10 @@ function showNotGenerated(missing){
  const box=$('mg-not-generated');
  box.hidden=!missing.length;box.replaceChildren();
  if(!missing.length)return;
- box.append(create('strong','Not generated ('+missing.length+')'));
- for(const row of missing){
+ // Templates of another orientation are left out on purpose: one line, not one row each.
+ const problems=missing.filter(row=>row.status!=='other-orientation'),others=missing.length-problems.length;
+ if(problems.length)box.append(create('strong','Not generated ('+problems.length+')'));
+ for(const row of problems){
   const item=create('div','',{class:'mg-not-generated-item'});
   item.append(create('b',row.name),create('span',row.reason));
   if(row.status==='needs_mapping'){
@@ -193,6 +199,13 @@ function showNotGenerated(missing){
    item.append(choose);
   }
   box.append(item);
+ }
+ if(others){
+  const counts={};
+  for(const row of missing)if(row.status==='other-orientation')counts[row.kind]=(counts[row.kind]||0)+1;
+  const list=Object.entries(counts).map(([kind,n])=>n+' '+kind).join(' and ');
+  box.append(create('span','Not used for this artwork: '+list+' template'+(others===1?'':'s')+' (other orientation).',
+   {class:'mg-not-generated-note'}));
  }
 }
 function selectionChanged(){

@@ -87,6 +87,7 @@ return `
 .mg-not-generated-item{display:grid;gap:2px;padding-top:8px;border-top:1px solid #f1e2d6}
 .mg-not-generated-item span{color:#6b4a32}
 .mg-not-generated-item .btn{justify-self:start;font-size:12px;padding:6px 10px;margin-top:4px}
+.mg-not-generated-note{color:#6b4a32}
 .mg-org-modal{position:fixed;inset:0;z-index:1000;contain:layout style;background:rgba(34,34,34,.55);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:4vh 16px}
 .mg-org-modal[hidden]{display:none}
 body.mg-org-open{overflow:hidden}
