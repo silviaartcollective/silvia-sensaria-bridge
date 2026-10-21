@@ -119,6 +119,7 @@ test('the panel lists every PSD that produced no JPG, with why: layer to choose,
   {id:'g',source:'pc',status:'ready',localPath:'New.psd',orientation:'landscape'},
   {id:'d',source:'pc',status:'ready',localPath:'Bedroom Mockup.psd',orientation:'landscape'}],detectedArtworkOrientation:'landscape'};
  vm.runInNewContext(pick('templateFitsOrientation')+pick('notGenerated')+';this.rows=notGenerated();',context);
+ assert.equal(context.rows.find(r=>r.id==='f').status,'other-orientation');
  const why=Object.fromEntries(context.rows.map(r=>[r.name,r.reason]));
  assert.equal(context.rows.length,6);
  assert.match(why['Horizontal Close up framed black mockup.psd'],/Choose its artwork layer/);
@@ -127,6 +128,14 @@ test('the panel lists every PSD that produced no JPG, with why: layer to choose,
  assert.match(why['Horizontal Close up framed natural oak mockup.psd'],/not sorted yet/);
  assert.match(why['Vertical/Room.psd'],/it is a vertical template/);
  assert.match(why['New.psd'],/Queue the mockups again to include it/);
+ // Other-orientation templates are one summary line, not counted as "Not generated".
+ const box={hidden:true,children:[],replaceChildren(){this.children=[]},append(...x){this.children.push(...x)}};
+ const shown={$:()=>box,create:(tag,text)=>({tag,text,append(){},addEventListener(){}}),act(){},mappingPrompt(){},rows:[
+  {name:'a.psd',status:'needs_mapping',reason:'Choose its artwork layer'},
+  ...['portrait','portrait','square'].map((o,n)=>({name:n+'.psd',status:'other-orientation',kind:{portrait:'vertical',square:'square'}[o]}))]};
+ vm.runInNewContext(pick('showNotGenerated')+';showNotGenerated(rows);',shown);
+ assert.deepEqual(box.children.filter(c=>c.tag!=='div').map(c=>c.text),
+  ['Not generated (1)','Not used for this artwork: 2 vertical and 1 square templates (other orientation).']);
  // The folder rule applies whenever templates are read, without waiting for the worker.
  assert.match(read('src/mockup-generator.mjs'),/return withFolderOrientation\(value,await getPcMockupFolder\(\)\);/);
 });

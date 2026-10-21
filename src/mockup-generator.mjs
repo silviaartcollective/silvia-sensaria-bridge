@@ -18,7 +18,7 @@ export function knownMockupArtworkTarget(name){
  if(/^mockup[ _-]*19\.(?:psd|psb)$/i.test(String(name||'')))return '5';
  if(/^vertical[ _-]*close[ _-]*up[ _-]*framed[ _-]*(?:light[ _-]*wood|dark[ _-]*wood|black)[ _-]*mockup\.(?:psd|psb)$/i.test(String(name||'')))
    return '5';
- return null; // Never guess among multiple Smart Objects.
+ return null;
 }
 export function safeFilename(name) {
  const clean=limitText(name,180).replace(/[\\/\0-\x1f<>:"|?*]/g,'_');
@@ -46,15 +46,14 @@ export function classifySmartObjects(list,template){
  // `kind` is kept: the Product Creator's artwork-layer picker lists smart objects only.
  const objects=visible.map(x=>({name:limitText(x.name,160),path:limitText(x.path,400),visible:true,kind:'smart'}));
  const suggested=visible.filter(x=>x.suggested===true);
+ // A saved choice matches by layer path first, then by name, like the PC worker.
  const expected=template?.mapping?.path||knownMockupArtworkTarget(template?.name);
- if(expected){
-   const selected=objects.find(x=>x.path===expected||x.name===expected);
-   if(selected)return {status:'mapped',path:selected.path,objects};
-   return {status:'needs_mapping',reason:'Saved artwork Smart Object not found or hidden.',objects};
- }
+ const selected=expected&&(objects.find(x=>x.path===expected)||objects.find(x=>x.name===expected));
+ if(selected)return {status:'mapped',path:selected.path,objects};
  if(objects.length===1)return {status:'mapped',path:objects[0].path,objects};
- // The PC worker picks the artwork layer only when it is clear (placeholder
- // name, or the only layer that is neither a background nor a frame ring).
+ // Several visible Smart Objects (or a saved choice no longer in the PSD): the
+ // PC worker uses the one that is clearly the artwork, else the top one, and
+ // marks it.
  if(suggested.length===1)return {status:'mapped',path:limitText(suggested[0].path,400),objects,suggested:true};
  return {status:'needs_mapping',reason:objects.length?'Multiple visible Smart Objects; select the artwork layer.':'No visible editable Smart Objects detected.',objects};
 }

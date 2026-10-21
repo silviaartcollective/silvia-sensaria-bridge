@@ -331,8 +331,8 @@ const ARTWORK_NAME = /\b(your|place|insert|put|add|paste)\b.*\b(design|art|artwo
 const DECORATION_NAME = /texture|paper|grain|noise|overlay|shadow|light|glare|reflect|gloss|dust|scratch|frame|border|background|\bbg\b|wall|room|floor|plant|vase|logo|watermark/i;
 const quadArea = q => Math.abs(q.reduce((sum, p, i) => sum + p[0] * q[(i + 1) % 4][1] - q[(i + 1) % 4][0] * p[1], 0)) / 2;
 
-// With several visible Smart Objects, picks the artwork only when that is
-// clear, in this order:
+// With several visible Smart Objects, picks the layer that is clearly the
+// artwork, in this order:
 //  1. exactly one is named like an artwork placeholder;
 //  2. exactly one is neither a full-canvas background nor a frame-like ring
 //     (mostly empty inside);
@@ -362,31 +362,29 @@ export function guessArtworkLayer(psd, entries, visible) {
   return normal.length === 1 ? normal[0] : null;
 }
 
+// Layer paths count from the top of the Layers panel, so the lower path is the
+// higher layer: "0" is the top layer, "2.1" the second layer inside the third
+// layer from the top.
+export function stackOrder(a, b) {
+  const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] - y[i];
+  return x.length - y.length;
+}
+export const topSmartObject = objects => objects.slice().sort((a, b) => stackOrder(a.path, b.path))[0] || null;
+
+// The artwork layer: the saved choice (by layer path, else by name) while it is
+// a visible Smart Object; otherwise the only one; otherwise the one that is
+// clearly the artwork; otherwise the top one.
 function selectArtwork(psd, entries, mapping) {
   const objects = nativeSmartObjects(psd);
   const visible = objects.filter(o => o.visible);
   const wanted = mapping?.path != null ? String(mapping.path) : null;
-  // ag-psd enumerates bottom-to-top, but layerPath uses Photoshop's
-  // top-first numeric ordering. When more than one Smart Object is present,
-  // the top visible one wins unless the seller explicitly saved a mapping.
-  const topFirst=visible.slice().sort((a,b)=>{
-    const pa=String(a.path).split('.').map(Number),pb=String(b.path).split('.').map(Number);
-    for(let i=0;i<Math.max(pa.length,pb.length);i++){
-      if(i>=pa.length)return -1;
-      if(i>=pb.length)return 1;
-      if(pa[i]!==pb[i])return pa[i]-pb[i];
-    }
-    return 0;
-  });
-  const guessed=wanted==null?topFirst[0]:null;
-  if(guessed) guessed.suggested=true;
-  const chosen=wanted!=null
-    ? visible.find(o=>o.path===wanted)||visible.find(o=>o.name===wanted)
-    : guessed;
-  if (!chosen) return { objects, needsMapping: true, reason: wanted != null
-    ? 'The saved artwork Smart Object was not found among visible layers; select the artwork layer again.'
-    : visible.length ? 'This PSD has several visible Smart Objects. Select the artwork layer.'
-      : 'This PSD has no visible Smart Object to place the artwork in.' };
+  const saved = wanted != null ? visible.find(o => o.path === wanted) || visible.find(o => o.name === wanted) : null;
+  const picked = saved || visible.length < 2 ? null : guessArtworkLayer(psd, entries, visible) || topSmartObject(visible);
+  // The server accepts the `suggested` layer when no saved choice applies.
+  if (picked) picked.suggested = true;
+  const chosen = saved || picked || visible[0];
+  if (!chosen) return { objects, needsMapping: true, reason: 'This PSD has no visible Smart Object to place the artwork in.' };
   const pathId = chosen.path;
   const index = entries.findIndex(e => e.path === pathId);
   if (index < 0) unsupported('The artwork Smart Object could not be located in the layer stack.');
@@ -663,7 +661,10 @@ async function preparedLocation(psdPath, mapping, psdSize = 0, psdVersion = '') 
 async function readPrepared(location) {
   try {
     const cached = JSON.parse(await fs.readFile(location.manifestPath, 'utf8'));
-    if (cached.version === PREP_VERSION && cached.psdBytes === location.stat.size) return cached;
+    // Workers before 4.7.1 asked for the layer when several Smart Objects were
+    // visible; such a PSD is prepared again (now with the top one).
+    const askedForLayer = cached.needsMapping && (cached.objects || []).some(o => o.visible);
+    if (cached.version === PREP_VERSION && cached.psdBytes === location.stat.size && !askedForLayer) return cached;
   } catch {}
   return null;
 }

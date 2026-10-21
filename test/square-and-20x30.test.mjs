@@ -72,6 +72,6 @@ test('worker default crop job preserves 1x1 for square and normal ratios for rec
 });
 test('worker defaults to topmost visible Smart Object without overriding manual mapping',()=>{
  const worker=readFileSync(new URL('../worker/native-mockup.mjs',import.meta.url),'utf8');
- assert.match(worker,/const topFirst=visible\.slice\(\)\.sort/);
- assert.match(worker,/const chosen=wanted!=null/);
+ assert.match(worker,/guessArtworkLayer\(psd, entries, visible\) \|\| topSmartObject\(visible\)/);
+ assert.match(worker,/const chosen = saved \|\| picked/);
 });
