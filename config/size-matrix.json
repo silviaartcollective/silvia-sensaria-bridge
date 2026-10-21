@@ -148,5 +148,83 @@
     "canvas": true,
     "framedCanvas": true,
     "status": "Verified Sensaria product codes"
+  },
+  "8x16": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "10x20": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "12x24": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "16x32": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "18x36": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "20x40": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "24x48": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "30x60": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "8x24": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "10x30": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "12x36": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "16x48": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
+  },
+  "20x60": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Panoramic supplier product mapped; 2:1 and 3:1 landscape only"
   }
 }
