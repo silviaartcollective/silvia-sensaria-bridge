@@ -76,5 +76,77 @@
     "canvas": true,
     "framedCanvas": true,
     "status": "Canvas and Framed Canvas mapped"
+  },
+  "5x5": {
+    "fineArtPrint": true,
+    "canvas": false,
+    "framedCanvas": false,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "8x8": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "10x10": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "12x12": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "16x16": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "18x18": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "20x20": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "24x24": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "30x30": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "36x36": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "40x40": {
+    "fineArtPrint": false,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria square catalog; square orientation only"
+  },
+  "20x30": {
+    "fineArtPrint": true,
+    "canvas": true,
+    "framedCanvas": true,
+    "status": "Verified Sensaria product codes"
   }
 }
