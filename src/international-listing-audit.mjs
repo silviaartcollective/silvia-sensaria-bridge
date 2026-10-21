@@ -9,7 +9,11 @@ export function auditListingDestination({
  maxSupplierCostUsd=150,shopCurrency='',usdToShopCurrency=null
 }={}){
  const cc=String(country).trim().toUpperCase();
- const rate=usdToShopCurrency===null||usdToShopCurrency===''?null:Number(usdToShopCurrency);
+ const currency=String(shopCurrency||'').trim().toUpperCase();
+ const currencyKnown=/^[A-Z]{3}$/.test(currency);
+ // A USD shop needs no FX conversion. Other shops require an explicit rate.
+ const rate=usdToShopCurrency===null||usdToShopCurrency===''?
+   (currency==='USD'?1:null):Number(usdToShopCurrency);
  if(rate!==null&&(!Number.isFinite(rate)||rate<=0||rate>100))
   throw Error('USD-to-shop-currency conversion must be a positive verified exchange rate.');
  if(!Array.isArray(inventory?.products))throw Error('Etsy inventory is missing its product variants.');
@@ -49,16 +53,17 @@ export function auditListingDestination({
  if(biggest && biggest.basicShippingUsd>Number(maxSupplierCostUsd))
    blockers.push('Worst-case captured shipping exceeds the selected maximum supplier cost.');
  if(!biggest)blockers.push('No complete supplier shipping rate is available.');
+ if(!currencyKnown)blockers.push('Etsy shop currency was not verified.');
  if(rate===null)blockers.push('Shop-currency conversion is not supplied/verified. USD amounts must not be published directly to a non-USD Etsy shop.');
  const usd=biggest && !unverified.length && biggest.basicShippingUsd<=Number(maxSupplierCostUsd)
    ?round(biggest.basicShippingUsd*(1+Number(bufferPercent)/100)/(1-Number(feePercent)/100)):null;
  return {
    previewOnly:true,updatedEtsy:false,country:cc,state:String(state||'').toUpperCase(),
-   shopCurrency:String(shopCurrency||'').toUpperCase()||'UNVERIFIED',
+   shopCurrency:currencyKnown?currency:'UNVERIFIED',
    variantCount:variants.length,variants,
    unverifiedVariants:unverified,worstCase:biggest,
    estimatedPrimaryShippingUsd:usd,
-   estimatedPrimaryShippingInShopCurrency:usd!==null&&rate!==null?round(usd*rate):null,
+   estimatedPrimaryShippingInShopCurrency:usd!==null&&rate!==null&&currencyKnown?round(usd*rate):null,
    assumedUsdToShopCurrency:rate,
    recommendedSecondaryShipping:null,
    blockers:[...new Set(blockers)],
