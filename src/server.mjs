@@ -53,6 +53,8 @@ import {
  assertConverterArtworkReady,activateConverterArtworkRevision
 } from './converter-artwork-revision.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
+import {renderInternationalShippingPage} from './international-shipping-page.mjs';
+import {internationalShippingPreview,listingWorstCaseShippingPreview} from './international-shipping-planner.mjs';
 import { pricingCatalogForZone, pricingCatalogForMarket, publicShippingPricingConfig } from './pricing.mjs';
 import { scanSupplierComparison } from './supplier-comparison.mjs';
 import {startSupplierComparisonJob,getSupplierComparisonJob} from './supplier-comparison-jobs.mjs';
@@ -2992,6 +2994,33 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+
+  // Review-only: no Etsy profiles or listing destinations are modified.
+  if(req.method==='GET'&&url.pathname==='/international-shipping'){
+    if(!requireAdminPage(req,res,'/international-shipping'))return;
+    return sendHtml(res,200,renderInternationalShippingPage());
+  }
+  if(req.method==='GET'&&url.pathname==='/api/international-shipping/preview'){
+    if(!requireAdminApi(req,res))return;
+    try{
+      const options={
+        format:String(url.searchParams.get('format')||'FC'),
+        size:String(url.searchParams.get('size')||'40x60'),
+        feePercent:Number(url.searchParams.get('feePercent')??12),
+        bufferPercent:Number(url.searchParams.get('bufferPercent')??15),
+        maxSupplierCostUsd:Number(url.searchParams.get('maxSupplierCostUsd')??150)
+      };
+      const plan=internationalShippingPreview(options);
+      const listingWorstCase=listingWorstCaseShippingPreview({
+        country:String(url.searchParams.get('country')||'US'),
+        feePercent:options.feePercent,bufferPercent:options.bufferPercent,
+        maxSupplierCostUsd:options.maxSupplierCostUsd
+      });
+      return sendJson(res,200,{ok:true,plan,listingWorstCase,readOnly:true});
+    }catch(error){
+      return sendJson(res,400,{ok:false,error:String(error.message||error)});
+    }
+  }
 
   if (req.method === 'GET' && url.pathname === '/shipping-profile') {
     if (!requireAdminPage(req, res, '/shipping-profile')) return;
