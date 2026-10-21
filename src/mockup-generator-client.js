@@ -701,7 +701,7 @@ function showPcFolderStatus(worker){
  const sorted=[[count('portrait'),'vertical'],[count('landscape'),'horizontal'],[count('square'),'square'],
   [count('unclassified'),'not sorted yet']].filter(([n])=>n).map(([n,label])=>n+' '+label).join(', ');
  status.textContent='The PC worker sees '+found.count+' PSD'+(found.count===1?'':'s')+' in this folder'+
-  (sorted?' ('+sorted+')':'')+'. New and edited ones appear below within 15 seconds.';
+  (sorted?' ('+sorted+')':'')+'. New and edited ones appear below within 15 seconds; templates uploaded earlier are hidden while the folder is in use.';
 }
 async function savePcFolder(){
  pcFolderSaved=(await api('pc-folder','POST',{folder:$('mg-pc-folder').value})).folder||'';
@@ -855,13 +855,13 @@ async function createJobNow({artworkId='',automatic=false}={}){
   if(uploaded){
    message('Queueing new PSD mockups from the confirmed R2 master '+uploaded+'…');
    freshJob=(await api('jobs/from-artwork','POST',{
-    artworkId:uploaded,templateIds:ids,fitMode:'contain'
+    artworkId:uploaded,templateIds:ids,fitMode:'cover'
    })).job;
    currentArtworkId=uploaded;
   }else{
    // Start rendering now: the PC worker on this computer takes the file
    // directly (a local copy), while the master still uploads to R2 for Etsy.
-   const result=await api('jobs','POST',{filename:art.name,size:art.size,templateIds:ids,fitMode:'contain'});
+   const result=await api('jobs','POST',{filename:art.name,size:art.size,templateIds:ids,fitMode:'cover'});
    message('Handing the artwork to the PC worker on this computer…');
    const local=await handToWorker(result,art);
    if(!local){
