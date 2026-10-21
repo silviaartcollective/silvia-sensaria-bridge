@@ -104,7 +104,11 @@ button:disabled{opacity:.6;cursor:wait}
    const tasks=[
      check('etsy','/etsy/status',d=>d.connected===true,'Connected',d=>d.shopName?d.shopName+' (Shop '+d.shopId+')':'Shop authorization could not be verified'),
      check('r2','/r2/status',d=>d.connected===true,'Connected',d=>d.connected?'R2 bucket reachable':'R2 connection unavailable'),
-     check('presets','/api/presets/status',d=>d.configured===true,'Ready',d=>d.configured?'Required media are present':'Some preset media is missing or not ready'),
+     // Preset media is optional (up to 3 images + 1 video).
+     check('presets','/api/presets/status',d=>Array.isArray(d.items),'Ready',d=>{
+       const n=(d.items||[]).filter(i=>i.exists).length;
+       return d.configured?'All preset media present':n?n+' of 4 preset files installed · the rest are optional':'No preset media installed · optional';
+     }),
      check('orders','/api/orders',d=>Array.isArray(d.orders),'Available',d=>String(d.count||0)+' staged receipt(s)'+(d.truncated?' (more available)':'')),
      check('tracking','/api/tracking/orders',d=>d.ok===true,'Available',()=> 'Tracking data endpoint responded'),
    ];

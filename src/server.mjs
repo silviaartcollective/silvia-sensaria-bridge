@@ -4785,10 +4785,14 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const files = Array.isArray(body.files) ? body.files : [];
-      const byRole = new Map(files.map((file) => [String(file.role || ''), file]));
-      const uploads = await Promise.all(PRESET_MEDIA.map(async (item) => {
-        const supplied = byRole.get(item.role);
-        if (!supplied) throw new Error(`Missing preset file: ${item.role}`);
+      // Presets are optional: any of the 3 image slots and the video slot, one
+      // file each. Slots not sent keep what is installed.
+      const roles = files.map((file) => String(file?.role || ''));
+      if (!roles.length) throw new Error('Choose up to 3 preset images and 1 video.');
+      const unknown = roles.find((role) => !PRESET_MEDIA.some((item) => item.role === role));
+      if (unknown !== undefined) throw new Error(`Unknown preset slot: ${unknown.slice(0, 40) || '(none)'}`);
+      if (new Set(roles).size !== roles.length) throw new Error('Each preset slot takes one file.');
+      const uploads = await Promise.all(PRESET_MEDIA.filter((item) => roles.includes(item.role)).map(async (item) => {
         return {
           role: item.role,
           filename: item.filename,
@@ -4806,8 +4810,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/presets/complete') {
     if (!requireAdminApi(req, res)) return;
     try {
+      // The slots just uploaded must now be in R2 (all of them, for an older page).
+      const body = await readJsonBody(req).catch(() => ({}));
+      const roles = Array.isArray(body?.roles) ? body.roles.map(String) : [];
       const status = await presetMediaStatus();
-      if (!status.configured) {
+      const uploaded = roles.length ? status.items.filter((item) => roles.includes(item.role)) : status.items;
+      if (!uploaded.length || uploaded.length !== (roles.length || status.items.length) || uploaded.some((item) => !item.exists)) {
         return sendJson(res, 400, {
           ok: false,
           error: 'Preset media upload is incomplete.',

@@ -169,7 +169,7 @@ return `
    <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
   </div>
   <div id="mg-not-generated" class="mg-not-generated" hidden aria-live="polite"></div>
-  <div id="mg-selection-status" class="uploadmeta">Pick up to 20 mockups. Etsy shows 20 photos: with the 3 preset photos, the organizer shows which ones make it (photos below its line are not added). The master artwork is never an Etsy photo. Older batches remain in troubleshooting.</div>
+  <div id="mg-selection-status" class="uploadmeta">Pick up to 20 mockups. Etsy shows 20 photos: with the preset photos, the organizer shows which ones make it (photos below its line are not added). The master artwork is never an Etsy photo. Older batches remain in troubleshooting.</div>
   <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside>
  <div class="mg-org-modal" id="mg-org-modal" hidden>
