@@ -366,12 +366,23 @@ function selectArtwork(psd, entries, mapping) {
   const objects = nativeSmartObjects(psd);
   const visible = objects.filter(o => o.visible);
   const wanted = mapping?.path != null ? String(mapping.path) : null;
-  const guessed = wanted == null && visible.length > 1 ? guessArtworkLayer(psd, entries, visible) : null;
-  // The server accepts a single `suggested` layer when no choice is saved.
-  if (guessed) guessed.suggested = true;
-  const chosen = wanted != null
-    ? visible.find(o => o.path === wanted) || visible.find(o => o.name === wanted)
-    : visible.length === 1 ? visible[0] : guessed;
+  // ag-psd enumerates bottom-to-top, but layerPath uses Photoshop's
+  // top-first numeric ordering. When more than one Smart Object is present,
+  // the top visible one wins unless the seller explicitly saved a mapping.
+  const topFirst=visible.slice().sort((a,b)=>{
+    const pa=String(a.path).split('.').map(Number),pb=String(b.path).split('.').map(Number);
+    for(let i=0;i<Math.max(pa.length,pb.length);i++){
+      if(i>=pa.length)return -1;
+      if(i>=pb.length)return 1;
+      if(pa[i]!==pb[i])return pa[i]-pb[i];
+    }
+    return 0;
+  });
+  const guessed=wanted==null?topFirst[0]:null;
+  if(guessed) guessed.suggested=true;
+  const chosen=wanted!=null
+    ? visible.find(o=>o.path===wanted)||visible.find(o=>o.name===wanted)
+    : guessed;
   if (!chosen) return { objects, needsMapping: true, reason: wanted != null
     ? 'The saved artwork Smart Object was not found among visible layers; select the artwork layer again.'
     : visible.length ? 'This PSD has several visible Smart Objects. Select the artwork layer.'
