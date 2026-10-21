@@ -15,8 +15,14 @@ sharp.cache(false);
 sharp.concurrency(1);
 
 export const FULFILLMENT_RATIOS = Object.freeze(['2x3', '3x4', '4x5', '11x14', '5x7', '14x15']);
+export const SQUARE_FULFILLMENT_RATIOS=Object.freeze(['1x1']);
+export function fulfillmentRatiosForOrientation(orientation){
+ return String(orientation||'').toLowerCase()==='square'?
+  SQUARE_FULFILLMENT_RATIOS:FULFILLMENT_RATIOS;
+}
 
 export const FULFILLMENT_RATIO_DIMENSIONS = Object.freeze({
+  '1x1':[1,1],
   '2x3': [2, 3],
   '3x4': [3, 4],
   '4x5': [4, 5],
@@ -28,6 +34,7 @@ export const FULFILLMENT_RATIO_DIMENSIONS = Object.freeze({
 // Reference dimensions for 300-PPI planning only. Actual crop output uses
 // original master pixels and must never upscale to these reference dimensions.
 export const FULFILLMENT_RATIO_MIN_PIXELS = Object.freeze({
+  '1x1':[12000,12000],  // 40x40, 300 PPI
   // Sensaria GO rejects RGB uploads over 17,500 px, so the 2x3 crop is made at
   // the largest exact 2:3 size within that limit (about 292 DPI at 40x60).
   '2x3': [11666, 17499], // 40x60
@@ -39,6 +46,18 @@ export const FULFILLMENT_RATIO_MIN_PIXELS = Object.freeze({
 });
 
 export const SIZE_TO_FULFILLMENT_RATIO = Object.freeze({
+  '5x5':'1x1',
+  '8x8':'1x1',
+  '10x10':'1x1',
+  '12x12':'1x1',
+  '16x16':'1x1',
+  '18x18':'1x1',
+  '20x20':'1x1',
+  '24x24':'1x1',
+  '30x30':'1x1',
+  '36x36':'1x1',
+  '40x40':'1x1',
+  '20x30':'2x3',
   '5x7': '5x7',
   '8x10': '4x5',
   '8x12': '2x3',
@@ -56,7 +75,7 @@ export const SIZE_TO_FULFILLMENT_RATIO = Object.freeze({
 
 function normalizeOrientation(value, width, height) {
   const actual=Number(width)>Number(height)?'landscape':Number(height)>Number(width)?'portrait':'square';
-  if(actual==='square')throw Error('Square master artwork needs dedicated square crop ratios.');
+  if(actual==='square')return 'square';
   // Pixel dimensions are authoritative even if an older manifest says portrait.
   return actual;
 }
@@ -84,7 +103,7 @@ export function fulfillmentRatioObjectKey(artworkId, ratio) {
   const id = String(artworkId || '').trim().toUpperCase();
   if (!/^SAC\d+$/.test(id)) throw new Error(`Invalid artwork ID: ${artworkId}`);
   const normalized = String(ratio || '').trim().toLowerCase();
-  if (!FULFILLMENT_RATIOS.includes(normalized)) throw new Error(`Unsupported fulfillment ratio: ${ratio}`);
+  if (![...FULFILLMENT_RATIOS,...SQUARE_FULFILLMENT_RATIOS].includes(normalized)) throw new Error(`Unsupported fulfillment ratio: ${ratio}`);
   return `artworks/${id}/fulfillment/${normalized}.jpg`;
 }
 
@@ -180,7 +199,7 @@ export async function generateFulfillmentRatios({ artworkId, masterKey, orientat
     await downloadArtworkObjectToFile(masterKey, sourcePath);
     const assets = {};
     const insufficient = {};
-    for (const ratio of FULFILLMENT_RATIOS) {
+    for (const ratio of fulfillmentRatiosForOrientation(orientation)) {
       const generated = await generateOne({
         artworkId,
         sourcePath,
@@ -193,7 +212,7 @@ export async function generateFulfillmentRatios({ artworkId, masterKey, orientat
     }
     return {
       artworkId,
-      ready: FULFILLMENT_RATIOS.every((ratio) => Boolean(assets[ratio]?.productionReady)),
+      ready: fulfillmentRatiosForOrientation(orientation).every((ratio) => Boolean(assets[ratio]?.productionReady)),
       assets,
       insufficient
     };
