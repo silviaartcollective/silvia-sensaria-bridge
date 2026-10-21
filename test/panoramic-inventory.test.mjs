@@ -104,3 +104,19 @@ test('reconversion switches only the Etsy size ladder based on staged replacemen
   orientation:'portrait',masterGeometry:{width:2000,height:3000,orientation:'portrait'}
  }),/orientation/);
 });
+
+
+test('mixed 2:1 and 3:1 panoramic sizes appear in ascending first-dimension order',()=>{
+ const expected=["8x16","8x24","10x20","10x30","12x24","12x36","16x32","16x48","18x36","20x40","20x60","24x48","30x60"];
+ assert.deepEqual(SILVIA_PANORAMIC_SIZES,expected);
+ const products=inventory('panoramic').products;
+ const displayed=products.filter((_,index)=>index%6===0)
+  .map(product=>product.property_values[0].values[0].match(/\/\s*(\d+x\d+)″/)[1]);
+ assert.deepEqual(displayed,expected,'Etsy should show smaller panoramic sizes before larger ones');
+ const posters=products.filter(product=>
+  product.offerings[0].is_enabled&&product.property_values[1].values[0]==='Matte Paper Poster'
+ ).map(product=>product.property_values[0].values[0].match(/\/\s*(\d+x\d+)″/)[1]);
+ // Low minimum prices on these five sizes are genuine enabled poster prices.
+ assert.deepEqual(posters,['8x16','10x20','12x36','20x40','24x48']);
+ assert.equal(inventory('panoramic').enabledCount,70);
+});
