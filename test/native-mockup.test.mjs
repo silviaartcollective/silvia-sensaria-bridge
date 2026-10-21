@@ -501,3 +501,54 @@ test('a paper-texture smart object over the artwork is not mistaken for it (mock
  assert.equal(prepared.needsMapping,false);
  assert.equal(prepared.usedMapping,'2.1');
 });
+
+// A frame close-up like "Horizontal Close up framed dark wood": the artwork
+// Smart Object (900×600) reaches well past the canvas (300×200); its mask opens
+// at the frame's inner corner (100,50) and the canvas cuts it off right and below.
+function closeUpScene({mask=(x,y)=>x>=100&&y>=50,quad=[[-300,-200],[600,-200],[600,400],[-300,400]]}={}){
+ const W=300,H=200,wood=[90,60,40],paint=[150,120,90];
+ return {width:W,height:H,imageData:image(W,H,(x,y)=>mask(x,y)?paint:wood),children:[
+  {name:'Frame photo',left:0,top:0,right:W,bottom:H,imageData:image(W,H,()=>wood)},
+  {name:'5',left:0,top:0,right:W,bottom:H,imageData:image(W,H,()=>[...paint,255]),
+   mask:{left:0,top:0,right:W,bottom:H,defaultColor:0,imageData:image(W,H,(x,y)=>mask(x,y)?[255,255,255,255]:[0,0,0,255])},
+   placedLayer:{id:GUID,type:'raster',transform:quad.flat(),width:900,height:600}}
+ ],linkedFiles:[{id:GUID,name:'art.png',data:new Uint8Array([1])}]};
+}
+
+test('a corner close-up places the artwork\'s own corner in the frame corner, not its middle',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const psdPath=path.join(dir,'Horizontal Close up framed dark wood mockup.psd'),art=path.join(dir,'art.png'),out=path.join(dir,'out.jpg');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(closeUpScene()));
+  await quadrantArtwork(art,900,600);
+  await processor.renderMockupOnPC({psdPath,artworkPath:art,outputPath:out,templateName:'close up.psd',fitMode:'cover'});
+  const {at}=await pixels(out);
+  // The visible 200×150 is the artwork's top-left corner: red throughout.
+  for(const [x,y] of [[104,54],[200,120],[295,195],[295,54],[104,195]])near(at(x,y),QUADRANTS.tl,14,'artwork corner at '+x+','+y);
+  near(at(50,25),[90,60,40],14,'frame outside the opening');
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
+});
+
+test('the close-up placement follows which sides are real edges; ordinary mockups keep the whole Smart Object',needsReader,()=>{
+ const place=scene=>{
+  const prepared=native.prepareFromPsd(readBack(scene));
+  return native.artworkPlacement({...prepared,coverage:prepared.coverage});
+ };
+ // Corner close-up: the artwork starts at the opening's corner, same zoom.
+ const corner=place(closeUpScene());
+ assert.equal(corner.gravity,'northwest');
+ assert.deepEqual([corner.u,corner.v,corner.width,corner.height].map(Math.round),[400,250,900,600]);
+ // The opening's bottom-right corner (canvas cuts left and top): artwork's bottom-right corner.
+ const other=place(closeUpScene({mask:(x,y)=>x<200&&y<150}));
+ assert.equal(other.gravity,'southeast');
+ assert.deepEqual([other.u+other.width,other.v+other.height].map(Math.round),[500,350]);
+ // Top and bottom frame edges both visible, cut off on the right: the opening's height is the artwork's height.
+ const strip=place(closeUpScene({mask:(x,y)=>x>=100&&y>=50&&y<150}));
+ assert.equal(strip.gravity,'west');
+ assert.deepEqual([strip.u,strip.v,strip.height].map(Math.round),[400,250,100]);
+ assert.ok(Math.abs(strip.width/strip.height-1.5)<0.01);
+ // An opening inside the canvas (not cut by its edge) and an ordinary frame keep the usual fit.
+ assert.equal(place(closeUpScene({mask:(x,y)=>x>=100&&x<250&&y>=50&&y<150})),null);
+ const ordinary=frameScene().psd,prepared=native.prepareFromPsd(readBack(ordinary));
+ assert.equal(native.artworkPlacement({...prepared,coverage:prepared.coverage}),null);
+});

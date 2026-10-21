@@ -759,6 +759,66 @@ async function prunePrepared(keep) {
 }
 
 // ------------------------------------------------------------------ render
+// Where the artwork goes in its Smart Object, in the Smart Object's own units:
+// normally all of it (null). In a close-up the Smart Object reaches well past
+// what is visible and the canvas edge cuts the visible part off. The artwork's
+// own edges then go where the visible part has real edges (the frame opening
+// or the layer's mask), so a corner close-up shows the artwork's corner, not
+// its middle, at the template's zoom.
+const GRAVITY = { start: { start: 'northwest', centre: 'north', end: 'northeast' },
+  centre: { start: 'west', centre: 'centre', end: 'east' }, end: { start: 'southwest', centre: 'south', end: 'southeast' } };
+export function artworkPlacement({ box, quad, coverage, contentWidth: cw, contentHeight: ch, width, height }) {
+  const [h0, h1, h2, h3, h4, h5, h6, h7, h8] = homography(quad, [[0, 0], [cw, 0], [cw, ch], [0, ch]]);
+  // The visible part's extent in the Smart Object's units and on the canvas,
+  // and how much of it lies along each canvas edge.
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity, count = 0;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  const along = { left: 0, right: 0, top: 0, bottom: 0 };
+  for (let y = 0; y < box.height; y++) {
+    const cy = box.top + y, py = cy + 0.5;
+    for (let x = 0; x < box.width; x++) {
+      if (coverage[y * box.width + x] < 128) continue;
+      const cx = box.left + x, px = cx + 0.5, w = h6 * px + h7 * py + h8;
+      const u = (h0 * px + h1 * py + h2) / w, v = (h3 * px + h4 * py + h5) / w;
+      if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v;
+      if (cx < x0) x0 = cx; if (cx > x1) x1 = cx; if (cy < y0) y0 = cy; if (cy > y1) y1 = cy;
+      if (cx === 0) along.left++; if (cx === width - 1) along.right++;
+      if (cy === 0) along.top++; if (cy === height - 1) along.bottom++;
+      count++;
+    }
+  }
+  if (count < 64) return null;
+  // Pixel centres → pixel edges.
+  const halfU = cw / Math.hypot(quad[1][0] - quad[0][0], quad[1][1] - quad[0][1]) / 2;
+  const halfV = ch / Math.hypot(quad[3][0] - quad[0][0], quad[3][1] - quad[0][1]) / 2;
+  u0 -= halfU; u1 += halfU; v0 -= halfV; v1 += halfV;
+  const spanU = u1 - u0, spanV = v1 - v0;
+  if (spanU >= 0.9 * cw && spanV >= 0.9 * ch) return null;
+  // A side of the visible part is open when the canvas edge cuts it off (along
+  // at least half its length): the artwork goes on beyond it. A closed side is
+  // a real edge of the artwork (the frame opening or the mask).
+  const rows = y1 - y0 + 1, cols = x1 - x0 + 1;
+  const cut = { left: along.left * 2 >= rows, right: along.right * 2 >= rows, top: along.top * 2 >= cols, bottom: along.bottom * 2 >= cols };
+  // The canvas side each Smart Object side faces (it may be turned or flipped).
+  const facing = (a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? ['left', 'right'] : ['right', 'left']) : (dy > 0 ? ['top', 'bottom'] : ['bottom', 'top']);
+  };
+  const [uLo, uHi] = facing(quad[0], quad[1]), [vLo, vHi] = facing(quad[0], quad[3]);
+  const open = { uLo: cut[uLo], uHi: cut[uHi], vLo: cut[vLo], vHi: cut[vHi] };
+  // Not cut by the canvas: an ordinary mockup.
+  if (!open.uLo && !open.uHi && !open.vLo && !open.vHi) return null;
+  // Real edges on both sides of an axis: that is the artwork's whole length along it.
+  let w = cw, h = ch;
+  if (!open.uLo && !open.uHi && spanU < 0.9 * cw) { w = spanU; h = ch * spanU / cw; }
+  else if (!open.vLo && !open.vHi && spanV < 0.9 * ch) { h = spanV; w = cw * spanV / ch; }
+  const axis = (lo, hi, openLo, openHi, size) =>
+    !openLo && openHi ? { at: lo, anchor: 'start' } :
+    openLo && !openHi ? { at: hi - size, anchor: 'end' } : { at: (lo + hi - size) / 2, anchor: 'centre' };
+  const x = axis(u0, u1, open.uLo, open.uHi, w), y = axis(v0, v1, open.vLo, open.vHi, h);
+  return { u: x.at, v: y.at, width: w, height: h, gravity: GRAVITY[y.anchor][x.anchor] };
+}
+
 // The small per-template data stays in memory between renders.
 const preparedMemory = new Map();
 async function loadPrepared(prepared) {
@@ -776,7 +836,8 @@ async function loadPrepared(prepared) {
     mul: new Uint8Array(await fs.readFile(path.join(folder, 'residual.mul'))),
     add: new Uint8Array(await fs.readFile(path.join(folder, 'residual.add'))) } : null;
   const below = prepared.artBlend ? new Uint8Array(await fs.readFile(path.join(folder, 'below.rgb'))) : null;
-  const loaded = { coverage, above, residual, below, artBlend: prepared.artBlend || null };
+  const placement = artworkPlacement({ ...prepared, coverage });
+  const loaded = { coverage, above, residual, below, artBlend: prepared.artBlend || null, placement };
   preparedMemory.set(folder, loaded);
   while (preparedMemory.size > 24) preparedMemory.delete(preparedMemory.keys().next().value);
   return loaded;
@@ -801,10 +862,16 @@ async function decodedArtwork(artworkPath) {
 // Pure compositing step (exported for tests): the artwork warped into the
 // Smart Object corners, with the layers above and the correction applied, as an
 // RGBA patch over the artwork box whose alpha is the artwork's coverage.
-export function renderArtworkPatch({ box, quad, coverage, above, residual = null, artBlend = null, below = null, art, artWidth, artHeight }) {
+export function renderArtworkPatch({ box, quad, coverage, above, residual = null, artBlend = null, below = null, art, artWidth, artHeight,
+  placement = null, contentWidth = 0, contentHeight = 0 }) {
   const artFn = artBlend ? blendFor(artBlend.mode) : null, mixed = new Float64Array(3);
-  const [h0, h1, h2, h3, h4, h5, h6, h7, h8] =
-    homography(quad, [[0, 0], [artWidth, 0], [artWidth, artHeight], [0, artHeight]]);
+  // The Smart Object's corners in artwork pixels; with a placement the artwork
+  // covers only its part of the Smart Object.
+  const sx = placement ? artWidth / placement.width : 0, sy = placement ? artHeight / placement.height : 0;
+  const corners = placement
+    ? [[0, 0], [contentWidth, 0], [contentWidth, contentHeight], [0, contentHeight]].map(([u, v]) => [(u - placement.u) * sx, (v - placement.v) * sy])
+    : [[0, 0], [artWidth, 0], [artWidth, artHeight], [0, artHeight]];
+  const [h0, h1, h2, h3, h4, h5, h6, h7, h8] = homography(quad, corners);
   const patch = new Uint8ClampedArray(box.width * box.height * 4), out = new Float64Array(3);
   const maxX = artWidth - 1, maxY = artHeight - 1, rowBytes = artWidth * 3;
   const rs = residual?.sub;
@@ -849,15 +916,19 @@ export function renderArtworkPatch({ box, quad, coverage, above, residual = null
 
 export async function renderPreparedMockup({ prepared, artworkPath, outputPath, fitMode = 'contain' }) {
   const { box, quad, contentWidth, contentHeight, width, height, folder } = prepared;
-  const [{ coverage, above, residual, below, artBlend }, source] = await Promise.all([loadPrepared(prepared), decodedArtwork(artworkPath)]);
+  const [{ coverage, above, residual, below, artBlend, placement }, source] = await Promise.all([loadPrepared(prepared), decodedArtwork(artworkPath)]);
   // Resample the artwork only as finely as the placement needs.
   const side = Math.max(...quad.map((p, i) => Math.hypot(quad[(i + 1) % 4][0] - p[0], quad[(i + 1) % 4][1] - p[1])));
   const scale = Math.min(1, (side * 1.25) / Math.max(contentWidth, contentHeight));
-  const artWidth = Math.max(2, Math.round(contentWidth * scale)), artHeight = Math.max(2, Math.round(contentHeight * scale));
+  const artWidth = Math.max(2, Math.round((placement?.width ?? contentWidth) * scale));
+  const artHeight = Math.max(2, Math.round((placement?.height ?? contentHeight) * scale));
+  // A close-up keeps the artwork's visible corner or edge where the template has it.
   const art = await sharp(source.data, { raw: { width: source.width, height: source.height, channels: 3 } })
-    .resize(artWidth, artHeight, { fit: fitMode === 'cover' ? 'cover' : 'contain', background: { r: 255, g: 255, b: 255, alpha: 1 } })
+    .resize(artWidth, artHeight, { fit: fitMode === 'cover' ? 'cover' : 'contain', position: placement?.gravity || 'centre',
+      background: { r: 255, g: 255, b: 255, alpha: 1 } })
     .flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer();
-  const patch = renderArtworkPatch({ box, quad, coverage, above, residual, artBlend, below, art, artWidth, artHeight });
+  const patch = renderArtworkPatch({ box, quad, coverage, above, residual, artBlend, below, art, artWidth, artHeight,
+    placement, contentWidth, contentHeight });
   const overlay = { input: Buffer.from(patch.buffer, patch.byteOffset, patch.byteLength),
     raw: { width: box.width, height: box.height, channels: 4 }, left: box.left, top: box.top };
   const base = sharp(path.join(folder, 'composite.jpg'), { limitInputPixels: false }).composite([overlay]);
