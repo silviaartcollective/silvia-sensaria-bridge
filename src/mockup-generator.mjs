@@ -78,7 +78,15 @@ async function listJSON(prefix,regex,limit=1000) {
 }
 export async function listMockupTemplates(){
  const records=await listJSON(ROOT+'/templates/',/\/meta\.json$/,1800);
- return records.filter(x=>x.status!=='deleted').sort((a,b)=>a.name.localeCompare(b.name));
+ return withoutUploadedTwins(records.filter(x=>x.status!=='deleted')).sort((a,b)=>a.name.localeCompare(b.name));
+}
+// A PSD that was uploaded and is also in the PC mockup folder (same file name)
+// is offered once, from the folder: otherwise every batch renders it twice. The
+// upload is kept, and offered again if the file leaves the folder.
+const twinName=record=>String(record?.name||'').toLowerCase();
+export function withoutUploadedTwins(records){
+ const onPc=new Set(records.filter(r=>r.source==='pc'&&r.status==='ready').map(twinName));
+ return records.filter(r=>r.source==='pc'||!onPc.has(twinName(r)));
 }
 export async function getMockupTemplate(id){
  const value=await optional(templateKey(assertId(id)));
@@ -147,7 +155,10 @@ export function orientationFromFolder(relativePath){
 }
 export async function syncPcTemplates(files){
  if(!Array.isArray(files))throw Error('The PC folder list is missing.');
- const records=(await listJSON(ROOT+'/templates/',/\/meta\.json$/,1800)).filter(r=>r.source==='pc');
+ const all=await listJSON(ROOT+'/templates/',/\/meta\.json$/,1800);
+ const records=all.filter(r=>r.source==='pc');
+ // The uploaded copy of the same PSD, if any: its settings carry over.
+ const uploaded=new Map(all.filter(r=>r.source!=='pc'&&r.status==='ready').map(r=>[twinName(r),r]));
  const byId=new Map(records.map(r=>[r.id,r])),seen=new Set();
  let changed=0;
  for(const file of files.slice(0,600)){
@@ -162,8 +173,18 @@ export async function syncPcTemplates(files){
    orientation:'unclassified',squareCompatible:false,smartObjects:[],previewKey:null,createdAt:iso(),
    mapping:knownMockupArtworkTarget(name)?{path:'5',verifiedFrom:'known-template'}:null};
   record.localPath=relativePath;record.name=name;record.size=size;record.mtimeMs=mtimeMs;record.status='ready';
+  // Settings made on the uploaded copy (artwork layer, orientation) carry over.
+  const twin=uploaded.get(twinName(record));
+  if(twin){
+   if(!record.mapping?.path&&twin.mapping?.path)record.mapping={...twin.mapping};
+   if(record.orientation==='unclassified'&&twin.orientation&&twin.orientation!=='unclassified'){
+    record.orientation=twin.orientation;record.orientationSource='uploaded';
+   }
+   record.squareCompatible=record.squareCompatible||twin.squareCompatible===true;
+  }
   if(folderOrientation&&record.orientationSource!=='user'){record.orientation=folderOrientation;record.orientationSource='folder'}
-  const differs=!previous||['status','size','mtimeMs','localPath','orientation'].some(k=>previous[k]!==record[k]);
+  const differs=!previous||['status','size','mtimeMs','localPath','orientation','squareCompatible'].some(k=>previous[k]!==record[k])||
+   JSON.stringify(previous.mapping||null)!==JSON.stringify(record.mapping||null);
   if(differs){record.updatedAt=iso();await putJsonObject(templateKey(id),record);changed++}
  }
  // A PSD no longer in the folder is no longer offered.
@@ -193,7 +214,7 @@ export async function setPcMockupFolder(folder){
 // once it has prepared it; a folder name or the app's choice comes first.
 export async function setDetectedTemplateOrientation(id,orientation,squareCompatible=false){
  const record=await getMockupTemplate(id);
- if(record.source!=='pc'||['user','folder'].includes(record.orientationSource))return record;
+ if(record.source!=='pc'||['user','folder','uploaded'].includes(record.orientationSource))return record;
  const detected=normalizeTemplateOrientation(orientation);
  if(record.orientation===detected&&record.orientationSource==='detected')return record;
  record.orientation=detected;record.orientationSource='detected';

@@ -49,7 +49,7 @@ test('PC templates render from the file: no R2 link, prepared again when edited,
  assert.match(gen,/if\(!seen\.has\(record\.id\)&&record\.status!=='deleted'\)\{\s*record\.status='deleted'/);
  // The app's orientation choice wins over the folder name and the detected shape.
  assert.match(gen,/if\(folderOrientation&&record\.orientationSource!=='user'\)/);
- assert.match(gen,/if\(record\.source!=='pc'\|\|\['user','folder'\]\.includes\(record\.orientationSource\)\)return record;/);
+ assert.match(gen,/if\(record\.source!=='pc'\|\|\['user','folder','uploaded'\]\.includes\(record\.orientationSource\)\)return record;/);
  assert.match(worker,/const local=await localTemplateFile\(app,claim\.template\);/);
  assert.match(native,/PREP_VERSION, \.\.\.\(psdVersion \? \[String\(psdVersion\)\] : \[\]\)/);
  // The folder can be set in the Product Creator; config.local.json wins.
@@ -65,4 +65,21 @@ test('one folder: its Vertical, Horizontal and Square subfolders sort the PSDs, 
  const {renderMockupGeneratorSection}=await import('../src/mockup-generator-ui.mjs');
  assert.match(renderMockupGeneratorSection(),/placeholder="e\.g\. D:\\Mockups\\Silvia"/);
  assert.match(read('src/mockup-generator-client.js'),/\[count\('portrait'\),'vertical'\],\[count\('landscape'\),'horizontal'\],\[count\('square'\),'square'\]/);
+});
+
+test('a PSD both uploaded and in the PC folder is offered once, from the folder, with the upload\'s settings',async()=>{
+ const {withoutUploadedTwins}=await import('../src/mockup-generator.mjs');
+ const records=[
+  {id:'u1',name:'BlackPNG.psd',status:'ready',key:'k1'},
+  {id:'u2',name:'Bythewindow.psd',status:'ready',key:'k2'},
+  {id:'u3',name:'Only uploaded.psd',status:'ready',key:'k3'},
+  {id:'p1',name:'blackpng.psd',status:'ready',source:'pc',localPath:'Horizontal/blackpng.psd'},
+  {id:'p2',name:'Bythewindow.psd',status:'ready',source:'pc',localPath:'Horizontal/Bythewindow.psd'},
+  {id:'p3',name:'Only on PC.psd',status:'ready',source:'pc',localPath:'Vertical/Only on PC.psd'}];
+ assert.deepEqual(withoutUploadedTwins(records).map(r=>r.id),['u3','p1','p2','p3']);
+ // The upload comes back once the file leaves the folder.
+ assert.deepEqual(withoutUploadedTwins(records.map(r=>r.id==='p2'?{...r,status:'deleted'}:r)).filter(r=>r.status!=='deleted').map(r=>r.id),['u2','u3','p1','p3']);
+ const source=read('src/mockup-generator.mjs');
+ assert.match(source,/return withoutUploadedTwins\(records\.filter\(x=>x\.status!=='deleted'\)\)/);
+ assert.match(source,/if\(!record\.mapping\?\.path&&twin\.mapping\?\.path\)record\.mapping=\{\.\.\.twin\.mapping\};/);
 });
