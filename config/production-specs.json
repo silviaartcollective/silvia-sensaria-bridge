@@ -138,6 +138,116 @@
         "height": 12000
       },
       "template": "nobleed-30x40-portrait.psd"
+    },
+    "5x5": {
+      "finished": {
+        "widthIn": 5,
+        "heightIn": 5
+      },
+      "portraitPx": {
+        "width": 1500,
+        "height": 1500
+      },
+      "template": null
+    },
+    "8x8": {
+      "finished": {
+        "widthIn": 8,
+        "heightIn": 8
+      },
+      "portraitPx": {
+        "width": 2400,
+        "height": 2400
+      },
+      "template": null
+    },
+    "10x10": {
+      "finished": {
+        "widthIn": 10,
+        "heightIn": 10
+      },
+      "portraitPx": {
+        "width": 3000,
+        "height": 3000
+      },
+      "template": null
+    },
+    "12x12": {
+      "finished": {
+        "widthIn": 12,
+        "heightIn": 12
+      },
+      "portraitPx": {
+        "width": 3600,
+        "height": 3600
+      },
+      "template": null
+    },
+    "16x16": {
+      "finished": {
+        "widthIn": 16,
+        "heightIn": 16
+      },
+      "portraitPx": {
+        "width": 4800,
+        "height": 4800
+      },
+      "template": null
+    },
+    "18x18": {
+      "finished": {
+        "widthIn": 18,
+        "heightIn": 18
+      },
+      "portraitPx": {
+        "width": 5400,
+        "height": 5400
+      },
+      "template": null
+    },
+    "20x20": {
+      "finished": {
+        "widthIn": 20,
+        "heightIn": 20
+      },
+      "portraitPx": {
+        "width": 6000,
+        "height": 6000
+      },
+      "template": null
+    },
+    "24x24": {
+      "finished": {
+        "widthIn": 24,
+        "heightIn": 24
+      },
+      "portraitPx": {
+        "width": 7200,
+        "height": 7200
+      },
+      "template": null
+    },
+    "30x30": {
+      "finished": {
+        "widthIn": 30,
+        "heightIn": 30
+      },
+      "portraitPx": {
+        "width": 9000,
+        "height": 9000
+      },
+      "template": null
+    },
+    "20x30": {
+      "finished": {
+        "widthIn": 20,
+        "heightIn": 30
+      },
+      "portraitPx": {
+        "width": 6000,
+        "height": 9000
+      },
+      "template": null
     }
   },
   "canvas": {
@@ -276,6 +386,171 @@
         "height": 18900
       },
       "template": "canvas-1.25bar-40x60-portrait.psd"
+    },
+    "8x8": {
+      "finished": {
+        "widthIn": 8,
+        "heightIn": 8
+      },
+      "facePortraitPx": {
+        "width": 2400,
+        "height": 2400
+      },
+      "productionPortraitPx": {
+        "width": 3300,
+        "height": 3300
+      },
+      "template": null
+    },
+    "10x10": {
+      "finished": {
+        "widthIn": 10,
+        "heightIn": 10
+      },
+      "facePortraitPx": {
+        "width": 3000,
+        "height": 3000
+      },
+      "productionPortraitPx": {
+        "width": 3900,
+        "height": 3900
+      },
+      "template": null
+    },
+    "12x12": {
+      "finished": {
+        "widthIn": 12,
+        "heightIn": 12
+      },
+      "facePortraitPx": {
+        "width": 3600,
+        "height": 3600
+      },
+      "productionPortraitPx": {
+        "width": 4500,
+        "height": 4500
+      },
+      "template": null
+    },
+    "16x16": {
+      "finished": {
+        "widthIn": 16,
+        "heightIn": 16
+      },
+      "facePortraitPx": {
+        "width": 4800,
+        "height": 4800
+      },
+      "productionPortraitPx": {
+        "width": 5700,
+        "height": 5700
+      },
+      "template": null
+    },
+    "18x18": {
+      "finished": {
+        "widthIn": 18,
+        "heightIn": 18
+      },
+      "facePortraitPx": {
+        "width": 5400,
+        "height": 5400
+      },
+      "productionPortraitPx": {
+        "width": 6300,
+        "height": 6300
+      },
+      "template": null
+    },
+    "20x20": {
+      "finished": {
+        "widthIn": 20,
+        "heightIn": 20
+      },
+      "facePortraitPx": {
+        "width": 6000,
+        "height": 6000
+      },
+      "productionPortraitPx": {
+        "width": 6900,
+        "height": 6900
+      },
+      "template": null
+    },
+    "24x24": {
+      "finished": {
+        "widthIn": 24,
+        "heightIn": 24
+      },
+      "facePortraitPx": {
+        "width": 7200,
+        "height": 7200
+      },
+      "productionPortraitPx": {
+        "width": 8100,
+        "height": 8100
+      },
+      "template": null
+    },
+    "30x30": {
+      "finished": {
+        "widthIn": 30,
+        "heightIn": 30
+      },
+      "facePortraitPx": {
+        "width": 9000,
+        "height": 9000
+      },
+      "productionPortraitPx": {
+        "width": 9900,
+        "height": 9900
+      },
+      "template": null
+    },
+    "36x36": {
+      "finished": {
+        "widthIn": 36,
+        "heightIn": 36
+      },
+      "facePortraitPx": {
+        "width": 10800,
+        "height": 10800
+      },
+      "productionPortraitPx": {
+        "width": 11700,
+        "height": 11700
+      },
+      "template": null
+    },
+    "40x40": {
+      "finished": {
+        "widthIn": 40,
+        "heightIn": 40
+      },
+      "facePortraitPx": {
+        "width": 12000,
+        "height": 12000
+      },
+      "productionPortraitPx": {
+        "width": 12900,
+        "height": 12900
+      },
+      "template": null
+    },
+    "20x30": {
+      "finished": {
+        "widthIn": 20,
+        "heightIn": 30
+      },
+      "facePortraitPx": {
+        "width": 6000,
+        "height": 9000
+      },
+      "productionPortraitPx": {
+        "width": 6900,
+        "height": 9900
+      },
+      "template": null
     }
   },
   "framedCanvas": {
