@@ -153,7 +153,8 @@ function renderPreviews(){
  // Do not continuously tear down and re-download thumbnails on each 6-second poll.
  if(signature===previewRenderKey)return;
  previewRenderKey=signature;
- const list=$('mg-preview-list');const savedScrollTop=list.scrollTop;list.replaceChildren();
+ const list=$('mg-preview-list'),scroller=list.closest('.creator-preview-scroll')||list;
+ const savedScrollTop=scroller.scrollTop;list.replaceChildren();
  const selected=job?completed.filter(t=>isSelected(job.id,t.id)).length:0;
  $('mg-preview-count').textContent=completed.length+' ready';
  $('mg-selection-status').textContent=!job
@@ -172,12 +173,19 @@ function renderPreviews(){
   return;
  }
  for(const template of completed){
-  const row=create('label','',{class:'mg-preview-item'});
+  const row=create('div','',{class:'mg-preview-item'});
   const checkbox=create('input','',{type:'checkbox',value:template.id,
    'aria-label':'Select generated mockup '+template.outputName});
   checkbox.checked=isSelected(job.id,template.id);
   checkbox.addEventListener('change',()=>{
    setSelected(job.id,template.id,checkbox.checked);selectionChanged();
+  });
+  // Clicking the card ticks it without focusing the checkbox: a focused
+  // checkbox is scrolled into view, which made the list jump.
+  row.addEventListener('click',event=>{
+   if(event.target===checkbox)return;
+   checkbox.checked=!checkbox.checked;
+   checkbox.dispatchEvent(new Event('change'));
   });
   const image=create('img','',{src:'/api/mockups/jobs/'+job.id+'/thumbnail/'+template.id+'?v='+
     encodeURIComponent(template.finishedAt||'1'),alt:'Generated '+template.outputName,
@@ -188,7 +196,7 @@ function renderPreviews(){
   row.append(checkbox,image,description);list.append(row);
  }
  showNotGenerated(missing);
- list.scrollTop=savedScrollTop; // Keep review position while new JPGs finish generating.
+ scroller.scrollTop=savedScrollTop; // Keep review position while new JPGs finish generating.
 }
 function showNotGenerated(missing){
  const box=$('mg-not-generated');

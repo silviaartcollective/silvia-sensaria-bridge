@@ -66,12 +66,13 @@ return `
 /* Large independent, selectable three-by-three generated mockup gallery. */
 #mockup-generator-panel .mg-workspace{display:block;min-width:0}
 #mockup-generator-panel .mg-main{display:grid;gap:12px;min-width:0}
-.mg-preview{background:#fffdfa;border:1px solid #e2ded6;border-radius:13px;padding:16px;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;gap:12px;min-width:0}
+.mg-preview{background:#fffdfa;border:1px solid #e2ded6;border-radius:13px;padding:16px;display:grid;gap:12px;min-width:0}
 .mg-preview-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:19px}
 .mg-preview-head .hint{font-size:12px;white-space:nowrap}
 .mg-preview-actions{display:flex;gap:8px;flex-wrap:wrap}
 .mg-preview-actions button{font-size:12px;padding:9px 11px}
-.mg-preview-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));--preview-row-height:clamp(300px,40dvh,460px);grid-auto-rows:var(--preview-row-height);gap:12px;min-height:455px;height:calc(2 * var(--preview-row-height) + 24px);max-height:82dvh;overflow-y:auto;overscroll-behavior:contain;align-content:start;scrollbar-gutter:stable;padding:3px 7px 7px 3px}
+/* No scroll area of its own: the page's preview column is the one scrollbar. */
+.mg-preview-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));--preview-row-height:clamp(300px,40dvh,460px);grid-auto-rows:var(--preview-row-height);gap:12px;align-content:start;padding:3px}
 .mg-preview-empty{grid-column:1/-1;font-size:13px;color:#74776f;line-height:1.6;padding:26px 14px;text-align:center;align-self:start}
 .mg-preview-item{display:flex;flex-direction:column;position:relative;gap:8px;border:2px solid #e4e0d7;border-radius:11px;padding:8px;background:white;cursor:pointer;min-width:0;transition:border-color .15s,background .15s}
 .mg-preview-item:hover{border-color:#adb9aa}
@@ -130,8 +131,10 @@ body.mg-org-dragging .mg-org-caption{opacity:0;transition:none}
 .mg-org-btn:disabled{opacity:.5;cursor:progress}
 .mg-org-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media(max-width:760px){.mg-org-dialog{padding:20px 16px}.mg-org-list{grid-template-columns:repeat(3,minmax(0,1fr))}.mg-org-foot{flex-wrap:wrap}.mg-org-status{flex-basis:100%}}
-.mg-preview #mg-apply-selected{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0}
-@media(max-width:760px){.mg-preview-list{--preview-row-height:clamp(220px,34dvh,320px);gap:7px;max-height:620px;min-height:260px}.mg-preview-item{padding:5px}.mg-preview-item span{font-size:11px}.mg-preview-item input{width:19px;height:19px;top:7px;right:7px}}
+.mg-preview #mg-apply-selected{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0;z-index:5;box-shadow:0 -10px 18px #fffdfa}
+/* Pinned over the mockups: solid even while disabled. */
+.mg-preview #mg-apply-selected:disabled{opacity:1;background:#a3a69f}
+@media(max-width:760px){.mg-preview-list{--preview-row-height:clamp(220px,34dvh,320px);gap:7px}.mg-preview-item{padding:5px}.mg-preview-item span{font-size:11px}.mg-preview-item input{width:19px;height:19px;top:7px;right:7px}}
 #mockup-generator-panel .mg-actions{display:flex;flex-wrap:wrap;gap:10px}
 #mockup-generator-panel .mg-pc-folder{display:grid;gap:6px}
 #mockup-generator-panel .mg-pc-folder-row{display:flex;gap:8px}
