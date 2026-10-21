@@ -24,7 +24,7 @@ import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates, reviseCanvasThickness } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
-import {getMockupJob,listMockupJobs} from './mockup-generator.mjs';
+import {getMockupJob,listMockupJobs,getPcMockupFolder} from './mockup-generator.mjs';
 import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verification.mjs';
 import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
 import {mockupObjectKey} from './production.mjs';
@@ -655,6 +655,13 @@ function recordCropWorkerHeartbeat(input = {}) {
     // Only the worker's own heartbeats carry these; job claims and progress keep them.
     update: 'update' in input ? heartbeatUpdate(input.update) : cropWorkerHeartbeat.update || null,
     autoUpdate: typeof input.autoUpdate === 'boolean' ? input.autoUpdate : cropWorkerHeartbeat.autoUpdate ?? null,
+    // What the worker found in this shop's mockup folder on the PC.
+    mockupFolder: input.mockupFolder && typeof input.mockupFolder === 'object' ? {
+      path: String(input.mockupFolder.path || '').slice(0, 300),
+      count: Math.max(0, Math.floor(Number(input.mockupFolder.count) || 0)),
+      error: String(input.mockupFolder.error || '').slice(0, 200),
+      fromConfig: input.mockupFolder.fromConfig === true
+    } : 'mockupFolder' in input ? null : cropWorkerHeartbeat.mockupFolder || null,
     lastSeenAt: Date.now()
   };
   return cropWorkerHeartbeat;
@@ -682,6 +689,7 @@ function cropWorkerStatus() {
     updating: restarting || (online && ['downloading', 'waiting', 'restarting'].includes(update?.state)),
     update,
     updateText,
+    mockupFolder: online ? cropWorkerHeartbeat.mockupFolder || null : null,
     workerId: online ? cropWorkerHeartbeat.workerId : '',
     version: online ? cropWorkerHeartbeat.version : '',
     mockups: online ? cropWorkerHeartbeat.mockups===true : false,
@@ -2532,7 +2540,9 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         worker: recordCropWorkerHeartbeat(input),
-        latestWorkerVersion: latestWorkerVersion()
+        latestWorkerVersion: latestWorkerVersion(),
+        // The mockup folder chosen in the Product Creator for this shop.
+        mockupFolder: await getPcMockupFolder()
       });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error?.message || String(error) });

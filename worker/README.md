@@ -57,6 +57,19 @@ PSDs saved with **Maximize PSD and PSB File Compatibility** turned on are reprod
 
 **Stopping the worker:** it runs hidden in the background, so there is no window to close. Run `stop-worker.cmd` (or end the Node.js process in Task Manager). Dashboards show it offline about 20 seconds later. Opening an admin page while it is offline asks Windows to start it again.
 
+## Mockup folder on the PC (v4.7.0)
+
+PSD templates can stay in a folder on this PC instead of being uploaded:
+
+- **Choosing the folder:** in the Product Creator, set **Mockup folder on the PC** (for example `D:\Mockups\Silvia`). Each shop can have its own folder. A `"mockupFolder"` set for a shop in `config.local.json` takes priority.
+- **Scanning:** every 15 seconds the worker scans the folder and its subfolders for `.psd` and `.psb` files and tells the shop. New PSDs appear in the template list, marked **PC**, and deleted ones disappear.
+- **Editing:** an edited PSD is picked up on the next scan and prepared again while the worker is idle. Nothing is ever uploaded to or downloaded from R2; mockups render straight from the files.
+- **Orientation:** subfolders named **Vertical**, **Horizontal** or **Square** set it. Otherwise the worker tells it from the shape of the artwork layer once the PSD is prepared. Choosing an orientation in the template list overrides both.
+- **Settings stay put:** each PSD keeps its settings (artwork layer, orientation) as long as it keeps its name and place in the folder.
+- **Removing templates:** delete or move the file; templates from the folder cannot be deleted in the app.
+
+Uploading PSDs through the Product Creator still works, and both kinds can be used together.
+
 ## Updates
 
 From **v4.6.0** the worker updates itself. Every heartbeat reply from the Silvia app names the latest worker version, which is the one in the code Render deployed.
@@ -74,4 +87,4 @@ From **v4.6.0** the worker updates itself. Every heartbeat reply from the Silvia
 3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
 4. Run `start-worker.cmd`.
 
-The dashboards should show **Crop + Mockup Worker v4.6.0**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+The dashboards should show **Crop + Mockup Worker v4.7.0**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.

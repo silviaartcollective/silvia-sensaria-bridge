@@ -11,11 +11,11 @@ import {renderInPool} from './render-pool.mjs';
 export {NativeMockupUnsupported};
 
 export async function renderMockupOnPC({psdPath,artworkPath,outputPath,templateName='',mapping,
- psdSize=0,fitMode='contain',onStage=()=>{}}){
+ psdSize=0,psdVersion='',fitMode='contain',onStage=()=>{}}){
  const started=Date.now();
  let result;
  try{
-  result=await renderInPool({psdPath,artworkPath,outputPath,mapping,psdSize,fitMode,onStage});
+  result=await renderInPool({psdPath,artworkPath,outputPath,mapping,psdSize,psdVersion,fitMode,onStage});
  }catch(error){
   if(error instanceof NativeMockupUnsupported)
    throw Object.assign(Error(('PSD template "'+templateName+'" is not supported by the PC worker: '+

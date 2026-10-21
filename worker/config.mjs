@@ -26,7 +26,9 @@ export function normalizeConnections(entries){
   if(workerToken.length<24)throw new Error(name+': CROP_WORKER_TOKEN must contain at least 24 characters.');
   if(seen.has(appUrl.toLowerCase()))throw new Error('Duplicate Render app: '+appUrl);
   seen.add(appUrl.toLowerCase());
-  return {name,appUrl,workerToken};
+  // Optional: a folder on this PC holding the shop's PSD mockups (see local-templates.mjs).
+  const mockupFolder=String(entry?.mockupFolder||'').trim();
+  return {name,appUrl,workerToken,mockupFolder};
  });
 }
 function configured(){
