@@ -1,9 +1,11 @@
 # International Etsy shipping — phased rollout (not enabled)
 
 ## Current state
-- Captured Sensaria GO Basic shipping table: `config/shipping-rates.json`, USD, recorded 2026-09-17. Rates are **supplier estimates**, not confirmed rates or delivery guarantees for every current SKU/country.
+- Captured Sensaria GO Basic shipping table: `config/shipping-rates.json`, reconciled with the 2026-10-07 snapshot in `config/sensaria-shipping.json` (the rate groups agree). Rates remain **captured supplier estimates**, not confirmed checkout costs, taxes or delivery guarantees for every current SKU/country.
 - Existing shop shipping profile: `config/etsy-shipping-profile.json`. It is free shipping to the explicitly listed existing countries.
 - The International Shipping Planner is at `/international-shipping`, preview API `GET /api/international-shipping/preview`. It has **no write endpoints**, and does not change Etsy listings, prices or profiles.
+- Each planner also includes an **Audit an existing Etsy listing** form using `GET /api/international-shipping/listing-audit`: it reads the real listing and inventory, limits estimates to enabled/in-stock supplier-mapped SKUs, reports country shipping exposure and missing rates, and does not edit Etsy.
+- A verified USD-to-shop-currency FX rate is optional for estimates, but required before any non-USD shipping profile charge could be proposed. A single-profile first-item estimate does **not** calculate Etsy's additional-item charge.
 - Illustrative 40×60 framed canvas, Sensaria Basic rate: mainland US $0, UK $0, Canada $75, Germany $75, Australia $5, New Zealand $150, Japan $600. These are NOT fully landed costs.
 
 ## Critical Etsy limitation
