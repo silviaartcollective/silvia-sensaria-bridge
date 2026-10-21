@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getJsonObject, putJsonObject, isMissingR2Object } from './r2.mjs';
-import { FULFILLMENT_RATIOS } from './artwork-ratios.mjs';
+import { FULFILLMENT_RATIOS,fulfillmentRatiosForOrientation } from './artwork-ratios.mjs';
 import {normalizeCropSize,sizeCropRatioKey} from './size-crops.mjs';
 
 const DEFAULT_STORE_KEY = 'state/crop-jobs.json';
@@ -32,10 +32,7 @@ function normalizeOrientation(raw, allowSquare = false) {
   const value = String(raw || '').trim().toLowerCase();
   if (value === 'landscape' || value === 'horizontal') return 'landscape';
   if (value === 'portrait' || value === 'vertical' || !value) return 'portrait';
-  if (value === 'square' && allowSquare) return 'square';
-  if (value === 'square') {
-    throw new Error('Silvia square fulfillment ratios are not configured yet.');
-  }
+  if (value === 'square') return 'square';
   throw new Error('Artwork orientation must be portrait or landscape.');
 }
 
@@ -93,7 +90,7 @@ export function createCropJobRecord({
     orientation: safeOrientation,
     masterKey: key,
     size: normalizedSize,
-    ratios: normalizedSize ? [sizeCropRatioKey(normalizedSize)] : [...FULFILLMENT_RATIOS],
+    ratios: normalizedSize ? [sizeCropRatioKey(normalizedSize)] : [...fulfillmentRatiosForOrientation(safeOrientation)],
     status: 'pending',
     workerId: '',
     currentRatio: '',

@@ -71,7 +71,7 @@ async function sourceForTransaction({ parsed, transaction, productionUrlExpiresI
   // Etsy transaction variations do not include a reliable artwork orientation.
   // Resolve orientation from the master saved in R2, not a portrait default.
   const master = await loadArtworkManifest(parsed.artworkId);
-  if (!master?.master?.key || !['portrait','landscape'].includes(master.orientation)) {
+  if (!master?.master?.key || !['portrait','landscape','square'].includes(master.orientation)) {
     throw new Error('Artwork ' + parsed.artworkId + ' has no verified master orientation.');
   }
   const orientation = master.orientation;

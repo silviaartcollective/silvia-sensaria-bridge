@@ -1,6 +1,8 @@
 const SIZE_PROPERTY_ID = 513;
 const STYLE_PROPERTY_ID = 514;
 
+export const SILVIA_SQUARE_SIZES = Object.freeze(["5x5","8x8","10x10","12x12","16x16","18x18","20x20","24x24","30x30","36x36","40x40"]);
+
 export const SILVIA_SIZES = [
   '5x7',
   '8x10',
@@ -11,6 +13,7 @@ export const SILVIA_SIZES = [
   '16x20',
   '16x24',
   '18x24',
+  '20x30',
   '24x36',
   '28x30',
   '30x40',
@@ -28,6 +31,18 @@ export const SILVIA_SIZE_LABELS = {
   '16x20': '40x50 cm / 16x20″',
   '16x24': '40x60 cm / 16x24″',
   '18x24': '45x60 cm / 18x24″',
+  '5x5': '13x13 cm / 5x5″',
+  '8x8': '20x20 cm / 8x8″',
+  '10x10': '25x25 cm / 10x10″',
+  '12x12': '30x30 cm / 12x12″',
+  '16x16': '41x41 cm / 16x16″',
+  '18x18': '46x46 cm / 18x18″',
+  '20x20': '51x51 cm / 20x20″',
+  '24x24': '61x61 cm / 24x24″',
+  '30x30': '76x76 cm / 30x30″',
+  '36x36': '91x91 cm / 36x36″',
+  '40x40': '102x102 cm / 40x40″',
+  '20x30': '51x76 cm / 20x30″',
   '24x36': '60x90 cm / 24x36″',
   '30x40': '75x100 cm / 30x40″',
   '40x60': '100x150 cm / 40x60″'
@@ -55,6 +70,16 @@ export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
   P: {
     // New verified Sensaria poster sizes use the existing adjacent price tiers.
     '5x7': 52.95,
+    '5x5': 52.95,
+    '8x8': 52.95,
+    '10x10': 55.95,
+    '12x12': 59.95,
+    '16x16': 69.95,
+    '18x18': 75.95,
+    '20x20': 82.95,
+    '24x24': 105.95,
+    '30x30': 122.95,
+    '20x30': 95.95,
     '8x12': 57.95,
     '8x10': 52.95,
     '11x14': 57.95,
@@ -68,6 +93,17 @@ export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
   },
   C: {
     '12x16': 139.95,
+    '8x8': 109.95,
+    '10x10': 119.95,
+    '12x12': 129.95,
+    '16x16': 159.95,
+    '18x18': 189.95,
+    '20x20': 219.95,
+    '24x24': 269.95,
+    '30x30': 379.95,
+    '36x36': 499.95,
+    '40x40': 669.95,
+    '20x30': 239.95,
     '12x18': 149.95,
     '16x20': 169.95,
     '16x24': 189.95,
@@ -78,6 +114,17 @@ export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
   },
   FC: {
     '12x16': 189.95,
+    '8x8': 159.95,
+    '10x10': 169.95,
+    '12x12': 179.95,
+    '16x16': 209.95,
+    '18x18': 239.95,
+    '20x20': 269.95,
+    '24x24': 349.95,
+    '30x30': 459.95,
+    '36x36': 649.95,
+    '40x40': 799.95,
+    '20x30': 299.95,
     '12x18': 199.95,
     '16x20': 219.95,
     '16x24': 239.95,
@@ -209,9 +256,14 @@ export function buildOwnSilviaInventory({
   artworkId,
   catalog,
   readinessStateId,
-  defaultQuantity = 999
+  defaultQuantity = 999,
+  orientation = 'portrait'
 }) {
-  const validKeys = Object.keys(catalog);
+  const requestedOrientation=String(orientation||'portrait').toLowerCase();
+  if(!['portrait','landscape','square'].includes(requestedOrientation))throw Error('Artwork orientation must be portrait, landscape or square.');
+  const sizes=requestedOrientation==='square'?SILVIA_SQUARE_SIZES:SILVIA_SIZES;
+  const enabledSizeSet=new Set(sizes);
+  const validKeys=Object.keys(catalog).filter(key=>enabledSizeSet.has(String(key).split('|')[1]));
   const prices = {};
   const missingPriceKeys = [];
 
@@ -232,7 +284,7 @@ export function buildOwnSilviaInventory({
   const fallbackPrice = Math.min(...enabledPrices);
   const products = [];
 
-  for (const size of SILVIA_SIZES) {
+  for (const size of sizes) {
     for (const style of SILVIA_STYLES) {
       const key = styleKey(size, style);
       const mapped = Boolean(catalog[key]);

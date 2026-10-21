@@ -48,7 +48,9 @@ test('custom sizes and default crop jobs are distinct; same-size requests are re
  assert.equal(findReusableCropJob({jobs:[defaultJob,special]},base).id,defaultJob.id);
  assert.equal(findReusableCropJob({jobs:[defaultJob,special]}, {...base,size:'7x10'}),null);
  assert.notEqual(different.size,identical.size);
- assert.throws(()=>createCropJobRecord({...base,orientation:'square'}),/square/i);
+ const squareDefault=createCropJobRecord({...base,orientation:'square'});
+ assert.deepEqual(squareDefault.ratios,['1x1']);
+ assert.equal(squareDefault.orientation,'square');
 });
 
 test('server saves on-demand crops separately and validates against source master',()=>{

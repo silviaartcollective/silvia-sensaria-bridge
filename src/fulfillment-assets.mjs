@@ -8,6 +8,7 @@ import { signedArtworkUrl } from './r2.mjs';
 function normalizedOrientation(value) {
   const text = String(value || '').trim().toLowerCase();
   if (text === 'landscape' || text === 'horizontal') return 'landscape';
+  if (text === 'square') return 'square';
   return 'portrait';
 }
 
@@ -20,7 +21,7 @@ function orientationIssue(asset, orientation) {
   const width = Number(asset?.width || 0);
   const height = Number(asset?.height || 0);
   if (width > 0 && height > 0) {
-    const actual = width > height ? 'landscape' : 'portrait';
+    const actual = width > height ? 'landscape' : height > width ? 'portrait' : 'square';
     if (actual !== expected) return `stored ratio file is ${actual}, not ${expected}`;
   }
   return '';
@@ -45,7 +46,7 @@ export async function resolveProviderArtworkAsset({
   if (issue) throw new Error(`Artwork ${id} ${ratio} crop is unsafe: ${issue}`);
 
   const expectedKey = fulfillmentRatioObjectKey(id, ratio);
-  const revisionExpected = /^artworks\/(?:SAC\d+)\/revisions\/[0-9a-f-]{36}\/fulfillment\/(?:2x3|3x4|4x5|11x14)\.jpg$/;
+  const revisionExpected = /^artworks\/(?:SAC\d+)\/revisions\/[0-9a-f-]{36}\/fulfillment\/(?:1x1|2x3|3x4|4x5|11x14|5x7|14x15)\.jpg$/;
   const revisionValid=revisionExpected.test(String(asset.key)) &&
     String(asset.key).startsWith('artworks/'+id+'/') &&
     String(asset.key).endsWith('/'+ratio+'.jpg') &&
