@@ -67,19 +67,39 @@ test('one folder: its Vertical, Horizontal and Square subfolders sort the PSDs, 
  assert.match(read('src/mockup-generator-client.js'),/\[count\('portrait'\),'vertical'\],\[count\('landscape'\),'horizontal'\],\[count\('square'\),'square'\]/);
 });
 
-test('a PSD both uploaded and in the PC folder is offered once, from the folder, with the upload\'s settings',async()=>{
- const {withoutUploadedTwins}=await import('../src/mockup-generator.mjs');
+test('while the PC folder holds PSDs the template list is exactly the folder; renamed uploads cannot render twice',async()=>{
+ const {folderOrUploads}=await import('../src/mockup-generator.mjs');
  const records=[
-  {id:'u1',name:'BlackPNG.psd',status:'ready',key:'k1'},
-  {id:'u2',name:'Bythewindow.psd',status:'ready',key:'k2'},
-  {id:'u3',name:'Only uploaded.psd',status:'ready',key:'k3'},
-  {id:'p1',name:'blackpng.psd',status:'ready',source:'pc',localPath:'Horizontal/blackpng.psd'},
-  {id:'p2',name:'Bythewindow.psd',status:'ready',source:'pc',localPath:'Horizontal/Bythewindow.psd'},
-  {id:'p3',name:'Only on PC.psd',status:'ready',source:'pc',localPath:'Vertical/Only on PC.psd'}];
- assert.deepEqual(withoutUploadedTwins(records).map(r=>r.id),['u3','p1','p2','p3']);
- // The upload comes back once the file leaves the folder.
- assert.deepEqual(withoutUploadedTwins(records.map(r=>r.id==='p2'?{...r,status:'deleted'}:r)).filter(r=>r.status!=='deleted').map(r=>r.id),['u2','u3','p1','p3']);
+  {id:'u1',name:'Close up framed dark wood mockup.psd',status:'ready',key:'k1',size:5000},
+  {id:'u2',name:'Only uploaded.psd',status:'ready',key:'k2'},
+  {id:'p1',name:'Horizontal Close up framed dark wood mockup.psd',status:'ready',source:'pc',size:5000,
+   localPath:'Horizontal/Horizontal Close up framed dark wood mockup.psd'},
+  {id:'p2',name:'Room.psd',status:'ready',source:'pc',localPath:'Vertical/Room.psd'}];
+ assert.deepEqual(folderOrUploads(records).map(r=>r.id),['p1','p2']);
+ // With no folder PSDs, the uploaded library is offered as before.
+ assert.deepEqual(folderOrUploads(records.filter(r=>r.source!=='pc')).map(r=>r.id),['u1','u2']);
  const source=read('src/mockup-generator.mjs');
- assert.match(source,/return withoutUploadedTwins\(records\.filter\(x=>x\.status!=='deleted'\)\)/);
+ assert.match(source,/return folderOrUploads\(records\.filter\(x=>x\.status!=='deleted'\)\)/);
+ // A renamed upload is recognised by its size, so its settings still carry over.
+ assert.match(source,/const twin=uploaded\.get\(twinName\(record\)\)\|\|uploadedBySize\.get\(size\);/);
  assert.match(source,/if\(!record\.mapping\?\.path&&twin\.mapping\?\.path\)record\.mapping=\{\.\.\.twin\.mapping\};/);
+});
+
+test('the artwork fills the template\'s artwork layer instead of leaving white bands',()=>{
+ assert.match(read('src/mockup-generator.mjs'),/export async function createMockupJob\(\{filename,size,templateIds,fitMode='cover',/);
+ assert.match(read('src/mockup-api.mjs'),/fitMode:body\.fitMode\|\|'cover'/);
+ const client=read('src/mockup-generator-client.js');
+ assert.equal((client.match(/fitMode:'cover'/g)||[]).length,2);
+ assert.doesNotMatch(client,/fitMode:'contain'/);
+});
+
+test('the chosen folder\'s own name sorts the PSDs directly in it, and unsorted ones are named, not silently skipped',()=>{
+ // "Silvia Mockups\\Silvia Art Co Horizontal" chosen, PSDs directly inside it.
+ assert.equal(orientationFromFolder('mockup 19.psd','D:\\Silvia Mockups\\Silvia Art Co Horizontal'),'landscape');
+ assert.equal(orientationFromFolder('Silvia Art Co Horizontal/mockup 19.psd','D:\\Silvia Mockups'),'landscape');
+ // The folder nearest the file wins.
+ assert.equal(orientationFromFolder('Vertical/a.psd','D:\\Mockups\\Horizontal'),'portrait');
+ assert.equal(orientationFromFolder('a.psd','D:\\Silvia Mockups'),'');
+ assert.match(read('src/mockup-api.mjs'),/syncPcTemplates\(body\.files,\{mockupFolder:await getPcMockupFolder\(\)\}\)/);
+ assert.match(read('src/mockup-generator-client.js'),/not sorted yet and left out: /);
 });

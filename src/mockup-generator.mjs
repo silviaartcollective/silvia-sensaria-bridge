@@ -78,16 +78,15 @@ async function listJSON(prefix,regex,limit=1000) {
 }
 export async function listMockupTemplates(){
  const records=await listJSON(ROOT+'/templates/',/\/meta\.json$/,1800);
- return withoutUploadedTwins(records.filter(x=>x.status!=='deleted')).sort((a,b)=>a.name.localeCompare(b.name));
+ return folderOrUploads(records.filter(x=>x.status!=='deleted')).sort((a,b)=>a.name.localeCompare(b.name));
 }
-// A PSD that was uploaded and is also in the PC mockup folder (same file name)
-// is offered once, from the folder: otherwise every batch renders it twice. The
-// upload is kept, and offered again if the file leaves the folder.
+// While the PC mockup folder holds PSDs, the template list is exactly that
+// folder: uploaded templates are kept (and offered again if the folder is
+// cleared) but not offered, so no PSD renders twice, renamed or not.
+export function folderOrUploads(records){
+ return records.some(r=>r.source==='pc'&&r.status==='ready')?records.filter(r=>r.source==='pc'):records;
+}
 const twinName=record=>String(record?.name||'').toLowerCase();
-export function withoutUploadedTwins(records){
- const onPc=new Set(records.filter(r=>r.source==='pc'&&r.status==='ready').map(twinName));
- return records.filter(r=>r.source==='pc'||!onPc.has(twinName(r)));
-}
 export async function getMockupTemplate(id){
  const value=await optional(templateKey(assertId(id)));
  if(!value||value.status==='deleted')throw Error('Mockup template not found.');
@@ -145,27 +144,34 @@ export function pcTemplateId(relativePath){
  const h=crypto.createHash('sha256').update('pc-folder|'+String(relativePath).toLowerCase()).digest('hex');
  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20,32);
 }
-// "Vertical", "Horizontal" or "Square" in the folder path gives the orientation.
-export function orientationFromFolder(relativePath){
- const folders=String(relativePath).split('/').slice(0,-1).join('/').toLowerCase();
- if(/\b(vertical|portrait)s?\b/.test(folders))return 'portrait';
- if(/\b(horizontal|landscape)s?\b/.test(folders))return 'landscape';
- if(/\bsquares?\b/.test(folders))return 'square';
+// "Vertical", "Horizontal" or "Square" in a folder name gives the orientation:
+// the subfolders the PSD is in, or the chosen mockup folder itself (e.g. "Silvia
+// Art Co Horizontal"). The folder nearest the file wins.
+export function orientationFromFolder(relativePath,mockupFolder=''){
+ const chosen=String(mockupFolder).split(/[\\/]/).filter(Boolean).pop()||'';
+ const folders=[chosen,...String(relativePath).split('/').slice(0,-1)].filter(Boolean).reverse();
+ for(const name of folders.map(f=>f.toLowerCase())){
+  if(/\b(vertical|portrait)s?\b/.test(name))return 'portrait';
+  if(/\b(horizontal|landscape)s?\b/.test(name))return 'landscape';
+  if(/\bsquares?\b/.test(name))return 'square';
+ }
  return '';
 }
-export async function syncPcTemplates(files){
+export async function syncPcTemplates(files,{mockupFolder=''}={}){
  if(!Array.isArray(files))throw Error('The PC folder list is missing.');
  const all=await listJSON(ROOT+'/templates/',/\/meta\.json$/,1800);
  const records=all.filter(r=>r.source==='pc');
- // The uploaded copy of the same PSD, if any: its settings carry over.
- const uploaded=new Map(all.filter(r=>r.source!=='pc'&&r.status==='ready').map(r=>[twinName(r),r]));
+ // The uploaded copy of the same PSD, if any (same name, or same size when the
+ // file was renamed): its settings carry over.
+ const uploads=all.filter(r=>r.source!=='pc'&&r.status==='ready');
+ const uploaded=new Map(uploads.map(r=>[twinName(r),r])),uploadedBySize=new Map(uploads.map(r=>[Number(r.size),r]));
  const byId=new Map(records.map(r=>[r.id,r])),seen=new Set();
  let changed=0;
  for(const file of files.slice(0,600)){
   const relativePath=String(file?.path||'').replace(/\\/g,'/').replace(/^\/+/,'');
   const size=Number(file?.size),mtimeMs=Math.round(Number(file?.mtimeMs));
   if(!PC_TEMPLATE_PATH.test(relativePath)||!Number.isSafeInteger(size)||size<100||!Number.isFinite(mtimeMs))continue;
-  const id=pcTemplateId(relativePath),previous=byId.get(id),folderOrientation=orientationFromFolder(relativePath);
+  const id=pcTemplateId(relativePath),previous=byId.get(id),folderOrientation=orientationFromFolder(relativePath,mockupFolder);
   seen.add(id);
   const name=safeFilename(relativePath.split('/').pop());
   const record=previous?{...previous}:{id,source:'pc',localPath:relativePath,name,key:null,
@@ -174,7 +180,7 @@ export async function syncPcTemplates(files){
    mapping:knownMockupArtworkTarget(name)?{path:'5',verifiedFrom:'known-template'}:null};
   record.localPath=relativePath;record.name=name;record.size=size;record.mtimeMs=mtimeMs;record.status='ready';
   // Settings made on the uploaded copy (artwork layer, orientation) carry over.
-  const twin=uploaded.get(twinName(record));
+  const twin=uploaded.get(twinName(record))||uploadedBySize.get(size);
   if(twin){
    if(!record.mapping?.path&&twin.mapping?.path)record.mapping={...twin.mapping};
    if(record.orientation==='unclassified'&&twin.orientation&&twin.orientation!=='unclassified'){
@@ -233,7 +239,9 @@ export async function getMockupJob(id){
  if(!value||value.deleted)throw Error('Mockup batch not found.');
  return value;
 }
-export async function createMockupJob({filename,size,templateIds,fitMode='contain',artworkOrientation='unclassified'}){
+// The artwork fills the template's artwork layer ("cover"): where their shapes
+// differ its edges are trimmed rather than leaving white bands ("contain").
+export async function createMockupJob({filename,size,templateIds,fitMode='cover',artworkOrientation='unclassified'}){
  const artName=safeFilename(filename),extension=extFile(artName,['jpg','jpeg','png','webp','tif','tiff']);
  if(!Array.isArray(templateIds)||!templateIds.length||templateIds.length>150)
   throw Error('Select between 1 and 150 templates.');
