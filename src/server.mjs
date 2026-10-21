@@ -29,12 +29,13 @@ import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verific
 import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
 import {mockupObjectKey} from './production.mjs';
 import { handleMockupAPI } from './mockup-api.mjs';
-import {canonicalWallArtStyle,styleAttributes} from './etsy-style.mjs';
+import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
 import {starterDraftMedia} from './draft-starter-media.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
 import {listingLayoutForManifest,listingLayoutForReconversion} from './panoramic-layout.mjs';
+import {loadListingTemplates,saveListingTemplate,listingDescription,TEMPLATE_ORIENTATIONS} from './listing-templates.mjs';
 import {planDefaultTemplateInventory,templateInventoryFingerprint} from './default-listing-pricing.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
 import {renderListingsPage} from './listings-page.mjs';
@@ -4972,6 +4973,27 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Listing templates (Listings → Templates): the Product Creator's defaults per
+  // artwork orientation.
+  if (url.pathname === '/api/listing-templates' && (req.method === 'GET' || req.method === 'POST')) {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      if (req.method === 'POST') {
+        const origin = String(req.headers.origin || ''), host = String(req.headers.host || '');
+        const scheme = String(req.headers['x-forwarded-proto'] || (req.socket?.encrypted ? 'https' : 'http')).split(',')[0].trim();
+        if (origin && origin !== scheme + '://' + host)
+          return sendJson(res, 403, { ok: false, error: 'Cross-site template change blocked.' });
+        const body = await readJsonBody(req);
+        const saved = await saveListingTemplate(String(body.orientation || ''), body.template);
+        return sendJson(res, 200, { ok: true, ...saved, orientationsList: TEMPLATE_ORIENTATIONS });
+      }
+      return sendJson(res, 200, { ok: true, ...(await loadListingTemplates()), orientationsList: TEMPLATE_ORIENTATIONS,
+        builtInDescription: listingDefaults.descriptionTemplate, styles: ETSY_WALL_ART_STYLES });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
   if (req.method === 'GET' && url.pathname === '/etsy/listing-options') {
     if (!requireAdminApi(req, res)) return;
     try {
@@ -5057,6 +5079,8 @@ const server = http.createServer(async (req, res) => {
           pricingLogic: 'Silvia approved regular CAD ladder converted to USD at 1 USD = 1.39 CAD; 20% Etsy shop sale applied separately',
           productStyles: ['Matte Paper Poster','Canvas','Framed Canvas - Natural Oak','Framed Canvas - Dark Walnut','Framed Canvas - Matte Black','Framed Canvas - White']
         },
+        // Listings → Templates: the Product Creator fills the form from these.
+        listingTemplates: (await loadListingTemplates().catch(() => ({ orientations: {} }))).orientations,
         presetMedia: presetStatus,
         mockupReference: mockupReference ? {
           listingId: mockupReference.listingId,
@@ -5128,12 +5152,11 @@ const server = http.createServer(async (req, res) => {
       const seoDescription = String(body.seo_description || '').trim();
       const shopSectionName = String(body.seo_section_name || '').trim();
       const shopSectionUrl = String(body.seo_section_url || '').trim();
-      body.description = listingDefaults.descriptionTemplate
-        .replace('{{SHORT_SEO_DESCRIPTION}}', seoDescription)
-        .replace('{{SHOP_SECTION_NAME}}', shopSectionName)
-        .replace('{{SHOP_SECTION_URL}}', shopSectionUrl);
+      const descriptionParts = { seoDescription, shopSectionName, shopSectionUrl };
+      body.description = listingDescription(null, listingDefaults.descriptionTemplate, descriptionParts);
       body.taxonomy_id = listingDefaults.taxonomyId;
-      body.should_auto_renew = listingDefaults.autoRenew;
+      // The Product Creator's Auto renew choice (filled from the listing template).
+      body.should_auto_renew = typeof body.should_auto_renew === 'boolean' ? body.should_auto_renew : listingDefaults.autoRenew;
 
       const required = ['artwork_id','title','description','taxonomy_id','shipping_profile_id','readiness_state_id'];
       const missing = required.filter((key) => body[key] === undefined || body[key] === null || body[key] === '');
@@ -5149,6 +5172,11 @@ const server = http.createServer(async (req, res) => {
       // An R2 "folder" is an object prefix. Verify the real master, not just its JSON manifest.
       if(!manifest.master?.key||!(await artworkObjectExists(manifest.master.key)))
         return sendJson(res,409,{ok:false,error:'The master image is missing from Cloudflare R2. No Etsy draft was created.'});
+      // The description from the listing template for this artwork's orientation
+      // (Listings → Templates), if it has one.
+      const listingTemplate = (await loadListingTemplates().catch(() => null))?.orientations?.[listingLayoutForManifest(manifest)];
+      if (listingTemplate?.description_template)
+        body.description = listingDescription(listingTemplate, listingDefaults.descriptionTemplate, descriptionParts);
       if(manifest.etsyDraftListingId&&manifest.etsyDraftSetup?.status==='completed'){
         return sendJson(res,200,{ok:true,...manifest.etsyDraftSetup,processing:false});
       }

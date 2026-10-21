@@ -172,6 +172,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
           <strong>Variants are automatic and owned by this app.</strong><br>
           Etsy uses <strong>Size</strong> first and <strong>Product - Style</strong> second. Product names are Matte Paper Poster, Canvas, and Framed Canvas by frame finish. Pricing uses the approved Silvia regular CAD ladder converted to USD at 1 USD = 1.39 CAD. The whole shop's 25% Etsy sale is applied separately, and each valid variant gets a new SAC SKU. No previous Etsy listing is used as the variant template.
         </div>
+        <div class="status" id="template-status" style="display:none"></div>
         <div class="twocol">
           <label>Etsy category <span class="hint">preset</span><input id="category_name" value="Wall Decor" readonly></label>
           <label>Shipping profile
@@ -341,6 +342,7 @@ function selectSeoShopSection(){
   const target=conflicting?null:(byId||(!id?byName:null));
   if(target){
     section.value=target.value;
+    chosenInForm.add('shop_section_id');
     status.className='status ok';
     status.textContent='Shop section: '+target.textContent.trim()+' · selected from SEO.';
     return true;
@@ -420,6 +422,7 @@ function applySeoOutput(){
     const status=document.getElementById('style-status');
     if(match){
       select.value=match.value;
+      chosenInForm.add('listing_style');
       status.className='status ok';
       status.textContent='Style: '+match.value+' · will be applied automatically to Etsy.';
     }else{
@@ -435,7 +438,7 @@ function applySeoOutput(){
     hs.className='status ok';
     hs.innerHTML='<strong>Homestyle:</strong> '+homestyle+' · will be applied automatically to Etsy';
   }
-  if(tags)document.getElementById('tags').value=tags.replace(/^[-•]\\s*/,'').trim();
+  if(tags){document.getElementById('tags').value=tags.replace(/^[-•]\\s*/,'').trim();chosenInForm.add('tags')}
 
   selectSeoShopSection();
 }
@@ -451,6 +454,61 @@ document.getElementById('listing_style').addEventListener('change',event=>{
 
 function option(select,value,label){const o=document.createElement('option');o.value=value;o.textContent=label;select.appendChild(o)}
 function setSelect(select,value){if(value!==undefined&&value!==null&&value!=='')select.value=String(value)}
+
+// Listing templates (Listings → Templates): the defaults for the artwork's
+// orientation fill the form. A field changed here, or set by the pasted SEO,
+// keeps its value.
+let listingTemplates={},templateOrientation='',automaticValues=null,tagsFromTemplate='';
+const chosenInForm=new Set();
+const TEMPLATE_FIELDS=['listing_style','shipping_profile_id','readiness_state_id','shop_section_id','return_policy_id',
+  'production_partner_id','who_made','when_made','is_supply','should_auto_renew'];
+const TEMPLATE_NAMES={portrait:'Vertical',landscape:'Horizontal',square:'Square',panoramic:'Panoramic'};
+for(const id of [...TEMPLATE_FIELDS,'tags']){
+  const field=document.getElementById(id);
+  for(const type of ['change','input'])field.addEventListener(type,event=>{if(event.isTrusted)chosenInForm.add(id)});
+}
+// As the listing will be laid out: 1.85:1 or wider is panoramic.
+function orientationOfSize(width,height){
+  if(width===height)return 'square';
+  return width<height?'portrait':width/height>=1.85?'panoramic':'landscape';
+}
+function applyListingTemplate(orientation){
+  if(!TEMPLATE_NAMES[orientation])return;
+  templateOrientation=orientation;
+  const template=listingTemplates[orientation]||{};
+  for(const id of TEMPLATE_FIELDS){
+    if(chosenInForm.has(id))continue;
+    // A field this template leaves on Automatic goes back to the automatic value
+    // (the artwork may have been swapped for one of another orientation).
+    const value=template[id]===undefined?automaticValues?.[id]:template[id]===0?'':String(template[id]);
+    const select=document.getElementById(id);
+    if(value===undefined||!Array.from(select.options).some(o=>o.value===value))continue;
+    select.value=value;
+    if(id==='listing_style')select.dispatchEvent(new Event('change'));
+  }
+  const tags=document.getElementById('tags');
+  if(!chosenInForm.has('tags')&&(!tags.value.trim()||tags.value===tagsFromTemplate)){
+    tagsFromTemplate=(template.tags||[]).join(', ');
+    tags.value=tagsFromTemplate;
+  }
+  const status=document.getElementById('template-status'),saved=Object.keys(template).length>0;
+  status.style.display='block';
+  status.className='status'+(saved?' ok':'');
+  status.textContent=saved
+    ?'Filled from the '+TEMPLATE_NAMES[orientation]+' template (Listings → Templates). Anything you change here is kept.'
+    :'No '+TEMPLATE_NAMES[orientation]+' template yet: the usual shop settings. Set one in Listings → Templates.';
+}
+async function applyTemplateForArtwork(){
+  const chosen=document.getElementById('orientation').value;
+  if(chosen!=='auto')return applyListingTemplate(chosen.toLowerCase());
+  const file=masterFileInput.files?.[0];
+  if(!file)return;
+  try{
+    const bitmap=await createImageBitmap(file);
+    const orientation=orientationOfSize(bitmap.width,bitmap.height);bitmap.close();
+    applyListingTemplate(orientation);
+  }catch{} // e.g. TIFF: the size is known once the master is uploaded
+}
 function applyPreset(preset){
   if(!preset)return;
   setSelect(shipping,preset.shipping_profile_id);
@@ -662,6 +720,7 @@ window.stageMasterArtwork=()=>{
 };
 masterFileInput.addEventListener('change',()=>{
  stagedMaster=null;
+ void applyTemplateForArtwork();
  if(masterFileInput.files?.[0])void window.stageMasterArtwork().catch(()=>{});
 });
 
@@ -1033,6 +1092,12 @@ async function installPresetMedia(){
 }
 
 installPresetsButton.addEventListener('click',installPresetMedia);
+document.getElementById('orientation').addEventListener('change',()=>void applyTemplateForArtwork());
+window.addEventListener('pod-artwork-uploaded',event=>{
+  const detail=event.detail||{};
+  if(document.getElementById('orientation').value==='auto'&&!templateOrientation&&Number(detail.width)>0&&Number(detail.height)>0)
+    applyListingTemplate(orientationOfSize(Number(detail.width),Number(detail.height)));
+});
 
 async function loadOptions(){
   try{
@@ -1074,6 +1139,9 @@ async function loadOptions(){
     }
 
     applyPreset(d.detectedPreset||{});
+    automaticValues=Object.fromEntries(TEMPLATE_FIELDS.map(id=>[id,document.getElementById(id).value]));
+    listingTemplates=d.listingTemplates||{};
+    if(templateOrientation)applyListingTemplate(templateOrientation);else void applyTemplateForArtwork();
     // Preset settings sometimes finish loading after SEO is pasted.
     // Keep the SEO section authoritative across this asynchronous load.
     selectSeoShopSection();

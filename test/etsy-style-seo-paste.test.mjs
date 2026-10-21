@@ -51,7 +51,8 @@ SEO Tags (13)
 white floral art, neutral floral art, floral wall art, textured flowers, white flower art, beige floral art, botanical wall art, soft neutral art, sage green art, painterly floral, cream wall art, muted floral art, neutral wall decor`};
  // Both shops need to parse a Silvia section heading for pasted cross-shop examples.
  const script=source.replace(/MORE ART FROM JAPANDI ART COLLECTIVE/g,'MORE ART FROM SILVIA ART COLLECTIVE');
- const ctx={seoGeneratorOutput:input,document:{getElementById:id=>fields[id]},section};
+ // chosenInForm: fields the user or the SEO set, which a listing template leaves alone.
+ const ctx={seoGeneratorOutput:input,document:{getElementById:id=>fields[id]},section,chosenInForm:new Set()};
  vm.runInNewContext(script+'\napplySeoOutput();',ctx);
  assert.equal(fields.title.value,'White Floral Wall Art: Neutral Beige Sage Textured Botanical Painting');
  assert.match(fields.seo_description.value,/Soft white blossoms emerge/);
@@ -65,6 +66,7 @@ white floral art, neutral floral art, floral wall art, textured flowers, white f
  assert.equal(fields.tags.value.split(',').length,13);
  assert.equal(fields.tags.value.split(',')[12].trim(),'neutral wall decor');
  assert.equal(fields.homestyle.value,'');
+ assert.deepEqual([...ctx.chosenInForm].sort(),['listing_style','shop_section_id','tags']);
 });
 test('Etsy Style is submitted for draft creation using supported taxonomy property',()=>{
  const html=renderProductCreator();

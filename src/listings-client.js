@@ -1,6 +1,6 @@
 (()=>{'use strict';
 const el=id=>document.getElementById(id);
-let listings=[],selectedId=0,current=null,dirty=false,converterLoaded=false,masterLoaded=false,listLoadGeneration=0;
+let listings=[],selectedId=0,current=null,dirty=false,converterLoaded=false,masterLoaded=false,templatesLoaded=false,listLoadGeneration=0;
 const fields=['edit-title','edit-description','edit-tags','edit-section'];
 function notice(id,message,error=false){const node=el(id);node.className='notice'+(error?' error':'');node.textContent=message;}
 function clearNotice(id){el(id).className='notice hidden';el(id).textContent='';}
@@ -13,11 +13,14 @@ async function request(path,body){
 }
 function showTab(tab){
  const converter=tab==='converter';
- el('master-panel').classList.toggle('hidden',converter);
- el('converter-panel').classList.toggle('hidden',!converter);
- for(const name of ['master','converter']){
+ for(const name of ['master','converter','templates']){
+  el(name+'-panel').classList.toggle('hidden',name!==tab);
   const b=el('tab-'+name);const active=name===tab;
   b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));
+ }
+ if(tab==='templates'&&!templatesLoaded){
+  templatesLoaded=true;
+  void loadTemplates();
  }
  const link=new URL(location.href);link.searchParams.set('tab',tab);
  history.replaceState({},'',link);
@@ -25,7 +28,7 @@ function showTab(tab){
   el('converter-frame').src='/listing-converter?embedded=1';
   converterLoaded=true;
  }
- if(!converter&&!masterLoaded){
+ if(tab==='master'&&!masterLoaded){
    masterLoaded=true;
    void loadListings();
  }
@@ -44,6 +47,7 @@ converterFrame.addEventListener('load',resizeConverterFrame);
 setInterval(resizeConverterFrame,3500);
 el('tab-master').addEventListener('click',()=>showTab('master'));
 el('tab-converter').addEventListener('click',()=>showTab('converter'));
+el('tab-templates').addEventListener('click',()=>showTab('templates'));
 function filteredList(){
  const q=el('listing-search').value.trim().toLowerCase();
  return listings.filter(o=>!q||String(o.listingId).includes(q)||
@@ -402,6 +406,97 @@ el('save-variants').addEventListener('click',async()=>{
  }catch(error){notice('variant-status',String(error.message||error),true);}
  finally{btn.disabled=false;}
 });
+// ---- Templates: the Product Creator's defaults for each artwork orientation.
+const TEMPLATE_NAMES={portrait:'Vertical',landscape:'Horizontal',square:'Square',panoramic:'Panoramic'};
+const TEMPLATE_SELECTS=['listing_style','shipping_profile_id','readiness_state_id','shop_section_id','return_policy_id',
+ 'production_partner_id','who_made','when_made','is_supply','should_auto_renew'];
+let templates={},builtInDescription='',templateOrientation='portrait',templateDirty=false;
+const addOption=(select,value,label)=>{const o=document.createElement('option');o.value=String(value);o.textContent=label;select.append(o);};
+const orientationButtons=()=>[...document.querySelectorAll('#templates-panel .orient-tabs button')];
+async function loadTemplates(){
+ const [saved,options]=await Promise.all([request('/api/listing-templates'),
+  request('/etsy/listing-options').catch(error=>({error:String(error.message||error)}))]).catch(error=>[null,{error:String(error.message||error)}]);
+ if(!saved){el('tpl-loading').className='notice error';el('tpl-loading').textContent='Templates could not be loaded: '+options.error;return;}
+ templates=saved.orientations||{};builtInDescription=saved.builtInDescription||'';
+ for(const style of saved.styles||[])addOption(el('tpl-listing_style'),style,style);
+ for(const p of options.shippingProfiles||[])addOption(el('tpl-shipping_profile_id'),p.shipping_profile_id,p.title||'Shipping profile '+p.shipping_profile_id);
+ for(const p of options.readinessProfiles||[]){
+  let label=p.title||p.name||p.readiness_state||'Processing profile '+p.readiness_state_id;
+  if(p.min_processing_time!==undefined&&p.max_processing_time!==undefined)
+   label+=' · '+p.min_processing_time+'–'+p.max_processing_time+' '+(p.processing_time_unit||'days');
+  addOption(el('tpl-readiness_state_id'),p.readiness_state_id,label);
+ }
+ for(const p of options.shopSections||[])addOption(el('tpl-shop_section_id'),p.shop_section_id,p.title||'Section '+p.shop_section_id);
+ for(const p of options.returnPolicies||[])addOption(el('tpl-return_policy_id'),p.return_policy_id,
+  (p.accepts_returns?'Returns':'No returns')+' · '+(p.accepts_exchanges?'Exchanges':'No exchanges')+(p.return_deadline?' · '+p.return_deadline+' days':''));
+ for(const p of options.productionPartners||[])addOption(el('tpl-production_partner_id'),p.production_partner_id,p.partner_name||'Partner '+p.production_partner_id);
+ el('tpl-loading').classList.toggle('hidden',!options.error);
+ if(options.error){el('tpl-loading').className='notice warn';el('tpl-loading').textContent='Etsy settings could not be loaded ('+options.error+'). Saved choices are kept; refresh to pick new ones.';}
+ el('tpl-form').classList.remove('hidden');
+ showTemplate(templateOrientation);
+ showTemplatesUpdated(saved.updatedAt);
+}
+function showTemplatesUpdated(at){
+ el('tpl-updated').textContent=at?'Last saved '+new Date(at).toLocaleString():'Not saved yet';
+}
+function showTemplate(orientation){
+ templateOrientation=orientation;
+ fillTemplateForm(templates[orientation]||{});
+ templateDirty=false;
+ el('tpl-save').textContent='Save '+TEMPLATE_NAMES[orientation]+' template';
+ for(const button of orientationButtons()){
+  const name=button.dataset.orientation,saved=Object.keys(templates[name]||{}).length>0;
+  button.classList.toggle('active',name===orientation);button.setAttribute('aria-pressed',String(name===orientation));
+  button.replaceChildren(TEMPLATE_NAMES[name]);
+  if(saved){const dot=document.createElement('span');dot.className='dot';dot.title='Saved template';button.append(dot);}
+ }
+}
+function fillTemplateForm(template){
+ for(const field of TEMPLATE_SELECTS){
+  const select=el('tpl-'+field),value=template[field]===undefined?'':String(template[field]);
+  if(value&&![...select.options].some(o=>o.value===value))addOption(select,value,'Saved setting #'+value+' (not found on Etsy)');
+  select.value=value;
+ }
+ el('tpl-tags').value=(template.tags||[]).join(', ');
+ el('tpl-description').value=template.description_template||'';
+}
+function readTemplateForm(){
+ const template={};
+ for(const field of TEMPLATE_SELECTS){const value=el('tpl-'+field).value;if(value!=='')template[field]=value;}
+ const tags=el('tpl-tags').value.split(',').map(tag=>tag.trim()).filter(Boolean);
+ if(tags.length)template.tags=tags;
+ if(el('tpl-description').value.trim())template.description_template=el('tpl-description').value;
+ return template;
+}
+for(const button of orientationButtons())button.addEventListener('click',()=>{
+ const next=button.dataset.orientation;
+ if(next===templateOrientation)return;
+ if(templateDirty&&!confirm('Discard unsaved changes to the '+TEMPLATE_NAMES[templateOrientation]+' template?'))return;
+ clearNotice('tpl-status');showTemplate(next);
+});
+for(const type of ['input','change'])el('tpl-form').addEventListener(type,event=>{if(event.target.id!=='tpl-copy-from')templateDirty=true;});
+el('tpl-builtin').addEventListener('click',()=>{
+ if(el('tpl-description').value.trim()&&!confirm('Replace this description with the built-in one?'))return;
+ el('tpl-description').value=builtInDescription;templateDirty=true;
+});
+el('tpl-copy-from').addEventListener('change',event=>{
+ const from=event.target.value;event.target.value='';
+ if(!from||from===templateOrientation)return;
+ fillTemplateForm(templates[from]||{});templateDirty=true;
+ notice('tpl-status','Copied from the '+TEMPLATE_NAMES[from]+' template. Save to keep it for '+TEMPLATE_NAMES[templateOrientation]+'.');
+});
+el('tpl-save').addEventListener('click',async()=>{
+ const orientation=templateOrientation,btn=el('tpl-save');btn.disabled=true;
+ notice('tpl-status','Saving the '+TEMPLATE_NAMES[orientation]+' template…');
+ try{
+  const saved=await request('/api/listing-templates',{orientation,template:readTemplateForm()});
+  templates=saved.orientations||templates;showTemplatesUpdated(saved.updatedAt);
+  if(templateOrientation===orientation)showTemplate(orientation);
+  notice('tpl-status','Saved. The Product Creator now fills new '+TEMPLATE_NAMES[orientation].toLowerCase()+' listings with it.');
+ }catch(error){notice('tpl-status',String(error.message||error),true);}
+ finally{btn.disabled=false;}
+});
+
 const tab=new URL(location.href).searchParams.get('tab');
-showTab(tab==='converter'?'converter':'master');
+showTab(['converter','templates'].includes(tab)?tab:'master');
 })();
