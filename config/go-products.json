@@ -568,5 +568,15 @@
     "productCode": "1352136",
     "title": "Matte Canvas Print (1.25in Bar, White Frame): 20x30",
     "wrapType": "Mirror"
+  },
+  "P|5x7|NONE": {
+    "productCode": "1353103",
+    "title": "Matte Poster Paper Print: 5x7",
+    "wrapType": ""
+  },
+  "P|8x12|NONE": {
+    "productCode": "1353109",
+    "title": "Matte Poster Paper Print: 8x12",
+    "wrapType": ""
   }
 }
