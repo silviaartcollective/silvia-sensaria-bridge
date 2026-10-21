@@ -30,7 +30,7 @@ export async function inspectMaster(masterPath, orientation) {
         dimensions.height>dimensions.width?'portrait':'square';
       const requested=String(orientation||'').trim().toLowerCase();
       if(actual==='square' && requested!=='square')
-        throw Error('Square master artwork requires a square-aware on-demand crop job.');
+        throw Error('Square master artwork requires an orientation-matched 1x1 crop job.');
       if((requested==='landscape'||requested==='portrait')&&requested!==actual)
         throw Error('Master orientation mismatch: actual image is '+actual+
           ', but crop job is '+requested+'. Reconfirm artwork upload and queue a corrected crop job.');
