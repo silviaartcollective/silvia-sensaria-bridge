@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {buildOwnSilviaInventory,SILVIA_PANORAMIC_SIZES,SILVIA_SIZES,
  SILVIA_SQUARE_SIZES} from '../src/variants.mjs';
 import {parseSilviaSku} from '../src/core.mjs';
-import {listingLayoutForManifest} from '../src/panoramic-layout.mjs';
+import {listingLayoutForManifest,listingLayoutForReconversion} from '../src/panoramic-layout.mjs';
 import {fulfillmentRatioForSize,fulfillmentRatiosForOrientation,
  PANORAMIC_FULFILLMENT_RATIOS} from '../src/artwork-ratios.mjs';
 import {createCropJobRecord} from '../src/crop-job-store.mjs';
@@ -70,4 +70,37 @@ test('universal pricing updater previews panoramic stock and price changes witho
  assert.equal(plan.changed,true);
  assert.ok(plan.added.includes(missing.sku));
  assert.ok(plan.repriced.some(v=>v.sku===price.sku));
+});
+
+test('Etsy panoramic size variations retain thirteen distinct size values and both variation axes',()=>{
+ const products=inventory('panoramic').products;
+ assert.equal(products.length,13*6);
+ const labels=new Set();
+ for(let i=0;i<products.length;i+=6){
+  const group=products.slice(i,i+6);
+  const sizeLabel=group[0].property_values[0].values[0];
+  assert.ok(sizeLabel.includes('″'),sizeLabel);
+  assert.ok(!labels.has(sizeLabel),'Duplicate Etsy size label: '+sizeLabel);
+  labels.add(sizeLabel);
+  for(const row of group){
+   assert.deepEqual(row.property_values.map(v=>v.property_id),[513,514]);
+   assert.equal(row.property_values[0].values[0],sizeLabel);
+   assert.equal(row.offerings.length,1);
+  }
+ }
+ assert.equal(labels.size,13);
+});
+test('reconversion switches only the Etsy size ladder based on staged replacement pixels',()=>{
+ const original={orientation:'landscape',master:{width:3000,height:2000}};
+ const wide={orientation:'landscape',masterGeometry:{width:4000,height:2000,orientation:'landscape'}};
+ assert.equal(listingLayoutForReconversion(original,null),'landscape');
+ assert.equal(listingLayoutForReconversion(original,wide),'panoramic');
+ assert.equal(listingLayoutForManifest(original),'landscape','Old R2 master remains unchanged while staged');
+ const oldPanoramic={orientation:'landscape',master:{width:4000,height:2000}};
+ const ordinary={orientation:'landscape',masterGeometry:{width:3000,height:2000,orientation:'landscape'}};
+ assert.equal(listingLayoutForReconversion(oldPanoramic,ordinary),'landscape');
+ assert.throws(()=>listingLayoutForReconversion(original,{orientation:'landscape'}),/dimensions/);
+ assert.throws(()=>listingLayoutForReconversion(original,{
+  orientation:'portrait',masterGeometry:{width:2000,height:3000,orientation:'portrait'}
+ }),/orientation/);
 });

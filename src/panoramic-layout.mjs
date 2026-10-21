@@ -8,3 +8,19 @@ export function listingLayoutForManifest(manifest){
  if(w>0&&h>0&&w/h>=1.85)return 'panoramic';
  return 'landscape';
 }
+
+// Reconverted listings must use the new, verified R2 master dimensions. The
+// previous manifest remains active until Etsy has accepted the replacement
+// inventory, so using it here would quietly leave the wrong size ladder.
+export function listingLayoutForReconversion(manifest, replacementRecord = null) {
+ if (!replacementRecord) return listingLayoutForManifest(manifest);
+ const orientation=String(replacementRecord.orientation||'').trim().toLowerCase();
+ const previous=String(manifest?.orientation||'').trim().toLowerCase();
+ const geometry=replacementRecord.masterGeometry;
+ const width=Number(geometry?.width),height=Number(geometry?.height);
+ if(!width||!height||!Number.isFinite(width)||!Number.isFinite(height)||width<=0||height<=0)
+  throw Error('Verified replacement master dimensions are required before changing Etsy variants.');
+ if(orientation!==previous || (geometry?.orientation&&String(geometry.orientation).toLowerCase()!==orientation))
+  throw Error('Replacement orientation differs from the original listing; no Etsy inventory changes allowed.');
+ return listingLayoutForManifest({orientation,master:{width,height}});
+}
