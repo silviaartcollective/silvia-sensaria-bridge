@@ -108,7 +108,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
           <button type="button" class="btn secondary" id="upload-regular-mockups">Upload / sync regular mockups to Etsy</button>
           <button type="button" class="btn secondary" id="retry-saved-mockups">Retry Etsy sync for already saved mockups</button>
           <div id="regular-mockup-status" class="status" aria-live="polite">Choose JPG, PNG or WebP mockups. They will be saved to R2 and verified on the Etsy draft.</div>
-          <div class="uploadmeta">Mockups are optional. Create the draft before mockups finish: the master artwork becomes the first listing image, followed by the 3 saved preset images and video. Finished PSD mockups can be added later in Etsy.</div>
+          <div class="uploadmeta">Mockups are optional. Create the draft before mockups finish: it starts with the saved preset images and video (whichever are installed). Finished PSD mockups can be added later in Etsy.</div>
           <div class="progress"><span id="upload-progress"></span></div>
           <div class="status" id="upload-status">Choose the master artwork to create your draft now. Mockup generation is optional and will never block drafts.</div>
           <div class="actions"><a class="btn secondary" id="launch-crop-worker" href="pod-crop-worker://start">Launch Shared Crop Worker</a></div>
@@ -126,10 +126,10 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
         <div class="uploadbox" id="preset-media-box">
           <div>
             <strong>Reusable Etsy preset media</strong>
-            <div class="uploadmeta">One-time setup only. These 3 images + 1 video are stored once in R2 and automatically added to every future listing.</div>
+            <div class="uploadmeta">Optional one-time setup: up to 3 images + 1 video, stored once in R2 and added automatically to every future listing. Install any of them now and the rest later.</div>
           </div>
           <div class="uploadrow">
-            <label>Install preset files once
+            <label>Preset files (up to 3 images + 1 video)
               <input id="preset_files" type="file" multiple accept="image/jpeg,image/png,video/quicktime,video/mp4,.jpg,.jpeg,.png,.mov,.mp4">
             </label>
             <button type="button" id="install-presets-btn">Install preset media</button>
@@ -927,14 +927,18 @@ document.getElementById('retry-saved-mockups').addEventListener('click',()=>{
 
 function presetRoleForFile(file){
   const name=String(file?.name||'').toLowerCase();
-  if(/\.(mov|mp4|m4v)$/.test(name))return 'video';
+  if(String(file?.type||'').startsWith('video/')||/\\.(mov|mp4|m4v)$/.test(name))return 'video';
   if(name.includes('option'))return 'choose-option';
   if(name.includes('frame'))return 'choose-frame';
   if(name.includes('promo')||name.includes('offer'))return 'promotion';
   return '';
 }
+const PRESET_IMAGE_ROLES=['choose-option','choose-frame','promotion'];
+const PRESET_ROLE_LABELS={'choose-option':'Choose Option','choose-frame':'Choose Frame',promotion:'Promotion',video:'Video'};
+let lastPresetStatus=null;
 
 function renderPresetStatus(status){
+  lastPresetStatus=status;
   const items=Array.isArray(status?.items)?status.items:[];
   if(status?.configured){
     presetMediaStatus.className='status ok';
@@ -943,39 +947,47 @@ function renderPresetStatus(status){
     presetFilesInput.style.display='none';
     return;
   }
-  const missing=items.filter(x=>!x.exists).map(x=>x.role);
-  presetMediaStatus.className='status warn';
-  presetMediaStatus.innerHTML='<strong>One-time setup needed.</strong><br>Select the 3 preset images and 1 video you already use. Missing: '+(missing.length?missing.join(', '):'preset files')+'.';
+  // Presets are optional: any of them can be installed, and the rest added later.
+  const label=item=>PRESET_ROLE_LABELS[item.role]||item.role;
+  const installed=items.filter(x=>x.exists).map(label),missing=items.filter(x=>!x.exists).map(label);
+  presetMediaStatus.className='status'+(installed.length?' ok':'');
+  presetMediaStatus.innerHTML=installed.length
+    ?'<strong>Installed: '+installed.join(' · ')+'.</strong><br>Added automatically to every listing. Optional: '+missing.join(', ')+'.'
+    :'<strong>Optional.</strong> Choose up to 3 preset images and 1 video to add to every listing. Images named Option, Frame or Promotion go to that slot.';
   installPresetsButton.style.display='';
   presetFilesInput.style.display='';
 }
 
-async function installPresetMedia(){
-  const files=Array.from(presetFilesInput.files||[]);
-  if(files.length!==4){
-    presetMediaStatus.className='status warn';
-    presetMediaStatus.textContent='Select exactly the 3 preset images + 1 video.';
-    return;
-  }
-
-  const mapped=[];
-  for(const file of files){
+// Up to 3 images and 1 video, in any combination. An image named like Option,
+// Frame or Promotion/Offer goes to that slot; other images fill the image
+// slots that are still empty first.
+function presetUploadPlan(files){
+  const videos=files.filter(file=>presetRoleForFile(file)==='video');
+  const images=files.filter(file=>presetRoleForFile(file)!=='video');
+  if(!files.length)throw new Error('Choose up to 3 preset images and 1 video.');
+  if(videos.length>1)throw new Error('Choose 1 preset video at most ('+videos.length+' selected).');
+  if(images.length>3)throw new Error('Choose 3 preset images at most ('+images.length+' selected).');
+  const plan=[];
+  for(const file of images){
     const role=presetRoleForFile(file);
-    if(!role){
-      presetMediaStatus.className='status warn';
-      presetMediaStatus.textContent='Could not identify '+file.name+'. Use filenames containing Option, Frame, Promotion/Offer, and the video file.';
-      return;
-    }
-    if(mapped.some(x=>x.role===role)){
-      presetMediaStatus.className='status warn';
-      presetMediaStatus.textContent='Two files matched '+role+'. Rename the files so each preset is clear.';
-      return;
-    }
-    mapped.push({role,file});
+    if(!role)continue;
+    if(plan.some(x=>x.role===role))throw new Error('Two images are named like '+PRESET_ROLE_LABELS[role]+'. Rename one so each slot is clear.');
+    plan.push({role,file});
   }
-  if(mapped.length!==4){
+  const installed=new Set((lastPresetStatus?.items||[]).filter(x=>x.exists).map(x=>x.role));
+  const free=PRESET_IMAGE_ROLES.filter(role=>!plan.some(x=>x.role===role))
+    .sort((a,b)=>Number(installed.has(a))-Number(installed.has(b)));
+  for(const file of images)if(!presetRoleForFile(file))plan.push({role:free.shift(),file});
+  if(videos.length)plan.push({role:'video',file:videos[0]});
+  return plan;
+}
+
+async function installPresetMedia(){
+  let mapped;
+  try{mapped=presetUploadPlan(Array.from(presetFilesInput.files||[]))}
+  catch(error){
     presetMediaStatus.className='status warn';
-    presetMediaStatus.textContent='All four preset roles are required.';
+    presetMediaStatus.textContent=error.message;
     return;
   }
 
@@ -999,16 +1011,18 @@ async function installPresetMedia(){
     const data=await readJsonResponse(reserve,'Preset media reservation');
     if(!reserve.ok)throw new Error(data.error||'Could not prepare preset media upload.');
 
-    presetMediaStatus.textContent='Uploading preset media…';
+    presetMediaStatus.textContent='Uploading '+mapped.map(x=>PRESET_ROLE_LABELS[x.role]+' ('+x.file.name+')').join(', ')+'…';
     await mapLimit(data.uploads||[],4,async(upload)=>{
       const match=mapped.find(x=>x.role===upload.role);
       if(!match)throw new Error('Could not match preset '+upload.role+'.');
       await putFile(upload.uploadUrl,match.file,upload.contentType);
     });
 
-    const complete=await fetch('/api/presets/complete',{method:'POST'});
+    const complete=await fetch('/api/presets/complete',{method:'POST',
+      headers:{'content-type':'application/json'},body:JSON.stringify({roles:mapped.map(x=>x.role)})});
     const done=await readJsonResponse(complete,'Preset media confirmation');
     if(!complete.ok)throw new Error(done.error||'Preset upload did not complete.');
+    presetFilesInput.value='';
     renderPresetStatus(done);
   }catch(error){
     presetMediaStatus.className='status warn';

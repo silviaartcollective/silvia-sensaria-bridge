@@ -49,23 +49,106 @@ function filteredList(){
  return listings.filter(o=>!q||String(o.listingId).includes(q)||
   String(o.title||'').toLowerCase().includes(q)||String(o.artworkId||'').toLowerCase().includes(q));
 }
+// Each card shows the listing's first Etsy photo, like the converter. Photos
+// load as cards near the screen, four at a time, from the converter's cached
+// preview route; they are kept across list refreshes.
+const previews=new Map(),previewQueue=[],previewPending=new Set();
+let previewsActive=0;
+function showPreview(box,id){
+ const known=previews.get(id);box.replaceChildren();
+ if(known?.url){
+  const img=document.createElement('img');img.src=known.url;img.alt='';img.loading='lazy';img.decoding='async';
+  box.append(img);return;
+ }
+ const empty=document.createElement('div');empty.className='empty';
+ empty.textContent=!known?'Loading photo…':known.error?'Etsy photo unavailable':'No listing photo';
+ box.append(empty);
+}
+function pumpPreviews(){
+ while(previewsActive<4&&previewQueue.length){
+  const id=previewQueue.shift();previewsActive++;
+  void request('/api/listing-converter/listing-image?listingId='+encodeURIComponent(id))
+   .then(data=>previews.set(id,{url:data.firstImageUrl||null}),error=>previews.set(id,{url:null,error:String(error.message||error)}))
+   .finally(()=>{
+    previewPending.delete(id);previewsActive--;
+    const box=el('listing-items').querySelector('[data-listing-id="'+id+'"] .preview');
+    if(box)showPreview(box,id);
+    pumpPreviews();
+   });
+ }
+}
+function queuePreview(id){
+ if(previews.has(id)||previewPending.has(id))return;
+ previewPending.add(id);previewQueue.push(id);pumpPreviews();
+}
+const previewObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{
+ for(const entry of entries){
+  if(!entry.isIntersecting)continue;
+  previewObserver.unobserve(entry.target);queuePreview(Number(entry.target.dataset.listingId));
+ }
+},{rootMargin:'400px 0px'}):null;
+function listedDate(timestamp){
+ const t=Number(timestamp);if(!t||t>=Number.MAX_SAFE_INTEGER)return '';
+ return new Date(t<1e12?t*1000:t).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric',timeZone:'UTC'});
+}
 function renderList(){
  const box=el('listing-items');box.replaceChildren();
+ if(previewObserver)previewObserver.disconnect();
  const rows=filteredList();
  const visible=rows.slice(0,120);
  el('listing-count').textContent=rows.length+' matching · '+listings.length+
    ' loaded from Etsy'+(rows.length>120?' · Showing first 120; use search to narrow results':'');
  for(const row of visible){
-  const b=document.createElement('button');b.type='button';b.className='listing-choice'+(row.listingId===selectedId?' selected':'');
-  const title=document.createElement('b');title.textContent=row.title||'Untitled';
-  const sub=document.createElement('span');sub.className='muted';
-  sub.textContent=['#'+row.listingId,row.state||'unknown',row.artworkId,row.converted?'Converted':'']
-     .filter(Boolean).join(' · ');
-  b.append(title,sub);b.addEventListener('click',()=>{if(dirty&&!confirm('Discard unsaved edits to this listing?'))return;
-    openListing(row.listingId).catch(error=>notice('details-status',String(error.message||error),true));});
-  box.append(b);
+  const id=Number(row.listingId),card=document.createElement('article');
+  card.className='listing-card'+(id===selectedId?' selected':'');card.dataset.listingId=String(id);
+  const preview=document.createElement('div');preview.className='preview';showPreview(preview,id);
+  const body=document.createElement('div');body.className='card-body';
+  const title=document.createElement('div');title.className='card-title';title.textContent=row.title||'Untitled';
+  const pills=document.createElement('div');pills.className='pills';
+  const pill=(text,kind='')=>{const span=document.createElement('span');span.className='pill'+(kind?' '+kind:'');span.textContent=text;pills.append(span);};
+  pill(row.state||'unknown',row.state==='draft'?'draft':'');
+  if(row.artworkId)pill(row.artworkId,'ok');
+  pill('#'+id);
+  if(row.converted)pill('Converted');
+  body.append(title,pills);
+  const listed=listedDate(row.originalCreationTimestamp);
+  if(listed){const meta=document.createElement('div');meta.className='muted';meta.textContent='Originally listed: '+listed;body.append(meta);}
+  const actions=document.createElement('div');actions.className='card-actions';
+  const edit=document.createElement('button');edit.type='button';edit.className='primary';edit.textContent='Edit listing';
+  const etsy=document.createElement('a');etsy.className='btn';etsy.href='https://www.etsy.com/listing/'+id;
+  etsy.target='_blank';etsy.rel='noopener noreferrer';etsy.textContent='View on Etsy ↗';
+  actions.append(edit,etsy);body.append(actions);
+  card.append(preview,body);
+  card.addEventListener('click',event=>{if(!event.target.closest('a'))chooseListing(id,row.title);});
+  box.append(card);
+  if(!previews.has(id)){if(previewObserver)previewObserver.observe(card);else queuePreview(id);}
  }
 }
+function markSelected(){
+ for(const card of el('listing-items').querySelectorAll('.listing-card'))
+  card.classList.toggle('selected',Number(card.dataset.listingId)===selectedId);
+}
+// The editor opens in a drawer over the cards, which keep their place.
+function showEditor(open){
+ el('editor-drawer').classList.toggle('hidden',!open);el('editor-backdrop').classList.toggle('hidden',!open);
+ document.body.classList.toggle('drawer-open',open);
+}
+function chooseListing(id,title){
+ if(dirty&&id!==selectedId&&!confirm('Discard unsaved edits to this listing?'))return;
+ el('drawer-title').textContent=title||'Listing #'+id;
+ showEditor(true);el('editor-drawer').scrollTop=0;
+ openListing(id).catch(error=>{
+  el('editor').classList.add('hidden');el('editor-empty').classList.remove('hidden');
+  el('editor-empty').textContent='Could not open Etsy listing #'+id+': '+String(error.message||error);
+ });
+}
+function closeEditor(){
+ if(dirty&&!confirm('Discard unsaved edits to this listing?'))return;
+ dirty=false;showEditor(false);
+}
+el('close-editor').addEventListener('click',closeEditor);
+el('editor-backdrop').addEventListener('click',closeEditor);
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!el('editor-drawer').classList.contains('hidden'))closeEditor();});
 async function loadListings(){
  const generation=++listLoadGeneration;
  el('reload-list').disabled=true;
@@ -123,7 +206,7 @@ function renderInventory(data){
  }
 }
 async function openListing(id){
- selectedId=Number(id);dirty=false;renderList();
+ selectedId=Number(id);dirty=false;markSelected();
  el('editor').classList.add('hidden');el('editor-empty').classList.remove('hidden');
  el('editor-empty').textContent='Loading Etsy listing #'+id+'…';
  clearNotice('details-status');clearNotice('variant-status');

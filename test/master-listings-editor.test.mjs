@@ -69,3 +69,24 @@ test('Listings tab is Silvia-only and converter stays in its tab',()=>{
  assert.match(server,/listing:edit.patch/);
  assert.match(server,/renderListingConverterPage\(\)\.replace/);
 });
+
+test('Master Listings shows listing cards with their Etsy photo, like the converter, and edits in a drawer',()=>{
+ const html=renderListingsPage();
+ assert.match(html,/id="listing-items" class="listing-grid"/);
+ assert.match(html,/\.listing-grid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+ assert.match(html,/id="editor-drawer" role="dialog" aria-modal="true"/);
+ assert.match(html,/id="close-editor"/);
+ // The editor keeps every field and button inside the drawer.
+ const drawer=html.slice(html.indexOf('id="editor-drawer"'),html.indexOf('<section id="converter-panel"'));
+ for(const id of ['edit-title','save-details','artwork-replace','save-variants','open-etsy'])assert.ok(drawer.includes('id="'+id+'"'),id);
+ const client=readFileSync(new URL('../src/listings-client.js',import.meta.url),'utf8');
+ // Photos come from the converter's cached preview route, four at a time, as cards near the screen.
+ assert.match(client,/'\/api\/listing-converter\/listing-image\?listingId='/);
+ assert.match(client,/previewsActive<4/);
+ assert.match(client,/new IntersectionObserver/);
+ assert.match(client,/className='listing-card'/);
+ // A card's Etsy link opens Etsy, not the editor; Escape or the backdrop closes the editor.
+ assert.match(client,/if\(!event\.target\.closest\('a'\)\)chooseListing/);
+ assert.match(client,/event\.key==='Escape'/);
+ assert.match(client,/el\('editor-backdrop'\)\.addEventListener\('click',closeEditor\)/);
+});
