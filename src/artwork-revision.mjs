@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import {loadArtworkManifest,saveArtworkManifest} from './artwork-storage.mjs';
 import {createCropJob,getCropJob} from './crop-job-store.mjs';
 import {getJsonObject,putJsonObject,artworkObjectExists,signedArtworkUploadUrl} from './r2.mjs';
-import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey} from './artwork-ratios.mjs';
+import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey,fulfillmentRatiosForOrientation,PANORAMIC_FULFILLMENT_RATIOS} from './artwork-ratios.mjs';
 import {inspectStoredMasterGeometry} from './master-geometry.mjs';
 const PREFIX='SAC';
 const validId=v=>{const id=String(v||'').toUpperCase();if(!new RegExp('^'+PREFIX+'\\d+$').test(id))throw Error('Converted '+PREFIX+' artwork required.');return id;};
@@ -37,7 +37,7 @@ export function isStagedConverterCropJob(job){
 }
 export function cropOutputKeyForJob(job,ratio){
  const id=validId(job.artworkId);
- if(!FULFILLMENT_RATIOS.includes(ratio))throw Error('Invalid crop ratio.');
+ if(![...FULFILLMENT_RATIOS,...PANORAMIC_FULFILLMENT_RATIOS].includes(ratio))throw Error('Invalid crop ratio.');
  if(isStagedConverterCropJob(job))
   return 'artworks/'+id+'/.reconvert/'+job.masterKey.split('/')[3]+'/fulfillment/'+ratio+'.jpg';
  if(isStagedRevisionJob(job)){
@@ -101,7 +101,7 @@ export async function checkedRevisionAssets(record,job){
  if(!record?.jobId||!job||job.id!==record.jobId||job.status!=='completed')throw Error('New artwork crops have not completed.');
  if(job.masterKey!==record.masterKey||job.artworkId!==record.artworkId)throw Error('Crop job was generated from a different master.');
  const assets={};
- for(const ratio of FULFILLMENT_RATIOS){
+ for(const ratio of fulfillmentRatiosForOrientation(record.orientation)){
   const asset=job.resultAssets?.[ratio],expected=cropOutputKeyForJob(job,ratio);
   if(!asset?.productionReady||asset.key!==expected||asset.sourceMasterKey!==record.masterKey||
      !Number.isFinite(Number(asset.width))||!Number.isFinite(Number(asset.height)))
