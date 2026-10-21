@@ -1,3 +1,4 @@
+import {PANORAMIC_LAYOUT_RATIO} from './panoramic-layout.mjs';
 // Template orientation is determined by the frame/Smart Object placement,
  // NOT by the dimensions of the entire PSD background.
 export function artworkOrientationFromPixels(width,height){
@@ -7,10 +8,11 @@ export function artworkOrientationFromPixels(width,height){
  if(w===h)return 'square';
  return w>h?'landscape':'portrait';
 }
-// Mockups only: an artwork about twice as wide as it is tall (2:1, 3:1 …) is
-// panoramic and gets panoramic templates. Prints still treat it as landscape.
-// The PC worker uses the same ratio for templates (worker/local-templates.mjs).
-export const PANORAMIC_RATIO=1.9;
+// An artwork 1.85:1 or wider (2:1, 3:1 …) is panoramic: the same rule that gives
+// its Etsy listing the panoramic size set (src/panoramic-layout.mjs). It gets
+// panoramic templates; its crops stay landscape. The PC worker uses the same
+// ratio for templates (worker/local-templates.mjs).
+export const PANORAMIC_RATIO=PANORAMIC_LAYOUT_RATIO;
 export function mockupOrientationFromPixels(width,height){
  const orientation=artworkOrientationFromPixels(width,height);
  return orientation==='landscape'&&Number(width)/Number(height)>=PANORAMIC_RATIO?'panoramic':orientation;
