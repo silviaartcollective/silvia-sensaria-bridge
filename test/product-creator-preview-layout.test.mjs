@@ -24,7 +24,7 @@ test('Product Creator keeps a separate right-side gallery outside the listing fo
  assert.match(html,/<details class="creator-planned-details">/);
 });
 
-test('gallery displays large previews, two per row, in a scrolling selection viewport',()=>{
+test('gallery displays large previews, two per row, scrolling with the preview column (one scrollbar)',()=>{
  const gallery=renderMockupPreviewPanel();
  const editor=renderMockupGeneratorSection();
  assert.match(gallery,/id="mg-preview-list"/);
@@ -34,8 +34,9 @@ test('gallery displays large previews, two per row, in a scrolling selection vie
  assert.doesNotMatch(editor,/id="mg-preview-list"/);
  assert.match(editor,/grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
  assert.match(editor,/--preview-row-height:clamp\(300px,40dvh,460px\)/);
- assert.match(editor,/height:calc\(2 \* var\(--preview-row-height\) \+ 24px\)/);
- assert.match(editor,/overflow-y:auto;overscroll-behavior:contain/);
+ const list=editor.match(/\.mg-preview-list\{[^}]*\}/)[0];
+ assert.doesNotMatch(list,/overflow|max-height|[;{]height:/,'the list has no scroll area of its own');
+ assert.match(editor,/#mg-apply-selected\{[^}]*position:sticky;bottom:0;z-index:5/);
  assert.match(editor,/\.mg-preview-item:has\(input:checked\)/);
 });
 
@@ -46,7 +47,10 @@ test('preview selection remains interactive and only explicit Apply attaches fin
  assert.match(source,/function selectionChanged\(\)/);
  const change=source.slice(source.indexOf('function selectionChanged()'),source.indexOf('async function syncGeneratedJpgs('));
  assert.doesNotMatch(change,/act\(useResults\)/);
- assert.match(source,/const savedScrollTop=list\.scrollTop/);
- assert.match(source,/list\.scrollTop=savedScrollTop/);
+ assert.match(source,/scroller=list\.closest\('\.creator-preview-scroll'\)\|\|list/);
+ assert.match(source,/scroller\.scrollTop=savedScrollTop/);
+ // A card click ticks its checkbox without focusing it (no jump).
+ assert.match(source,/create\('div','',\{class:'mg-preview-item'\}\)/);
+ assert.match(source,/if\(event\.target===checkbox\)return;/);
  assert.match(source,/aria-label':'Select generated mockup/);
 });
