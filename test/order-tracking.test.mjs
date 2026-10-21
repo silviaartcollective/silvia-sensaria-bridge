@@ -84,10 +84,14 @@ test('Etsy shipping has verified carrier codes and needs a paid matching shipmen
  assert.throws(()=>prepareStagedEtsyShipment(record,{...receipt,is_shipped:true},{receiptId:'123456789',trackingNumber:'ABC12345'},42),/already marks/);
  assert.throws(()=>prepareStagedEtsyShipment(record,receipt,{receiptId:'123456789',trackingNumber:'BAD'},42),/not staged/);
 });
-test('shipment submission is disabled unless explicitly configured',async()=>{
- const current=process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;delete process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;
- try{await assert.rejects(()=>sendStagedShipmentToEtsy({},{}),/disabled/);}
- finally{if(current===undefined)delete process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;else process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED=current;}
+test('sending tracking to Etsy needs the typed confirmation, and ETSY_SHIPMENT_SUBMISSION_ENABLED=false switches it off',async()=>{
+ const current=process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;
+ try{
+  delete process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;
+  await assert.rejects(()=>sendStagedShipmentToEtsy({},{}),/MARK SHIPPED ON ETSY confirmation required/);
+  process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED='false';
+  await assert.rejects(()=>sendStagedShipmentToEtsy({},{confirm:'MARK SHIPPED ON ETSY'}),/switched off/);
+ }finally{if(current===undefined)delete process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED;else process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED=current;}
 });
 
 test('Prodigi order lookup only queues shipments explicitly shipped',()=>{

@@ -16,7 +16,7 @@ import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
 import {beginGmailAuthorization,finishGmailAuthorization,gmailConnectionStatus,disconnectGmail,gmailOAuthConfigured} from './gmail-oauth.mjs';
-import {scanSensariaGmail,gmailTrackingStatus} from './sensaria-gmail-tracking.mjs';
+import {scanSensariaGmail,gmailTrackingStatus,saveGmailTrackingSettings} from './sensaria-gmail-tracking.mjs';
 import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy } from './order-tracking.mjs';
 
 const TRACKING_SHOP_NAME="Silvia Art Collective";
@@ -3677,7 +3677,7 @@ const server = http.createServer(async (req, res) => {
     catch(error){return sendJson(res,503,{ok:false,error:String(error.message||error)});}
   }
   if(req.method==='POST'&&
-     (url.pathname==='/api/tracking/gmail/scan'||url.pathname==='/api/tracking/gmail/disconnect')){
+     (url.pathname==='/api/tracking/gmail/scan'||url.pathname==='/api/tracking/gmail/disconnect'||url.pathname==='/api/tracking/gmail/settings')){
     if(!requireAdminApi(req,res))return;
     const origin=String(req.headers.origin||''),host=String(req.headers.host||'');
     const expected=String(req.headers['x-forwarded-proto']||'https')+'://'+host;
@@ -3692,6 +3692,17 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res,400,{ok:false,error:'Explicit disconnect confirmation is required.'});
         await disconnectGmail();
         return sendJson(res,200,{ok:true,connected:false});
+      }
+      // Switching automatic Etsy completion on needs Etsy's shipment permission.
+      if(url.pathname==='/api/tracking/gmail/settings'){
+        if(body.autoCompleteEtsy===true){
+          if(body.confirm!=='COMPLETE ETSY ORDERS AUTOMATICALLY')
+            return sendJson(res,400,{ok:false,error:'Confirm automatic completion: Etsy marks each order shipped and emails the buyer.'});
+          const session=await getEtsySession();
+          if(!new Set(String(session.scope||'').split(/\s+/)).has('transactions_w'))
+            return sendJson(res,403,{ok:false,error:'Reconnect Etsy: sending tracking needs the transactions_w permission.'});
+        }
+        return sendJson(res,200,{ok:true,...await saveGmailTrackingSettings(body)});
       }
       const session=await getEtsySession();
       const scope=new Set(String(session.scope||'').split(/\s+/));
@@ -5748,7 +5759,7 @@ async function recoverRecentGeneratedJpgs(){
 // Gmail polls are advisory and run only after explicit OAuth connection.
 // Render instances that sleep do not offer guaranteed continuous polling;
 // the on-demand Scan Gmail button remains available.
-const GMAIL_TRACKING_POLL_MS=30*60*1000;
+const GMAIL_TRACKING_POLL_MS=15*60*1000;
 server.listen(port, '0.0.0.0', () => {
   console.log(`Silvia Sensaria bridge listening on port ${port}`);
   setTimeout(()=>{void recoverRecentGeneratedJpgs().catch(
@@ -5766,6 +5777,7 @@ server.listen(port, '0.0.0.0', () => {
         await scanSensariaGmail(session);
       }catch(error){console.error('[gmail tracking] scheduled scan error: '+String(error.message||error));}
     };
+    setTimeout(()=>{void poll();},2*60*1000).unref();
     setInterval(()=>{void poll();},GMAIL_TRACKING_POLL_MS).unref();
   }
 });
