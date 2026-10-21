@@ -34,7 +34,7 @@ import {assertSeoShopSection} from './seo-shop-section.mjs';
 import {starterDraftMedia} from './draft-starter-media.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
-import {listingLayoutForManifest} from './panoramic-layout.mjs';
+import {listingLayoutForManifest,listingLayoutForReconversion} from './panoramic-layout.mjs';
 import {planDefaultTemplateInventory,templateInventoryFingerprint} from './default-listing-pricing.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
 import {renderListingsPage} from './listings-page.mjs';
@@ -2015,7 +2015,9 @@ async function performListingConversion(body){
         catalog: products,
         readinessStateId,
         defaultQuantity: 999,
-        orientation: listingLayoutForManifest(manifest)
+        // A staged reconversion has its own verified dimensions; the old
+        // manifest must stay active until Etsy confirms this new inventory.
+        orientation: listingLayoutForReconversion(manifest,reconvert?replacement.record:null)
       });
 
       await withEtsyListingRetry(() => updateListingInventory({
