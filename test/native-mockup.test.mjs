@@ -168,31 +168,70 @@ test('16-bit PSD pixels are converted to 8 bits',needsReader,()=>{
  assert.deepEqual([...psd.children[0].children[0].imageData.data],[1,1,1,255]);
 });
 
-test('several visible Smart Objects ask for the artwork layer once, then use the saved choice',needsReader,()=>{
- const {psd}=frameScene();
- psd.children.push({name:'Logo',left:0,top:0,right:20,bottom:20,imageData:image(20,20,()=>[0,0,0,255]),
+// Like the folder PSDs with two Smart Objects: the artwork "5" on top and an
+// older Smart Object ("ChatGPT Image …") under the scene.
+function twoSmartObjects(){
+ const scene=frameScene();
+ scene.psd.children[1].children[0].name='5';
+ scene.psd.children.unshift({name:'ChatGPT Image May 12, 2025',left:0,top:0,right:20,bottom:20,
+  imageData:image(20,20,()=>[0,0,0,255]),
   placedLayer:{id:GUID2,type:'raster',transform:[0,0,20,0,20,20,0,20],width:20,height:20}});
- psd.linkedFiles.push({id:GUID2,name:'logo.png',data:new Uint8Array([1])});
- const parsed=readBack(psd);
- // "Your Art" is named like a placeholder, so it is picked without asking.
- const picked=native.prepareFromPsd(parsed);
- assert.equal(picked.usedMapping,'2.1');
- assert.deepEqual(picked.objects.map(o=>o.path).sort(),['0','2.1']);
- const renamed=readBack(psd);renamed.children[1].children[0].name='Layer 7'; // the artwork (ag-psd lists layers bottom first)
- // "Logo" is named like a decoration, so the other layer is the artwork.
- assert.equal(native.prepareFromPsd(renamed).usedMapping,'2.1');
- renamed.children[3].name='Layer 9';
- const asked=native.prepareFromPsd(renamed);
- assert.equal(asked.needsMapping,true);
- const mapped=native.prepareFromPsd(parsed,{path:'2.1'});
- assert.equal(mapped.needsMapping,false);
- assert.equal(mapped.usedMapping,'2.1');
- // A choice saved by layer name (e.g. mockup 19's "5") also works.
- assert.equal(native.prepareFromPsd(parsed,{path:'Your Art'}).usedMapping,'2.1');
- // A stale saved choice asks for the layer again instead of failing the PSD.
- const stale=native.prepareFromPsd(parsed,{path:'7'});
- assert.equal(stale.needsMapping,true);
- assert.match(stale.reason,/select the artwork layer again/);
+ scene.psd.linkedFiles.push({id:GUID2,name:'chatgpt.png',data:new Uint8Array([1])});
+ return scene;
+}
+
+test('with several visible Smart Objects the top one is the artwork, unless another one was chosen',needsReader,()=>{
+ const parsed=()=>readBack(twoSmartObjects().psd);
+ const top=native.prepareFromPsd(parsed());
+ assert.equal(top.needsMapping,false);
+ assert.equal(top.usedMapping,'1.1');
+ assert.deepEqual(top.objects.map(o=>[o.path,o.name,!!o.suggested]).sort(),
+  [['1.1','5',true],['3','ChatGPT Image May 12, 2025',false]]);
+ // A layer chosen in the Product Creator (by path or by name) still wins.
+ const chosen=native.prepareFromPsd(parsed(),{path:'3'});
+ assert.equal(chosen.usedMapping,'3');
+ assert.equal(native.prepareFromPsd(parsed(),{path:'5'}).usedMapping,'1.1');
+ // A choice that is no longer in the PSD falls back to the top one.
+ assert.equal(native.prepareFromPsd(parsed(),{path:'7'}).usedMapping,'1.1');
+});
+
+test('the top Smart Object follows the Layers panel, groups included; the server matches saved choices like the PC',needsReader,async()=>{
+ const {classifySmartObjects}=await import('../src/mockup-generator.mjs');
+ const top=paths=>native.topSmartObject(paths.map(path=>({path,visible:true}))).path;
+ assert.equal(top(['3','1.1','2']),'1.1');
+ assert.equal(top(['10','2','2.0.4']),'2');
+ assert.equal(top(['2.1','2.0.4']),'2.0.4');
+ // A saved choice matches by path before name, on the server as on the PC.
+ const named=[{path:'5',name:'Background',visible:true,kind:'smart'},{path:'0',name:'5',visible:true,kind:'smart'}];
+ assert.equal(classifySmartObjects(named,{name:'mockup 19.psd'}).path,'5');
+ // A saved choice that is gone falls back to the layer the worker marked.
+ const marked=[{path:'3',name:'A',visible:true,kind:'smart'},{path:'1',name:'B',visible:true,kind:'smart',suggested:true}];
+ assert.deepEqual([classifySmartObjects(marked,{name:'a.psd',mapping:{path:'7'}}).status,
+  classifySmartObjects(marked,{name:'a.psd',mapping:{path:'7'}}).path],['mapped','1']);
+});
+
+test('templates prepared by an older worker that asked for a layer are prepared again with the top one',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const psdPath=path.join(dir,'two smart objects.psd');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(twoSmartObjects().psd));
+  const first=await native.prepareNativePsd({psdPath});
+  assert.equal(first.usedMapping,'1.1');
+  // What worker 4.7.0 cached for this PSD: "select the artwork layer".
+  const manifestPath=path.join(first.folder,'manifest.json');
+  const current=JSON.parse(await fs.readFile(manifestPath,'utf8'));
+  await fs.writeFile(manifestPath,JSON.stringify({version:current.version,psdBytes:current.psdBytes,needsMapping:true,
+   objects:current.objects.map(({suggested,...x})=>x),reason:'This PSD has several visible Smart Objects. Select the artwork layer.'}));
+  const again=await native.prepareNativePsd({psdPath});
+  assert.equal(again.preparedFromCache,false);
+  assert.ok(!again.needsMapping);
+  assert.equal(again.usedMapping,'1.1');
+  // Prepared with the top one, it is reused from then on.
+  const cached=await native.prepareNativePsd({psdPath});
+  assert.equal(cached.preparedFromCache,true);
+  assert.equal(cached.usedMapping,'1.1');
+  assert.deepEqual(cached.objects.filter(x=>x.suggested).map(x=>x.path),['1.1']);
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
 });
 
 test('a hidden Smart Object (like mockup 19\'s "mockup 1 (1)") is never chosen as the artwork',needsReader,()=>{
@@ -204,7 +243,8 @@ test('a hidden Smart Object (like mockup 19\'s "mockup 1 (1)") is never chosen a
  assert.equal(prepared.needsMapping,false);
  assert.equal(prepared.usedMapping,'2.1');
  assert.deepEqual(prepared.objects.map(o=>[o.path,o.visible]).sort(),[['0',false],['2.1',true]]);
- assert.equal(native.prepareFromPsd(readBack(psd),{path:'0'}).needsMapping,true);
+ // A saved choice pointing at the hidden layer uses the visible one instead.
+ assert.equal(native.prepareFromPsd(readBack(psd),{path:'0'}).usedMapping,'2.1');
 });
 
 test('ordinary Smart Objects (identity warp grid) are accepted; real warps are not',needsReader,()=>{
@@ -359,7 +399,7 @@ test('several mockups render in parallel on the thread pool',needsReader,async()
  }finally{await fs.rm(dir,{recursive:true,force:true})}
 });
 
-test('with several smart objects the worker picks the artwork when it is clear, and the server accepts it',needsReader,async()=>{
+test('with several smart objects the worker picks the one that is clearly the artwork, else the top one, and the server accepts it',needsReader,async()=>{
  const {classifySmartObjects}=await import('../src/mockup-generator.mjs');
  const W=200,H=160,G=['1a2b3c4d-9391-11ec-b4f1-c15674f50bc4','2a2b3c4d-9391-11ec-b4f1-c15674f50bc4','3a2b3c4d-9391-11ec-b4f1-c15674f50bc4'];
  const ring=(x,y)=>x<6||y<6||x>=94||y>=114?[20,20,20,255]:[0,0,0,0];
@@ -383,9 +423,12 @@ test('with several smart objects the worker picks the artwork when it is clear, 
  assert.ok(classified.objects.every(o=>o.kind==='smart'),'the layer picker needs kind');
  // A placeholder name wins.
  assert.equal(native.prepareFromPsd(readBack(scene(['Room','Frame','Your Design Here']))).usedMapping,'0');
- // Two equally plausible layers: ask.
+ // Two equally plausible layers: the top one, and the server agrees.
  const two=scene(['A','B','C']);two.children[2].imageData=image(100,120,()=>[150,120,90,255]);
- assert.equal(native.prepareFromPsd(readBack(two)).needsMapping,true);
+ const topOne=native.prepareFromPsd(readBack(two));
+ assert.equal(topOne.needsMapping,false);
+ assert.equal(topOne.usedMapping,'0');
+ assert.equal(classifySmartObjects(topOne.objects,{name:'Two.psd'}).path,'0');
 });
 
 test('the artwork-layer picker also lists layers saved before `kind` was stored',()=>{
