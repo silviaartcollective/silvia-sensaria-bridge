@@ -82,6 +82,11 @@ return `
 .mg-preview-item span{display:block;width:100%;font-size:12px;line-height:1.35;font-weight:600;overflow-wrap:anywhere}
 .mg-preview-item small{display:block;font-size:10px;font-weight:400;color:#74776f;margin-top:3px}
 .mg-preview #mg-selection-status{font-size:12px}
+.mg-not-generated[hidden]{display:none}
+.mg-not-generated{max-height:30dvh;overflow-y:auto;display:grid;gap:8px;padding:12px;border:1px solid #ecd3bf;border-radius:11px;background:#fff7f0;font-size:12px;line-height:1.45}
+.mg-not-generated-item{display:grid;gap:2px;padding-top:8px;border-top:1px solid #f1e2d6}
+.mg-not-generated-item span{color:#6b4a32}
+.mg-not-generated-item .btn{justify-self:start;font-size:12px;padding:6px 10px;margin-top:4px}
 .mg-org-modal{position:fixed;inset:0;z-index:1000;contain:layout style;background:rgba(34,34,34,.55);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:4vh 16px}
 .mg-org-modal[hidden]{display:none}
 body.mg-org-open{overflow:hidden}
@@ -162,6 +167,7 @@ return `
   <div id="mg-preview-list" class="mg-preview-list" aria-live="polite">
    <p class="mg-preview-empty">Finished mockups will appear here while they generate.</p>
   </div>
+  <div id="mg-not-generated" class="mg-not-generated" hidden aria-live="polite"></div>
   <div id="mg-selection-status" class="uploadmeta">Pick up to 20 mockups. Etsy shows 20 photos: with the 3 preset photos, the organizer shows which ones make it (photos below its line are not added). The master artwork is never an Etsy photo. Older batches remain in troubleshooting.</div>
   <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside>
