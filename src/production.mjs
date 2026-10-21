@@ -12,6 +12,7 @@ const specs = JSON.parse(
 function normalizeOrientation(value) {
   const v = String(value || '').trim().toLowerCase();
   if (v === 'landscape' || v === 'horizontal') return 'landscape';
+  if (v === 'square') return 'square';
   return 'portrait';
 }
 
