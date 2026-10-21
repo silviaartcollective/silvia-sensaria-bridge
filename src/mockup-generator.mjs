@@ -144,15 +144,20 @@ export function pcTemplateId(relativePath){
  const h=crypto.createHash('sha256').update('pc-folder|'+String(relativePath).toLowerCase()).digest('hex');
  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20,32);
 }
-// "Vertical", "Horizontal" or "Square" in the folder path gives the orientation.
-export function orientationFromFolder(relativePath){
- const folders=String(relativePath).split('/').slice(0,-1).join('/').toLowerCase();
- if(/\b(vertical|portrait)s?\b/.test(folders))return 'portrait';
- if(/\b(horizontal|landscape)s?\b/.test(folders))return 'landscape';
- if(/\bsquares?\b/.test(folders))return 'square';
+// "Vertical", "Horizontal" or "Square" in a folder name gives the orientation:
+// the subfolders the PSD is in, or the chosen mockup folder itself (e.g. "Silvia
+// Art Co Horizontal"). The folder nearest the file wins.
+export function orientationFromFolder(relativePath,mockupFolder=''){
+ const chosen=String(mockupFolder).split(/[\\/]/).filter(Boolean).pop()||'';
+ const folders=[chosen,...String(relativePath).split('/').slice(0,-1)].filter(Boolean).reverse();
+ for(const name of folders.map(f=>f.toLowerCase())){
+  if(/\b(vertical|portrait)s?\b/.test(name))return 'portrait';
+  if(/\b(horizontal|landscape)s?\b/.test(name))return 'landscape';
+  if(/\bsquares?\b/.test(name))return 'square';
+ }
  return '';
 }
-export async function syncPcTemplates(files){
+export async function syncPcTemplates(files,{mockupFolder=''}={}){
  if(!Array.isArray(files))throw Error('The PC folder list is missing.');
  const all=await listJSON(ROOT+'/templates/',/\/meta\.json$/,1800);
  const records=all.filter(r=>r.source==='pc');
@@ -166,7 +171,7 @@ export async function syncPcTemplates(files){
   const relativePath=String(file?.path||'').replace(/\\/g,'/').replace(/^\/+/,'');
   const size=Number(file?.size),mtimeMs=Math.round(Number(file?.mtimeMs));
   if(!PC_TEMPLATE_PATH.test(relativePath)||!Number.isSafeInteger(size)||size<100||!Number.isFinite(mtimeMs))continue;
-  const id=pcTemplateId(relativePath),previous=byId.get(id),folderOrientation=orientationFromFolder(relativePath);
+  const id=pcTemplateId(relativePath),previous=byId.get(id),folderOrientation=orientationFromFolder(relativePath,mockupFolder);
   seen.add(id);
   const name=safeFilename(relativePath.split('/').pop());
   const record=previous?{...previous}:{id,source:'pc',localPath:relativePath,name,key:null,

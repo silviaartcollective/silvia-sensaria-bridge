@@ -211,7 +211,8 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    // The PSDs in the PC's mockup folder for this shop.
    if(req.method==='POST'&&parts[1]==='local-templates'&&parts.length===2){
     const body=await readJson(req);
-    return send(200,await syncPcTemplates(body.files)),true;
+    // The chosen folder's own name can give the orientation ("…Horizontal").
+    return send(200,await syncPcTemplates(body.files,{mockupFolder:await getPcMockupFolder()})),true;
    }
    if(req.method==='POST'&&parts[1]==='templates'&&parts[3]==='orientation'&&parts.length===4&&isId(parts[2])){
     const body=await readJson(req);

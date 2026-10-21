@@ -92,3 +92,14 @@ test('the artwork fills the template\'s artwork layer instead of leaving white b
  assert.equal((client.match(/fitMode:'cover'/g)||[]).length,2);
  assert.doesNotMatch(client,/fitMode:'contain'/);
 });
+
+test('the chosen folder\'s own name sorts the PSDs directly in it, and unsorted ones are named, not silently skipped',()=>{
+ // "Silvia Mockups\\Silvia Art Co Horizontal" chosen, PSDs directly inside it.
+ assert.equal(orientationFromFolder('mockup 19.psd','D:\\Silvia Mockups\\Silvia Art Co Horizontal'),'landscape');
+ assert.equal(orientationFromFolder('Silvia Art Co Horizontal/mockup 19.psd','D:\\Silvia Mockups'),'landscape');
+ // The folder nearest the file wins.
+ assert.equal(orientationFromFolder('Vertical/a.psd','D:\\Mockups\\Horizontal'),'portrait');
+ assert.equal(orientationFromFolder('a.psd','D:\\Silvia Mockups'),'');
+ assert.match(read('src/mockup-api.mjs'),/syncPcTemplates\(body\.files,\{mockupFolder:await getPcMockupFolder\(\)\}\)/);
+ assert.match(read('src/mockup-generator-client.js'),/not sorted yet and left out: /);
+});

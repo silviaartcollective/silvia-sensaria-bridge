@@ -540,6 +540,12 @@ async function loadTemplates(){
   box.append(row);
  }
  if(!templates.length)box.append(create('p','No PSD templates saved yet. Upload vertical or horizontal PSDs above.'));
+ // Folder PSDs without an orientation yet are left out of batches: say which.
+ const unsorted=templates.filter(t=>t.source==='pc'&&t.status==='ready'&&t.orientation==='unclassified');
+ if(detectedArtworkOrientation&&unsorted.length)
+  message(unsorted.length+' PSD'+(unsorted.length===1?'':'s')+' in the mockup folder '+(unsorted.length===1?'is':'are')+
+   ' not sorted yet and left out: '+unsorted.slice(0,6).map(t=>t.localPath).join(', ')+(unsorted.length>6?'…':'')+
+   '. Put them in a Vertical, Horizontal or Square folder, or choose their orientation in the saved templates list.',true);
  if(detectedArtworkOrientation&&!templates.some(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)))
   message('No '+detectedArtworkOrientation+'-compatible templates yet. Upload them or classify saved PSDs before generating.',true);
 }
