@@ -85,7 +85,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
         <div class="uploadbox">
           <div>
             <strong>Artwork + listing media</strong>
-            <div class="uploadmeta">The app assigns the next SAC artwork ID, renames the files from that ID, uploads them to private Cloudflare R2, and queues 2:3, 3:4, 4:5, and 11:14 production crops for the Silvia workstation.</div>
+            <div class="uploadmeta">Panoramic artwork (1.85:1 or wider) gets a separate 2:1 / 3:1 Etsy size set automatically. The app assigns the next SAC artwork ID, renames the files from that ID, uploads them to private Cloudflare R2, and queues 2:3, 3:4, 4:5, and 11:14 production crops for the Silvia workstation.</div>
           </div>
           <div class="twocol">
             <label>Artwork ID <span class="hint">assigned automatically</span><input id="artwork_id" class="mono" readonly placeholder="Assigned after upload"></label>
