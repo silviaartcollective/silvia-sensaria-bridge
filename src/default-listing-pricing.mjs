@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-const validOrientation = new Set(['portrait','landscape','square']);
+const validOrientation = new Set(['portrait','landscape','square','panoramic']);
 const validProductKey = /^(P|C|FC)\|[0-9]{1,2}x[0-9]{1,2}\|(NONE|BLK|WHT|NAT|BRN)$/;
 const round=value=>Number(Number(value).toFixed(2));
 function offeringPrice(v){
