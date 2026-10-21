@@ -34,6 +34,7 @@ import {assertSeoShopSection} from './seo-shop-section.mjs';
 import {starterDraftMedia} from './draft-starter-media.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
+import {planDefaultTemplateInventory,templateInventoryFingerprint} from './default-listing-pricing.mjs';
 import { renderListingConverterPage } from './listing-converter-page.mjs';
 import {renderListingsPage} from './listings-page.mjs';
 import {
@@ -3849,6 +3850,156 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
     }
+  }
+
+
+  // Universal default template preview/apply. Every listing is re-read from
+  // Etsy and cross-checked against the linked R2 master before any inventory PUT.
+  async function defaultTemplatePlan(session,listingId){
+    const auth={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+    const [listing,inventory,map]=await Promise.all([
+      getListing({listingId,...auth}),
+      getListingInventory({listingId,...auth}),
+      loadListingConverterMap()
+    ]);
+    if(Number(listing.shop_id)!==Number(session.shop.shop_id))
+      throw Error('This listing does not belong to the connected Etsy shop.');
+    const skuList=(inventory.products||[]).map(p=>String(p.sku||'')).filter(Boolean);
+    const link=await resolveListingArtwork({
+      listingId,listing:{...listing,skus:skuList},map
+    });
+    if(!link?.artworkId||!link.manifest?.master?.key)
+      throw Error('Listing is not a verified Product Creator or converted artwork template.');
+    const master=link.manifest,orientation=String(master.orientation||'').toLowerCase();
+    if(!['portrait','landscape','square'].includes(orientation))
+      throw Error('Stored artwork orientation is not verified.');
+    if(!(await artworkObjectExists(master.master.key)))
+      throw Error('Linked artwork master is missing from R2.');
+    const readinessStateId=readinessStateFromInventory(inventory);
+    const plan=planDefaultTemplateInventory({
+      inventory,artworkId:link.artworkId,orientation,catalog:products,
+      readinessStateId,buildInventory:buildOwnSilviaInventory
+    });
+    const context={
+      listingId:Number(listingId),artworkId:link.artworkId,
+      orientation,masterKey:String(master.master.key)
+    };
+    return {listing,inventory,plan,
+      fingerprint:templateInventoryFingerprint(inventory,context)};
+  }
+  if(req.method==='POST'&&url.pathname==='/api/pricing/templates-preview'){
+    if(!requireAdminApi(req,res))return;
+    if(!String(req.headers['content-type']||'').includes('application/json'))
+      return sendJson(res,415,{ok:false,error:'JSON request required.'});
+    try{
+      const session=await getEtsySession({forceRefresh:true});
+      if(!String(session.scope||'').split(/\s+/).includes('listings_r'))
+        return sendJson(res,403,{ok:false,error:'Reconnect Etsy with listings_r permission.'});
+      const body=await readJsonBody(req);
+      const requested=(Array.isArray(body.listingIds)?body.listingIds:[])
+        .map(Number).filter(id=>Number.isSafeInteger(id)&&id>0);
+      if(requested.length>30)throw Error('Preview at most 30 specific listings at once.');
+      const all=await allShopListingsForPriceSync(session);
+      const selected=requested.length?
+        all.filter(x=>requested.includes(Number(x.listing_id))):
+        all.slice(0,250);
+      const rows=[];
+      for(const listing of selected){
+        const id=Number(listing.listing_id);
+        try{
+          const {plan,fingerprint}=await defaultTemplatePlan(session,id);
+          rows.push({
+            listingId:id,title:String(listing.title||''),state:String(listing.state||''),
+            orientation:plan.orientation,artworkId:plan.artworkId,
+            fingerprint,canUpdate:Boolean(plan.changed),
+            previousVariantCount:plan.previousVariantCount,
+            targetVariantCount:plan.targetVariantCount,
+            enabledVariantCount:plan.enabledVariantCount,
+            added:plan.added,removed:plan.removed,repriced:plan.repriced
+          });
+        }catch(error){
+          if(requested.length)rows.push({
+            listingId:id,title:String(listing.title||''),canUpdate:false,
+            error:String(error.message||error)
+          });
+          // "all" mode skips unlinked and nonstandard Etsy listings entirely.
+        }
+      }
+      return sendJson(res,200,{
+        ok:true,shopListingCount:all.length,inspectedCount:selected.length,
+        partialScan:!requested.length&&all.length>250,templates:rows,
+        templatesNeedingChanges:rows.filter(x=>x.canUpdate).length,
+        changesApplied:false
+      });
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
+  }
+  if(req.method==='POST'&&url.pathname==='/api/pricing/templates-apply'){
+    if(!requireAdminApi(req,res))return;
+    if(!String(req.headers['content-type']||'').includes('application/json'))
+      return sendJson(res,415,{ok:false,error:'JSON request required.'});
+    const origin=String(req.headers.origin||''),host=String(req.headers.host||'');
+    if(!host||(origin&&origin!==(String(req.headers['x-forwarded-proto']||'https')+'://'+host))||
+       req.headers['sec-fetch-site']==='cross-site')
+      return sendJson(res,403,{ok:false,error:'Cross-site update blocked.'});
+    try{
+      const body=await readJsonBody(req);
+      if(body.confirm!=='REBUILD SILVIA TEMPLATES')
+        return sendJson(res,400,{ok:false,error:'Explicit template rebuild confirmation is required.'});
+      const selected=Array.isArray(body.templates)?body.templates:[];
+      if(!selected.length||selected.length>20)throw Error('Select 1–20 templates per update.');
+      const seen=new Set();
+      for(const row of selected){
+        if(!Number.isSafeInteger(Number(row.listingId))||Number(row.listingId)<1||
+           !/^[0-9a-f]{64}$/.test(String(row.fingerprint||'')))
+          throw Error('Invalid listing ID or preview fingerprint.');
+        if(seen.has(Number(row.listingId)))throw Error('Duplicate template selection.');
+        seen.add(Number(row.listingId));
+      }
+      const session=await getEtsySession({forceRefresh:true});
+      const scopes=new Set(String(session.scope||'').split(/\s+/).filter(Boolean));
+      if(!scopes.has('listings_r')||!scopes.has('listings_w'))
+        return sendJson(res,403,{ok:false,error:'Reconnect Etsy with listings_r and listings_w permissions.'});
+      const shop=await allShopListingsForPriceSync(session);
+      const owned=new Set(shop.map(x=>Number(x.listing_id)));
+      const results=[];
+      for(const selectedRow of selected){
+        const id=Number(selectedRow.listingId);
+        if(!owned.has(id)){
+          results.push({listingId:id,error:'Listing not found among active/draft shop listings.'});continue;
+        }
+        try{
+          const before=await defaultTemplatePlan(session,id);
+          if(before.fingerprint!==selectedRow.fingerprint)
+            throw Error('Listing inventory or artwork changed since preview; preview again.');
+          if(!before.plan.changed){
+            results.push({listingId:id,updated:false,note:'Already matches the current template.'});continue;
+          }
+          const auth={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+          await withEtsyListingRetry(()=>updateListingInventory({
+            listingId:id,inventory:before.plan.inventory,...auth
+          }));
+          const after=await getListingInventory({listingId:id,...auth});
+          const expected=new Map(before.plan.inventory.products
+            .filter(p=>p.offerings?.[0]?.is_enabled)
+            .map(p=>[String(p.sku||''),moneyAmount(p.offerings[0].price)]));
+          const actual=new Map((after.products||[])
+            .filter(p=>(p.offerings||[]).some(o=>o.is_enabled))
+            .map(p=>[String(p.sku||''),moneyAmount(p.offerings?.[0]?.price)]));
+          if(expected.size!==actual.size||[...expected].some(([sku,price])=>!actual.has(sku)||
+            Math.abs(Number(actual.get(sku))-Number(price))>0.005))
+            throw Error('Etsy inventory was updated but not all expected SKUs/prices could be verified.');
+          results.push({
+            listingId:id,updated:true,verified:true,orientation:before.plan.orientation,
+            addedVariants:before.plan.added.length,removedVariants:before.plan.removed.length,
+            repricedVariants:before.plan.repriced.length
+          });
+        }catch(error){results.push({listingId:id,error:String(error.message||error)});}
+      }
+      return sendJson(res,200,{ok:true,results,requested:selected.length,
+        verifiedUpdated:results.filter(x=>x.verified).length,
+        failed:results.filter(x=>x.error).length
+      });
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
   }
 
   if (req.method === 'GET' && url.pathname === '/api/pricing/listings-preview') {
