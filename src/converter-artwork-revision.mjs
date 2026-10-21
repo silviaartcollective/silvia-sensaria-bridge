@@ -5,7 +5,7 @@ import { loadArtworkManifest,saveArtworkManifest } from './artwork-storage.mjs';
 import { createCropJob,getCropJob,readCropJobStore } from './crop-job-store.mjs';
 import { checkedRevisionAssets } from './artwork-revision.mjs';
 import {inspectStoredMasterGeometry} from './master-geometry.mjs';
-import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey} from './artwork-ratios.mjs';
+import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey,fulfillmentRatiosForOrientation} from './artwork-ratios.mjs';
 import { getJsonObject,putJsonObject,artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl,
   copyArtworkObject,deleteArtworkObject,listArtworkObjectKeys,listArtworkObjects } from './r2.mjs';
 
@@ -187,12 +187,12 @@ export async function assertConverterArtworkReady({shopId,listingId,revision,art
 }
 // Staged uploads and crops are disposable; successful artwork always uses
 // artworks/ID/master.ext + artworks/ID/fulfillment/{ratio}.jpg + manifest.json.
-export function canonicalReconversionKeys(artworkId,extension){
+export function canonicalReconversionKeys(artworkId,extension,orientation='portrait'){
  const id=artId(artworkId),ext=String(extension||'').toLowerCase();
  if(!/^(jpg|jpeg|png|webp|tif|tiff)$/.test(ext))throw Error('Invalid master extension.');
  return {
   master:'artworks/'+id+'/master.'+ext,
-  ratios:Object.fromEntries(FULFILLMENT_RATIOS.map(r=>[r,fulfillmentRatioObjectKey(id,r)]))
+  ratios:Object.fromEntries(fulfillmentRatiosForOrientation(orientation).map(r=>[r,fulfillmentRatioObjectKey(id,r)]))
  };
 }
 const pendingRoot=(record)=>'artworks/'+artId(record.artworkId)+'/.reconvert/'+record.revision+'/';
@@ -237,10 +237,10 @@ export async function activateConverterArtworkRevision({shopId,listingId,revisio
  manifest=await loadArtworkManifest(checked.artworkId);
  if(manifest.master?.key!==checked.originalMasterKey)
   throw Error('Original master changed before replacement. Nothing was deleted.');
- const ext=checked.filename.split('.').pop().toLowerCase(),dest=canonicalReconversionKeys(checked.artworkId,ext);
+ const ext=checked.filename.split('.').pop().toLowerCase(),dest=canonicalReconversionKeys(checked.artworkId,ext,checked.orientation);
  const sources=[
   {from:checked.masterKey,to:dest.master},
-  ...FULFILLMENT_RATIOS.map(r=>({from:assets[r].key,to:dest.ratios[r]}))
+  ...fulfillmentRatiosForOrientation(checked.orientation).map(r=>({from:assets[r].key,to:dest.ratios[r]}))
  ];
  // Canonical assets are backed up only while promotion is in progress.
  let backups=Array.isArray(checked.promotionBackups)?checked.promotionBackups:null;
@@ -266,7 +266,7 @@ export async function activateConverterArtworkRevision({shopId,listingId,revisio
  try{
   for(const pair of sources)await copyArtworkObject(pair.from,pair.to);
   const updatedAt=new Date().toISOString();
-  const ratios=Object.fromEntries(FULFILLMENT_RATIOS.map(r=>[r,{
+  const ratios=Object.fromEntries(fulfillmentRatiosForOrientation(checked.orientation).map(r=>[r,{
    ...assets[r],key:dest.ratios[r],sourceMasterKey:dest.master
   }]));
   const next={
