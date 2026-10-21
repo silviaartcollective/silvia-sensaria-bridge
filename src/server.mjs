@@ -55,6 +55,7 @@ import {
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
 import {renderInternationalShippingPage} from './international-shipping-page.mjs';
 import {internationalShippingPreview,listingWorstCaseShippingPreview} from './international-shipping-planner.mjs';
+import {auditListingDestination} from './international-listing-audit.mjs';
 import { pricingCatalogForZone, pricingCatalogForMarket, publicShippingPricingConfig } from './pricing.mjs';
 import { scanSupplierComparison } from './supplier-comparison.mjs';
 import {startSupplierComparisonJob,getSupplierComparisonJob} from './supplier-comparison-jobs.mjs';
@@ -3020,6 +3021,39 @@ const server = http.createServer(async (req, res) => {
     }catch(error){
       return sendJson(res,400,{ok:false,error:String(error.message||error)});
     }
+  }
+
+  // Audits one existing listing's enabled Etsy SKUs in read-only mode. A preview
+  // cannot create/update shipping profiles or change Etsy buyer charges.
+  if(req.method==='GET'&&url.pathname==='/api/international-shipping/listing-audit'){
+    if(!requireAdminApi(req,res))return;
+    try{
+      const id=Number(url.searchParams.get('listingId'));
+      if(!Number.isSafeInteger(id)||id<1)
+        return sendJson(res,400,{ok:false,error:'Provide an existing Etsy listing ID.'});
+      const session=await getEtsySession();
+      if(!String(session.scope||'').split(/\\s+/).includes('listings_r'))
+        return sendJson(res,403,{ok:false,error:'Etsy listings_r scope is required.'});
+      const auth={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+      const listing=await getListing({listingId:id,...auth});
+      if(Number(listing.shop_id)!==Number(session.shop.shop_id))
+        return sendJson(res,403,{ok:false,error:'This listing belongs to a different Etsy shop.'});
+      const inventory=await getListingInventory({listingId:id,...auth});
+      const maxSupplierCostUsd=Number(url.searchParams.get('maxSupplierCostUsd')??150);
+      const feePercent=Number(url.searchParams.get('feePercent')??12);
+      const bufferPercent=Number(url.searchParams.get('bufferPercent')??15);
+      const usdToShopCurrency=url.searchParams.get('usdToShopCurrency')||null;
+      // Do not trust a previously entered exchange rate as today's FX.
+      const audit=auditListingDestination({
+        inventory,country:url.searchParams.get('country')||'US',
+        state:url.searchParams.get('state')||'',feePercent,bufferPercent,
+        maxSupplierCostUsd,shopCurrency:session.shop.currency_code||'',
+        usdToShopCurrency
+      });
+      return sendJson(res,200,{ok:true,readOnly:true,listingId:id,
+        title:String(listing.title||'').slice(0,140),
+        currentShippingProfileId:listing.shipping_profile_id||null,audit});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}
   }
 
   if (req.method === 'GET' && url.pathname === '/shipping-profile') {
