@@ -93,6 +93,19 @@ export function renderPricingPage() {
   </div>
   <div class="sync-list" id="price-sync-list"></div>
 </section>
+<section class="card" id="universal-pricing-updater">
+<h2>Universal default listing template updater</h2>
+<p class="sub">Synchronize vertical, horizontal, and square Etsy templates to the app's current Size × Product - Style variations, supplier SKUs, and prices. Existing media, SEO, shipping profile and shop section remain unchanged.</p>
+<div class="controls"><label>Listing IDs (optional)
+<input id="tpl-ids" style="min-width:310px;padding:11px;border:1px solid #dfdcd4;border-radius:9px" placeholder="Leave blank for all linked templates, or enter IDs separated by commas">
+</label><button class="btn secondary" id="tpl-preview" type="button">Preview default templates</button>
+<button class="btn secondary" id="tpl-select-all" type="button" disabled>Select all needing updates</button>
+<button class="btn" id="tpl-apply" type="button" disabled>Update selected templates</button>
+</div>
+<div id="tpl-status" class="status" style="margin:12px 0">No Etsy template changes have been made. Preview before selecting listings.</div>
+<div id="tpl-list" class="sync-list"></div>
+<p class="muted">For linked default templates only. Applies changes to the full variation inventory after a second confirmation. Unlinked/custom listings are excluded. Published Etsy sale discounts and currency conversion are applied by Etsy separately.</p>
+</section>
 </main>
 </div>
 
@@ -323,6 +336,140 @@ applyPrices.addEventListener('click',async()=>{
   }finally{
     previewPrices.disabled=false;
   }
+});
+
+
+const tplPreview=document.getElementById('tpl-preview');
+const tplApply=document.getElementById('tpl-apply');
+const tplAll=document.getElementById('tpl-select-all');
+const tplList=document.getElementById('tpl-list');
+const tplStatus=document.getElementById('tpl-status');
+let templatePreviewRows=[];
+function templateSelections(){
+ return Array.from(tplList.querySelectorAll('input[name="default-template"]:checked')).map(box=>{
+  const row=templatePreviewRows.find(item=>String(item.listingId)===box.value);
+  return row?{listingId:row.listingId,fingerprint:row.fingerprint}:null;
+ }).filter(Boolean);
+}
+function refreshTemplateButtons(){
+ const checked=templateSelections();
+ tplApply.disabled=checked.length===0;
+ tplAll.disabled=!templatePreviewRows.some(item=>item.canUpdate);
+ tplApply.textContent=checked.length?'Update selected templates ('+checked.length+')':'Update selected templates';
+}
+function drawTemplatePreview(data){
+ templatePreviewRows=data.templates||[];
+ tplList.replaceChildren();
+ tplStatus.textContent=String(data.shopListingCount||0)+' Etsy listings scanned or found; '+
+   String(templatePreviewRows.length)+' linked templates inspected; '+
+   String(data.templatesNeedingChanges||0)+' need variation/price updates.'+
+   (data.partialScan?' First 250 listings scanned; enter specific IDs to inspect more.':'');
+ for(const item of templatePreviewRows){
+  const card=document.createElement('div');card.className='sync-item';
+  const label=document.createElement('label');label.style.display='flex';label.style.gap='8px';label.style.alignItems='flex-start';
+  const check=document.createElement('input');check.type='checkbox';check.name='default-template';check.value=String(item.listingId);
+  check.disabled=!item.canUpdate;check.checked=false;
+  check.addEventListener('change',refreshTemplateButtons);
+  const info=document.createElement('span');
+  const title=document.createElement('b');
+  title.textContent='#'+item.listingId+' · '+String(item.title||'Untitled')+
+    (item.orientation?' · '+item.orientation:'');
+  info.appendChild(title);
+  const details=document.createElement('div');
+  details.style.marginTop='5px';
+  details.textContent=item.error?String(item.error):item.canUpdate?
+    'Enabled: '+item.enabledVariantCount+
+    ' · New SKUs: '+item.added.length+
+    ' · Removed SKUs: '+item.removed.length+
+    ' · Prices changed: '+item.repriced.length+
+    ' · Total variations: '+item.previousVariantCount+' → '+item.targetVariantCount:
+    'Already matches this orientation’s default template.';
+  info.appendChild(details);
+  if(item.canUpdate){
+   const examples=document.createElement('div');
+   examples.className='muted';
+   examples.style.marginTop='4px';
+   examples.textContent='Example changes: '+
+     [...item.added.slice(0,3),...item.repriced.slice(0,2).map(r=>r.sku+' 
+  rows.innerHTML='<tr><td colspan="17">Loading…</td></tr>';
+
+  try{
+    const r=await fetch('/api/pricing?market='+encodeURIComponent(market.value||'CA'),{cache:'no-store'});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Pricing failed');
+    render(d);
+  }catch(error){
+    rows.innerHTML='<tr><td colspan="17" class="bad">'+String(error.message||error)+'</td></tr>';
+  }
+}
+
+market.addEventListener('change',load);
+load();
+</script>
+</body>
+</html>`;
+}
++r.fromUsd+' → 
+  rows.innerHTML='<tr><td colspan="17">Loading…</td></tr>';
+
+  try{
+    const r=await fetch('/api/pricing?market='+encodeURIComponent(market.value||'CA'),{cache:'no-store'});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Pricing failed');
+    render(d);
+  }catch(error){
+    rows.innerHTML='<tr><td colspan="17" class="bad">'+String(error.message||error)+'</td></tr>';
+  }
+}
+
+market.addEventListener('change',load);
+load();
+</script>
+</body>
+</html>`;
+}
++r.toUsd)].join(' · ');
+   info.appendChild(examples);
+  }
+  label.append(check,info);card.appendChild(label);tplList.appendChild(card);
+ }
+ refreshTemplateButtons();
+}
+async function previewTemplates(){
+ tplPreview.disabled=true;tplApply.disabled=true;tplStatus.textContent='Checking linked Etsy templates and current prices…';
+ try{
+  const raw=document.getElementById('tpl-ids').value.trim();
+  const ids=raw?raw.split(/[,;\s]+/).filter(Boolean):[];
+  if(ids.length>30||ids.some(v=>!/^[1-9]\d*$/.test(v)))throw Error('Use up to 30 valid listing IDs per preview.');
+  const res=await fetch('/api/pricing/templates-preview',{method:'POST',
+   headers:{'content-type':'application/json'},body:JSON.stringify({listingIds:ids.map(Number)})});
+  const data=await res.json();if(!res.ok||!data.ok)throw Error(data.error||'Template preview failed.');
+  drawTemplatePreview(data);
+ }catch(err){tplStatus.textContent='Template preview failed: '+String(err.message||err);tplList.replaceChildren();templatePreviewRows=[];refreshTemplateButtons();}
+ finally{tplPreview.disabled=false;}
+}
+tplPreview.addEventListener('click',previewTemplates);
+tplAll.addEventListener('click',()=>{
+ tplList.querySelectorAll('input[name="default-template"]:not(:disabled)').forEach(box=>box.checked=true);
+ refreshTemplateButtons();
+});
+tplApply.addEventListener('click',async()=>{
+ const templates=templateSelections();if(!templates.length)return;
+ if(!confirm('Rebuild the complete Size × Product - Style inventory for '+templates.length+
+ ' selected listing(s)? This may add or remove variations. Artwork, SEO, shipping profiles and media stay unchanged. Confirm to submit to Etsy.'))return;
+ tplApply.disabled=true;tplPreview.disabled=true;tplStatus.textContent='Updating and verifying selected Etsy templates…';
+ try{
+  const res=await fetch('/api/pricing/templates-apply',{method:'POST',
+   headers:{'content-type':'application/json'},
+   body:JSON.stringify({confirm:'REBUILD SILVIA TEMPLATES',templates})});
+  const data=await res.json();if(!res.ok||!data.ok)throw Error(data.error||'Etsy template update failed.');
+  await previewTemplates();
+  const fails=(data.results||[]).filter(row=>row.error);
+  tplStatus.textContent=String(data.verifiedUpdated||0)+' verified template(s) updated. '+
+   String(data.failed||0)+' failed.'+
+   (fails.length?' Errors: '+fails.map(v=>'#'+v.listingId+': '+v.error).join(' | '):'');
+ }catch(err){tplStatus.textContent='Template update failed: '+String(err.message||err);}
+ finally{tplPreview.disabled=false;refreshTemplateButtons();}
 });
 
 async function load(){
