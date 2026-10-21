@@ -38,6 +38,7 @@ The **same running worker** processes two queues: production artwork crops and P
 - Each preparation is checked against Photoshop's composite using the Smart Object's original pixels. If the template cannot be reproduced exactly, that PSD fails with the reason; a wrong mockup is never produced.
 - After that, each mockup is a warp and composite, typically about a second plus the R2 upload.
 - **It uses the whole PC.** Several mockups render at once, one per render thread: half the CPU cores, between 2 and 6. Production crops run alongside instead of making mockups wait. Only one first-time template preparation runs at a time, because it reads the whole PSD into memory. Set `POD_MOCKUP_CONCURRENCY` to change the number of parallel renders.
+- Close-ups: when the artwork Smart Object reaches past the canvas and its mask or frame shows only part of it, the artwork's own corner or edge goes where the frame opening has one, at the template's zoom (v4.7.4). A corner close-up shows the corner of the painting, not its middle.
 - If a PSD has several visible Smart Objects, the top one in the Layers panel is the artwork unless another one is clearly it (a placeholder name, or a frame ring or texture on top) (v4.7.1). To use another one, choose the artwork layer in the Product Creator; the choice is saved with the template.
 
 **Template requirements:**
@@ -88,4 +89,4 @@ From **v4.6.0** the worker updates itself. Every heartbeat reply from the Silvia
 3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
 4. Run `start-worker.cmd`.
 
-The dashboards should show **Crop + Mockup Worker v4.7.3**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+The dashboards should show **Crop + Mockup Worker v4.7.4**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
