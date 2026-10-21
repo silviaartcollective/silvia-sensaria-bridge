@@ -7,14 +7,17 @@ import {
  templateMatchesArtwork,validateTemplateSelection,artworkOrientationFromPixels
 } from '../src/mockup-orientation.mjs';
 import {orientationFromFolder} from '../src/mockup-generator.mjs';
+import {listingLayoutForManifest} from '../src/panoramic-layout.mjs';
 import * as local from '../worker/local-templates.mjs';
 
 const read=file=>readFileSync(new URL('../'+file,import.meta.url),'utf8');
 
-test('an artwork about twice as wide as tall or wider is panoramic for mockups, still landscape for prints',()=>{
+test('an artwork 1.85:1 or wider is panoramic for mockups, still landscape for crops',()=>{
  assert.equal(mockupOrientationFromPixels(6000,2000),'panoramic');
  assert.equal(mockupOrientationFromPixels(3600,1800),'panoramic');
  assert.equal(mockupOrientationFromPixels(3800,2000),'panoramic');
+ assert.equal(mockupOrientationFromPixels(3740,2000),'panoramic');
+ assert.equal(mockupOrientationFromPixels(3640,2000),'landscape');
  assert.equal(mockupOrientationFromPixels(1920,1080),'landscape');
  assert.equal(mockupOrientationFromPixels(3000,2000),'landscape');
  assert.equal(mockupOrientationFromPixels(2000,6000),'portrait');
@@ -24,6 +27,11 @@ test('an artwork about twice as wide as tall or wider is panoramic for mockups, 
  assert.equal(mockupOrientationOf({orientation:'landscape',master:{width:7200,height:2400}}),'panoramic');
  assert.equal(mockupOrientationOf({orientation:'landscape',master:{width:6000,height:4000}}),'landscape');
  assert.equal(mockupOrientationOf({orientation:'portrait',master:{}}),'portrait');
+ // Exactly the artworks whose Etsy listing gets the panoramic sizes get panoramic mockups.
+ for(const [width,height] of [[3700,2000],[3699,2000],[3740,2000],[3800,2000],[6000,2000],[3000,2000],[2000,3000],[2000,2000]]){
+  const manifest={orientation:artworkOrientationFromPixels(width,height),master:{width,height}};
+  assert.equal(mockupOrientationOf(manifest)==='panoramic',listingLayoutForManifest(manifest)==='panoramic',width+'×'+height);
+ }
 });
 
 test('panoramic artwork gets panoramic templates only, and horizontal artwork never gets them',()=>{
@@ -52,10 +60,11 @@ test('the PC worker tells a panoramic template from its artwork layer, with the 
  assert.equal(local.PANORAMIC_RATIO,PANORAMIC_RATIO);
  assert.equal(local.orientationFromShape({width:3000,height:1000}),'panoramic');
  assert.equal(local.orientationFromShape({width:1900,height:1000}),'panoramic');
+ assert.equal(local.orientationFromShape({width:1850,height:1000}),'panoramic');
  assert.equal(local.orientationFromShape({width:1800,height:1000}),'landscape');
  assert.equal(local.orientationFromShape({width:1000,height:3000}),'portrait');
  assert.equal(local.orientationFromShape({width:1000,height:1020}),'square');
- assert.match(read('worker/api.mjs'),/WORKER_VERSION = '4\.7\.2'/);
+ assert.match(read('worker/api.mjs'),/WORKER_VERSION = '4\.7\.3'/);
 });
 
 test('the Product Creator detects panoramic artwork and offers the Panoramic orientation',()=>{
@@ -65,7 +74,7 @@ test('the Product Creator detects panoramic artwork and offers the Panoramic ori
  vm.runInNewContext(client.match(/const PANORAMIC_RATIO=[^;]+;/)[0]+pick('mockupOrientation')+pick('templateFitsOrientation')+
   ';this.ratio=PANORAMIC_RATIO;this.of=mockupOrientation;this.fits=templateFitsOrientation;',context);
  assert.equal(context.ratio,PANORAMIC_RATIO);
- for(const [w,h] of [[6000,2000],[3800,2000],[1920,1080],[2000,6000],[3000,3000]])
+ for(const [w,h] of [[6000,2000],[3800,2000],[3740,2000],[3640,2000],[1920,1080],[2000,6000],[3000,3000]])
   assert.equal(context.of(w,h),mockupOrientationFromPixels(w,h),w+'×'+h);
  assert.equal(context.fits({orientation:'panoramic'},'panoramic'),true);
  assert.equal(context.fits({orientation:'landscape'},'panoramic'),false);

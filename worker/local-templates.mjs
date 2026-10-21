@@ -45,9 +45,9 @@ export function mockupFolderFile(folder,relativePath){
 export const localPsdVersion=(relativePath,mtimeMs)=>'pc:'+relativePath+'@'+Math.round(Number(mtimeMs)||0);
 
 // Orientation from the artwork layer's shape: within 4% of square is square,
-// and about twice as wide as tall or wider is panoramic (the same ratio as the
-// shop's PANORAMIC_RATIO in src/mockup-orientation.mjs).
-export const PANORAMIC_RATIO=1.9;
+// and 1.85:1 or wider is panoramic (the shop's PANORAMIC_RATIO in
+// src/mockup-orientation.mjs).
+export const PANORAMIC_RATIO=1.85;
 export function orientationFromShape({width,height}){
   const ratio=Number(width)/Number(height);
   if(!(ratio>0))return 'unclassified';

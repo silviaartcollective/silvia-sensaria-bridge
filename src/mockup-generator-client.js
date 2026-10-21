@@ -16,9 +16,9 @@ let initialLoad=Promise.resolve(),selectionVersion=0,attachTimer=null,attaching=
 let previewRenderKey='';
 let detectedArtworkOrientation=null,lastAutoOrientation=null;
 let orientationDetection=Promise.resolve();
-// About twice as wide as tall or wider is panoramic (PANORAMIC_RATIO in
-// src/mockup-orientation.mjs): such artwork gets panoramic templates only.
-const PANORAMIC_RATIO=1.9;
+// 1.85:1 or wider is panoramic (PANORAMIC_RATIO in src/mockup-orientation.mjs,
+// the same as the Etsy panoramic size set): such artwork gets panoramic templates only.
+const PANORAMIC_RATIO=1.85;
 function mockupOrientation(width,height){
  if(width===height)return 'square';
  return width<height?'portrait':width/height>=PANORAMIC_RATIO?'panoramic':'landscape';
