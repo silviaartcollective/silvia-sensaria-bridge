@@ -497,6 +497,7 @@ async function saveOrganizer(){
 }
 async function loadTemplates(){
  templates=(await api('templates')).templates;
+ showPcFolderStatus(lastWorker);
  const selected=new Set([...$('mg-templates').querySelectorAll('input.mg-template-choice:checked')].map(x=>x.value));
  if(detectedArtworkOrientation&&lastAutoOrientation!==detectedArtworkOrientation){
   selected.clear();
@@ -695,7 +696,12 @@ function showPcFolderStatus(worker){
  if(!worker?.online){status.textContent='Saved. The PC worker reads the folder once it is online.';return}
  if(!found||found.path!==pcFolderSaved){status.textContent='Saved. The PC worker picks it up within a few seconds.';return}
  if(found.error){status.classList.add('warn');status.textContent=found.error+' Check the path on the PC.';return}
- status.textContent='The PC worker sees '+found.count+' PSD'+(found.count===1?'':'s')+' in this folder; new and edited ones appear below within 15 seconds.';
+ // How the PSDs were sorted: by their Vertical, Horizontal or Square subfolder.
+ const pc=templates.filter(t=>t.source==='pc'&&t.status==='ready'),count=kind=>pc.filter(t=>t.orientation===kind).length;
+ const sorted=[[count('portrait'),'vertical'],[count('landscape'),'horizontal'],[count('square'),'square'],
+  [count('unclassified'),'not sorted yet']].filter(([n])=>n).map(([n,label])=>n+' '+label).join(', ');
+ status.textContent='The PC worker sees '+found.count+' PSD'+(found.count===1?'':'s')+' in this folder'+
+  (sorted?' ('+sorted+')':'')+'. New and edited ones appear below within 15 seconds.';
 }
 async function savePcFolder(){
  pcFolderSaved=(await api('pc-folder','POST',{folder:$('mg-pc-folder').value})).folder||'';

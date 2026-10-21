@@ -5,8 +5,8 @@ return `
  <div class="uploadmeta">Optional: choose only the PSD templates you need, then queue them on your PC. You can create the Etsy draft immediately without waiting for rendering. Keep the draft unpublished until its final mockups are ready.</div></div>
  <div class="uploadmeta"><label style="display:flex;flex-direction:row;align-items:flex-start;gap:8px"><input id="mg-auto-queue" type="checkbox" checked style="width:auto;margin-top:2px;flex:none"><span>Automatically generate every selected mockup after each master artwork uploads (about a second each). Then tick up to 20 for Etsy; the photo organizer shows which fit Etsy's 20 photos.</span></label></div>
  <div class="mg-pc-folder">
-  <label for="mg-pc-folder">Mockup folder on the PC <span class="hint">PSDs in it and its subfolders are used straight from the PC: no uploads, and edits are picked up automatically. Subfolders named Vertical, Horizontal or Square set the orientation.</span></label>
-  <div class="mg-pc-folder-row"><input id="mg-pc-folder" type="text" maxlength="300" placeholder="e.g. D:\Mockups\Silvia" spellcheck="false"><button class="btn secondary" type="button" id="mg-pc-folder-save">Save folder</button></div>
+  <label for="mg-pc-folder">Mockup folder on the PC <span class="hint">Put the PSDs in subfolders named Vertical, Horizontal and Square inside it (a PSD anywhere else gets its orientation from its artwork layer). They are used straight from the PC: no uploads, and edits are picked up automatically.</span></label>
+  <div class="mg-pc-folder-row"><input id="mg-pc-folder" type="text" maxlength="300" placeholder="e.g. D:\\Mockups\\Silvia" spellcheck="false"><button class="btn secondary" type="button" id="mg-pc-folder-save">Save folder</button></div>
   <div id="mg-pc-folder-status" class="uploadmeta" aria-live="polite"></div>
  </div>
  <div class="uploadrow">
