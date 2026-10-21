@@ -89,4 +89,6 @@ From **v4.6.0** the worker updates itself. Every heartbeat reply from the Silvia
 3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
 4. Run `start-worker.cmd`.
 
-The dashboards should show **Crop + Mockup Worker v4.7.4**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+**Uploads (v4.7.5):** a mockup is ready as soon as its 900 px preview and 2400 px Etsy copy are in R2. The full-size JPG (about three quarters of the bytes) follows once the worker has had nothing else to do for a few seconds, one at a time, so a home connection is not shared with it while a batch renders. Until it arrives, downloads give the Etsy copy. Pending full-size JPGs are kept in `%LOCALAPPDATA%\pod-worker-cache\full-jpg` and resumed after a restart or update.
+
+The dashboards should show **Crop + Mockup Worker v4.7.5**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.

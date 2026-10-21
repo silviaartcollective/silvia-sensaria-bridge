@@ -363,7 +363,7 @@ test('the PC worker renders PSDs itself: no Photoshop, Photopea or browser code 
 test('the worker renders several mockups at once, alongside crops, and claims the next PSD immediately',()=>{
  const source=readFileSync(new URL('../worker/index.mjs',import.meta.url),'utf8');
  const pool=readFileSync(new URL('../worker/render-pool.mjs',import.meta.url),'utf8');
- assert.match(source,/await Promise\.all\(\[cropLane\(\),mockupLane\(\),warmUpLane\(\),mockupFolderLane\(\)\]\);/);
+ assert.match(source,/await Promise\.all\(\[cropLane\(\),mockupLane\(\),warmUpLane\(\),mockupFolderLane\(\),fullUploadLane\(\)\]\);/);
  assert.match(source,/if\(running\.size>=RENDER_THREADS\)\{await Promise\.race\(running\);continue\}/);
  assert.match(source,/continue; \/\/ claim the next queued PSD straight away/);
  assert.match(pool,/new Worker\(new URL\('\.\/render-thread\.mjs', import\.meta\.url\)\)/);

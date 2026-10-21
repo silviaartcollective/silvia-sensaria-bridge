@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import {
  listMockupTemplates,getMockupTemplate,reserveMockupTemplate,confirmMockupTemplateUpload,updateMockupTemplate,
  deleteMockupTemplate,listMockupJobs,getMockupJob,createMockupJob,markMockupArtworkUploaded,
- controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,
+ controlMockupJob,claimMockupWork,completeMockupItem,failMockupItem,putMockupJob,markMockupFullUploaded,
  classifySmartObjects,mockupOutputKey,getMockupItemDownload,registerMockupTemplatePreview,deleteMockupOutput,
  hasActiveMockupLease,MOCKUP_LEASE_MS,updateMockupItemProgress,MOCKUP_ROOT,knownMockupArtworkTarget,withMockupJobLock,
  jpegDimensions,mockupPreviewKey,mockupEtsyKey,linkMockupArtwork,syncPcTemplates,setDetectedTemplateOrientation,
@@ -141,7 +141,10 @@ async function claimPayloads(jobId,claimed){
   return {item,template,templateUrl:template.source==='pc'?null:await signedArtworkUrl(template.key,3600),artworkUrl,
    output:{key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600),
     previewKey,previewUploadUrl:await signedArtworkUploadUrl(previewKey,'image/jpeg',3600),
-    etsyKey,etsyUploadUrl:await signedArtworkUploadUrl(etsyKey,'image/jpeg',3600)}};
+    etsyKey,etsyUploadUrl:await signedArtworkUploadUrl(etsyKey,'image/jpeg',3600),
+    // The worker may report the mockup ready once the preview and Etsy copy are
+    // in R2, and send the full-size JPG afterwards (worker/<job>/templates/<id>/full).
+    deferFull:true}};
  }));
 }
 function makeError(error){
@@ -150,7 +153,24 @@ function makeError(error){
  const msg=String(error?.message||error||'Unexpected error');
  return {ok:false,error:msg.slice(0,450)};
 }
-export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorized=()=>false,readJson,sendJson,onMockupCompleted=()=>{}}){
+// A JPG in R2, checked from its header only; returns its size.
+async function verifiedJpeg(key,maxBytes){
+ const start=await getArtworkObjectStart(key);
+ if(!start.totalSize||start.totalSize>maxBytes)throw Error('Invalid mockup JPG size.');
+ let metadata=jpegDimensions(start.body);
+ if(!metadata&&start.body[0]===255&&start.body[1]===216)
+  metadata=await sharp((await getArtworkObject(key)).body,{limitInputPixels:24_000_001}).metadata();
+ if(!metadata)throw Error('Output is not a JPEG.');
+ return checkedDimensions(metadata);
+}
+function checkedDimensions({width,height}){
+ if(!(Number.isSafeInteger(width)&&Number.isSafeInteger(height))||width*height>24_000_000||width<150||height<150)
+  throw Error('Export does not meet the 24MP JPG requirements.');
+ return {width,height};
+}
+// The size the worker rendered, until the full-size JPG itself is in R2.
+const reportedDimensions=value=>checkedDimensions({width:Number(value?.width),height:Number(value?.height)});
+export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorized=()=>false,readJson,sendJson,onMockupCompleted=()=>{},onMockupFullUploaded=()=>{}}){
  if(!url.pathname.startsWith('/api/mockups/'))return false;
  if(!authenticated(req,res))return true;
  if(req.method!=='GET'){
@@ -219,6 +239,19 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     const body=await readJson(req);
     const template=await setDetectedTemplateOrientation(parts[2],str(body.orientation),body.squareCompatible===true);
     return send(200,{template:{id:template.id,orientation:template.orientation}}),true;
+   }
+   // The full-size JPG of a mockup already reported ready: a fresh upload URL
+   // ("url"), then its check ("done"). A regenerated or deleted mockup answers
+   // pending:false and the worker drops that file.
+   if(req.method==='POST'&&parts.length===5&&parts[2]==='templates'&&parts[4]==='full'&&isId(parts[1])&&isId(parts[3])){
+    const body=await readJson(req),key=str(body.outputKey);
+    const item=(await getMockupJob(parts[1])).templates.find(x=>x.id===parts[3]);
+    if(item?.status!=='completed'||item.outputKey!==key||!item.fullPending)return send(200,{pending:false}),true;
+    if(body.action==='url')return send(200,{pending:true,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg',3600)}),true;
+    const done=await markMockupFullUploaded(parts[1],parts[3],key,await verifiedJpeg(key,60*1024*1024));
+    if(done)void Promise.resolve().then(()=>onMockupFullUploaded(done)).catch(
+     error=>console.error('Full-size mockup notification failed:',error));
+    return send(200,{pending:false,done:!!done}),true;
    }
    if(req.method==='POST'&&parts.length===5&&parts[2]==='templates'&&parts[4]==='progress'&&isId(parts[1])&&isId(parts[3])){
     const body=await readJson(req);
@@ -358,28 +391,25 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     if(!body.visibilityVerified||!body.mappingVerified||!body.artworkReplaced)
      throw Error('The artwork replacement, target Smart Object, and original layer visibility must be verified.');
     // Only the JPEG header is read: downloading the full 24MP JPG from R2 on
-    // every completion was the slowest step per mockup.
-    const start=await getArtworkObjectStart(key);
-    if(!start.totalSize||start.totalSize>60*1024*1024)throw Error('Invalid mockup JPG size.');
-    let metadata=jpegDimensions(start.body);
-    if(!metadata&&start.body[0]===255&&start.body[1]===216)
-     metadata=await sharp((await getArtworkObject(key)).body,{limitInputPixels:24_000_001}).metadata();
-    if(!metadata)throw Error('Output is not a JPEG.');
-    if(metadata.width*metadata.height>24_000_000||metadata.width<150||metadata.height<150)
-     throw Error('Export does not meet the 24MP JPG requirements.');
+    // every completion was the slowest step per mockup. A worker sending the
+    // full-size JPG later (fullPending) is verified by its Etsy copy now.
+    const fullPending=body.fullPending===true;
+    if(fullPending&&body.etsyUploaded!==true)throw Error('The Etsy copy is required before the full-size JPG.');
+    const verified=await verifiedJpeg(fullPending?mockupEtsyKey(key):key,fullPending?20*1024*1024:60*1024*1024);
+    const dimensions=fullPending?reportedDimensions(body.dimensions):verified;
     let previewKey=null;
     if(body.previewUploaded===true){
      const preview=await getArtworkObjectStart(mockupPreviewKey(key),4096).catch(()=>null);
      if(preview?.body?.[0]===255&&preview.body[1]===216&&preview.totalSize<5*1024*1024)previewKey=mockupPreviewKey(key);
     }
-    let etsyKey=null;
-    if(body.etsyUploaded===true){
+    let etsyKey=fullPending?mockupEtsyKey(key):null;
+    if(!fullPending&&body.etsyUploaded===true){
      const copy=await getArtworkObjectStart(mockupEtsyKey(key),4096).catch(()=>null);
      if(copy?.body?.[0]===255&&copy.body[1]===216&&copy.totalSize<20*1024*1024)etsyKey=mockupEtsyKey(key);
     }
     const old=item.outputKey,oldPreview=item.previewKey,oldEtsy=item.etsyKey;
-    const result=await completeMockupItem(id,owner,itemId,{outputKey:key,previewKey,etsyKey,
-     dimensions:{width:metadata.width,height:metadata.height},mapping:str(body.mapping)});
+    const result=await completeMockupItem(id,owner,itemId,{outputKey:key,previewKey,etsyKey,fullPending,
+     dimensions,mapping:str(body.mapping)});
     if(old&&old!==key)await deleteArtworkObject(old).catch(()=>{});
     if(oldPreview&&oldPreview!==previewKey)await deleteArtworkObject(oldPreview).catch(()=>{});
     if(oldEtsy&&oldEtsy!==etsyKey)await deleteArtworkObject(oldEtsy).catch(()=>{});

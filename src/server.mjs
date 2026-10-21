@@ -24,7 +24,7 @@ import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates, reviseCanvasThickness } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
-import {getMockupJob,listMockupJobs,getPcMockupFolder} from './mockup-generator.mjs';
+import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey} from './mockup-generator.mjs';
 import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verification.mjs';
 import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
 import {mockupObjectKey} from './production.mjs';
@@ -85,6 +85,7 @@ import {
   signedArtworkUrl,
   signedArtworkUploadUrl,
   artworkObjectExists,
+  artworkObjectInfo,
   listArtworkManifestKeys,
   getJsonObject,
   putJsonObject
@@ -2224,26 +2225,32 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[],in
         throw Error('There are only '+Math.max(0,ETSY_PHOTO_LIMIT-current.length)+
           ' saved artwork mockup slot(s) left, but '+newOutputs.length+
           ' selected PSD images need space. Reduce the selection or remove older mockups.');
-      const added=[];
+      const planned=[];
       for(const t of outputs){
-        if(existingSource.has(t.outputKey)||current.length+added.length>=ETSY_PHOTO_LIMIT)continue;
-        const index=current.length+added.length,key=mockupObjectKey(artworkId,index,'jpg');
-        await copyArtworkObject(t.outputKey,key);
-        // The worker's 2400 px Etsy copy is kept beside the artwork's mockup.
-        let etsyKey='';
-        if(t.etsyKey){
-          etsyKey=key.replace(/\.jpg$/,'.etsy.jpg');
-          await copyArtworkObject(t.etsyKey,etsyKey).catch(()=>{etsyKey=''});
-        }
-        added.push({index,originalFilename:t.outputName,key,contentType:'image/jpeg',
-          generatedFromKey:t.outputKey,sourceJobId:job.id,etsyKey});
+        if(existingSource.has(t.outputKey)||current.length+planned.length>=ETSY_PHOTO_LIMIT)continue;
+        planned.push({t,index:current.length+planned.length});
         existingSource.add(t.outputKey);
       }
+      // The R2 copies run side by side: one after another they held up the
+      // first Etsy upload by several seconds.
+      const added=await mapWithConcurrency(planned,6,async({t,index})=>{
+        const key=mockupObjectKey(artworkId,index,'jpg');
+        // The worker's 2400 px Etsy copy is kept beside the artwork's mockup.
+        // While the full-size JPG is still on its way from the PC the mockup
+        // is its Etsy copy; the full-size one replaces it when it arrives.
+        const etsyKey=t.etsyKey?key.replace(/\.jpg$/,'.etsy.jpg'):'';
+        const [,etsyCopied]=await Promise.all([copyArtworkObject(mockupFileKey(t),key),
+          etsyKey?copyArtworkObject(t.etsyKey,etsyKey).then(()=>true,()=>false):false]);
+        return {index,originalFilename:t.outputName,key,contentType:'image/jpeg',
+          generatedFromKey:t.outputKey,sourceJobId:job.id,etsyKey:etsyCopied?etsyKey:''};
+      });
       const prepared=added.length;
       const fresh=prepared?await updateArtworkManifest(artworkId,latest=>{
         const have=new Set((latest.mockups||[]).map(m=>m.generatedFromKey).filter(Boolean));
         latest.mockups=[...(latest.mockups||[]),...added.filter(m=>!have.has(m.generatedFromKey))];
       }):selected;
+      // A full-size JPG that arrived while these were copied replaces its copy now.
+      if(planned.some(({t})=>t.fullPending))void refreshArtworkMockupCopies(artworkId,job.id).catch(()=>{});
       const mockups=(fresh.mockups||[]).slice(0,ETSY_PHOTO_LIMIT);
       const session=await getEtsySession();
       const listingId=Number(fresh.etsyDraftListingId);
@@ -2342,6 +2349,19 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[],in
 // Adds the selected PSD mockups and applies the organizer's order. Draft setup
 // calls this straight after the preset photos (inSetup), and again once setup
 // has finished for a selection that arrived late.
+// Mockups copied into an artwork while their full-size JPG was still on its way
+// from the PC are its Etsy copy; each is replaced by the full-size JPG once that
+// is in R2. Etsy already has its photo, so only the artwork folder changes.
+async function refreshArtworkMockupCopies(artworkId,jobId){
+  if(!artworkId)return;
+  const [manifest,job]=await Promise.all([loadArtworkManifest(artworkId).catch(()=>null),getMockupJob(jobId).catch(()=>null)]);
+  const arrived=new Set((job?.templates||[]).filter(t=>t.status==='completed'&&t.outputKey&&!t.fullPending).map(t=>t.outputKey));
+  const stale=(manifest?.mockups||[]).filter(m=>m.sourceJobId===jobId&&arrived.has(m.generatedFromKey));
+  await mapWithConcurrency(stale,4,async m=>{
+    const [copy,full]=await Promise.all([artworkObjectInfo(m.key).catch(()=>null),artworkObjectInfo(m.generatedFromKey).catch(()=>null)]);
+    if(full&&copy&&Number(copy.size)!==Number(full.size))await copyArtworkObject(m.generatedFromKey,m.key);
+  });
+}
 async function reconcileCompletedMockupsForArtwork(artworkId,{inSetup=false}={}){
   const manifest=await loadArtworkManifest(artworkId);
   if(!manifest?.master?.key)return;
@@ -2497,6 +2517,7 @@ const server = http.createServer(async (req, res) => {
     authenticated:(request,response)=>isCropWorkerAuthorized(request)||requireAdminApi(request,response),
     workerAuthorized:isCropWorkerAuthorized,
     readJson:readJsonBody,sendJson,
+    onMockupFullUploaded:({job})=>refreshArtworkMockupCopies(job.artworkId,job.id),
     onMockupCompleted:(verifiedJob)=>{
       if(!verifiedJob?.artworkId||!verifiedJob?.sourceMasterKey)return;
       // Generated JPGs already live in R2. Never bypass the user's right-panel

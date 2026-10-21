@@ -376,6 +376,9 @@ export function jpegDimensions(buffer){
 export const mockupPreviewKey=outputKey=>String(outputKey).replace(/\.jpg$/,'.preview.jpg');
 // 2400 px copy the server uploads to Etsy as-is.
 export const mockupEtsyKey=outputKey=>String(outputKey).replace(/\.jpg$/,'.etsy.jpg');
+// The JPG to read now: the full-size one, or its 2400 px Etsy copy while the
+// PC worker is still uploading the full-size one.
+export const mockupFileKey=item=>item?.fullPending&&item.etsyKey?item.etsyKey:item?.outputKey;
 // Claims up to `limit` queued PSDs of a batch in one write: the PC worker
 // renders several at once.
 export async function claimMockupWork(id,owner,limit=1){
@@ -416,6 +419,8 @@ export async function completeMockupItem(id,owner,templateId,details){
  item.status='completed';item.error=null;item.progress='Ready';item.outputKey=details.outputKey;item.dimensions=details.dimensions;
  item.previewKey=details.previewKey||null;
  item.etsyKey=details.etsyKey||null;
+ // The worker sends the full-size JPG after the batch (fullPending until then).
+ if(details.fullPending===true)item.fullPending=true;else delete item.fullPending;
  item.usedMapping=details.mapping||null;item.finishedAt=iso();
  j.history.push({at:iso(),event:'output_verified',name:item.name});
  await putMockupJob(j);return j;
@@ -468,7 +473,20 @@ export async function getMockupItemDownload(jobId,templateId){
  const job=await getMockupJob(jobId);
  const item=job.templates.find(t=>t.id===templateId);
  if(item?.status!=='completed'||!item.outputKey)throw Error('This mockup is not ready for download.');
- return {url:await signedArtworkUrl(item.outputKey,600),name:item.outputName,key:item.outputKey,previewKey:item.previewKey||null};
+ const key=mockupFileKey(item);
+ return {url:await signedArtworkUrl(key,600),name:item.outputName,key,previewKey:item.previewKey||null};
+}
+// The full-size JPG of a completed mockup has arrived. Returns null when the
+// mockup was regenerated or deleted meanwhile (that upload is not used).
+export async function markMockupFullUploaded(id,templateId,outputKey,dimensions){
+ return withMockupJobLock(id,async()=>{
+ const j=await getMockupJob(id);
+ const item=j.templates.find(x=>x.id===templateId);
+ if(item?.status!=='completed'||item.outputKey!==outputKey||!item.fullPending)return null;
+ delete item.fullPending;item.dimensions=dimensions;
+ j.history.push({at:iso(),event:'full_jpg_uploaded',name:item.name});
+ await putMockupJob(j);return {job:j,item};
+});
 }
 export const MOCKUP_ROOT=ROOT;
 

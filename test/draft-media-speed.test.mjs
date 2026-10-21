@@ -23,13 +23,14 @@ test('the PC worker uploads an Etsy copy with each mockup and the server checks 
  const api=read('src/mockup-api.mjs'),worker=read('worker/index.mjs'),workerApi=read('worker/api.mjs');
  assert.match(api,/etsyKey,etsyUploadUrl/);
  assert.match(api,/body\.etsyUploaded===true/);
- assert.match(worker,/sized\(claim\.output\.etsyUploadUrl,2400,90,'Etsy copy'\)/);
+ assert.match(worker,/sized\(claim\.output\.etsyUploadUrl,2400,88,'4:2:0','Etsy copy'\)/);
  assert.match(workerApi,/previewUploaded=false,etsyUploaded=false/);
  assert.match(read('src/mockup-generator.mjs'),/item\.etsyKey=details\.etsyKey\|\|null/);
  // Copied into the artwork folder with its mockup, so the artwork does not
  // depend on the batch's outputs.
  const server=read('src/server.mjs');
- assert.match(server,/etsyKey=key\.replace\(\/\\\.jpg\$\/,'\.etsy\.jpg'\);\s*await copyArtworkObject\(t\.etsyKey,etsyKey\)/);
+ assert.match(server,/const etsyKey=t\.etsyKey\?key\.replace\(\/\\\.jpg\$\/,'\.etsy\.jpg'\):'';/);
+ assert.match(server,/etsyKey\?copyArtworkObject\(t\.etsyKey,etsyKey\)/);
 });
 
 test('picking the master uploads only the master: it is never an Etsy photo, so no Etsy copy is made',()=>{
@@ -53,7 +54,7 @@ test('selected PSD mockups reach the new draft even when a draft setup step fail
  // artwork, so the new draft starts with the preset photos only.
  const sync=server.slice(server.indexOf('async function syncGeneratedMockupsForArtwork'));
  const pending=sync.indexOf("message:'Selected PSD mockups are added when the Etsy draft is created.'");
- assert.ok(pending>0&&pending<sync.indexOf('await copyArtworkObject(t.outputKey,key)'));
+ assert.ok(pending>0&&pending<sync.indexOf('copyArtworkObject(mockupFileKey(t),key)'));
  // After setup (completed or not) the chosen mockups and photo order are applied.
  const finallyBlock=server.slice(server.indexOf('inflightDraftSetups.delete(setupId);'));
  assert.match(finallyBlock.slice(0,900),/void reconcileCompletedMockupsForArtwork\(setupId\)/);
