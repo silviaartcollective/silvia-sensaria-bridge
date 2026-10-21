@@ -43,7 +43,7 @@ test('every enabled square SKU has valid Sensaria and GO codes, costs, and a 1x1
    assert.equal(fulfillmentRatioForSize(parsed.size),'1x1');
    assert.ok(Number(item.offerings[0].price)>0,key);
  }
- assert.equal(enabled.length,9+9*1+10*4); // 5x5 poster + 8 other posters; 10 canvases and four frame colors.
+ assert.equal(enabled.length,9+10+10*4); // 9 posters; 10 canvases and four frame colors.
 });
 test('20x30 is enabled for every product style in portrait and landscape listings',()=>{
  for(const orientation of ['portrait','landscape']){
