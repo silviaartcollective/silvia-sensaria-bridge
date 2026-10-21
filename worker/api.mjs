@@ -1,5 +1,5 @@
 import { WORKER_ID } from './config.mjs';
-export const WORKER_VERSION = '4.7.4';
+export const WORKER_VERSION = '4.7.5';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -138,11 +138,18 @@ export function apiFor(app) {
       return request(app,'/api/mockups/worker/'+encodeURIComponent(jobId)+
        '/templates/'+encodeURIComponent(templateId)+'/progress',{method:'POST',body:{owner,stage}});
     },
-    mockupComplete(jobId,owner,templateId,outputKey,mapping,previewUploaded=false,etsyUploaded=false) {
+    // fullPending: the full-size JPG follows later (mockupFull); `dimensions`
+    // is its size until then.
+    mockupComplete(jobId,owner,templateId,outputKey,mapping,previewUploaded=false,etsyUploaded=false,{fullPending=false,dimensions=null}={}) {
       return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/complete',{
-       method:'POST',body:{owner,templateId,outputKey,mapping,previewUploaded,etsyUploaded,visibilityVerified:true,
+       method:'POST',body:{owner,templateId,outputKey,mapping,previewUploaded,etsyUploaded,fullPending,dimensions,visibilityVerified:true,
          mappingVerified:true,artworkReplaced:true}
       });
+    },
+    // action "url": a fresh upload URL for a pending full-size JPG; "done": check it.
+    mockupFull(jobId,templateId,outputKey,action) {
+      return request(app,'/api/mockups/worker/'+encodeURIComponent(jobId)+
+       '/templates/'+encodeURIComponent(templateId)+'/full',{method:'POST',body:{outputKey,action},attempts:2});
     },
     mockupFail(jobId,owner,templateId,error,needsMapping=false) {
       return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/fail',{

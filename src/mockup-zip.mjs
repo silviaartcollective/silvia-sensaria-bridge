@@ -1,7 +1,7 @@
 import {GetObjectCommand,HeadObjectCommand} from '@aws-sdk/client-s3';
 import {once} from 'node:events';
 import {r2Client,r2Config} from './r2.mjs';
-import {getMockupJob} from './mockup-generator.mjs';
+import {getMockupJob,mockupFileKey} from './mockup-generator.mjs';
 
 function crcUpdate(crc,data){
  for(const b of data){
@@ -42,14 +42,16 @@ export async function streamMockupZip(res,id){
  const files=[],names=new Set();
  let estimated=22;
  for(const item of items){
-  const info=await client.send(new HeadObjectCommand({Bucket,Key:item.outputKey}));
+  // While the full-size JPG is still on its way from the PC, its Etsy copy.
+  const key=mockupFileKey(item);
+  const info=await client.send(new HeadObjectCommand({Bucket,Key:key}));
   const bytes=Number(info.ContentLength);
   if(!Number.isSafeInteger(bytes)||bytes<100||bytes>60*1024*1024)throw Error('Invalid saved JPG size: '+item.name);
   let filename=item.outputName;
   if(names.has(filename.toLowerCase()))filename=filename.replace(/\.jpg$/i,'-'+item.id.slice(0,8)+'.jpg');
   names.add(filename.toLowerCase());
   const name=Buffer.from(filename,'utf8');
-  files.push({key:item.outputKey,bytes,name});
+  files.push({key,bytes,name});
   estimated+=30+name.length+bytes+16+46+name.length;
  }
  if(estimated>0xffffff00)throw Error('ZIP exceeds the 4GB standard archive limit. Download JPGs individually.');

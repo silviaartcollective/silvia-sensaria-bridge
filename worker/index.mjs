@@ -29,6 +29,7 @@ import {scanMockupFolder,mockupFolderFile,localPsdVersion,orientationFromShape} 
 import {startLocalIntake} from './local-intake.mjs';
 import {patchAgPsd} from './patch-ag-psd.mjs';
 import {downloadCached,cachedFilePath} from './asset-cache.mjs';
+import {keepForFullUpload,pendingFullUploads,dropFullUpload,sendFullUpload} from './full-uploads.mjs';
 import sharp from 'sharp';
 import { spawn } from 'node:child_process';
 import {
@@ -338,17 +339,36 @@ async function processPSDJob(app,claim){
    return;
   }
   await stage('Uploading and verifying '+claim.item.outputName);
-  // The full JPG goes up with a 900 px preview for the Product Creator and a
-  // 2400 px copy the server uploads to Etsy without resizing it on Render.
-  const sized=(url,side,quality,label)=>url?sharp(outputPath).resize(side,side,{fit:'inside',withoutEnlargement:true})
-   .jpeg({quality,chromaSubsampling:'4:4:4'}).toBuffer().then(body=>uploadBuffer(url,body)).then(()=>true,
+  // A 900 px preview for the Product Creator and a 2400 px copy the server
+  // uploads to Etsy as it is. Etsy keeps its photos in 4:2:0 colour, so the
+  // Etsy copy is too (a third smaller).
+  const sized=(url,side,quality,chromaSubsampling,label)=>url?sharp(outputPath).resize(side,side,{fit:'inside',withoutEnlargement:true})
+   .jpeg({quality,chromaSubsampling}).toBuffer().then(body=>uploadBuffer(url,body)).then(()=>true,
     error=>{console.error('['+app.name+'] '+label+' upload failed (the full JPG is fine):',error.message);return false}):false;
-  const [,previewUploaded,etsyUploaded]=await Promise.all([uploadFile(claim.output.uploadUrl,outputPath),
-   sized(claim.output.previewUploadUrl,900,82,'Preview'),sized(claim.output.etsyUploadUrl,2400,90,'Etsy copy')]);
+  const small=Promise.all([sized(claim.output.previewUploadUrl,900,82,'4:4:4','Preview'),
+   sized(claim.output.etsyUploadUrl,2400,88,'4:2:0','Etsy copy')]);
+  // A shop that takes the full-size JPG later (deferFull) gets it after the
+  // batch: the mockup is ready once its preview and Etsy copy are in R2.
+  const deferFull=claim.output.deferFull===true;
+  const [[previewUploaded,etsyUploaded]]=await Promise.all([small,deferFull?null:uploadFile(claim.output.uploadUrl,outputPath)]);
+  const fullPending=deferFull&&etsyUploaded;
+  if(deferFull&&!etsyUploaded)await uploadFile(claim.output.uploadUrl,outputPath);
   measure('generatedJpgR2UploadMs');
-  await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping,previewUploaded,etsyUploaded));
+  await queue(()=>api.mockupComplete(id,mockupOwner,itemId,claim.output.key,render.usedMapping,previewUploaded,etsyUploaded,
+   fullPending?{fullPending:true,dimensions:render.dimensions}:{}));
   measure('serverVerificationMs');
   completionRecorded=true;
+  if(fullPending){
+   const entry={appUrl:app.appUrl,jobId:id,itemId,outputKey:claim.output.key};
+   try{
+    await keepForFullUpload(outputPath,entry);
+    tempPaths.delete(outputPath);outputPath='';requestFullUploads();
+   }catch(error){
+    console.error('['+app.name+'] Could not keep the full-size JPG for later; sending it now:',error.message);
+    await sendFullUpload({...entry,file:outputPath},{api,upload:uploadFile}).catch(sendError=>
+     console.error('['+app.name+'] Full-size JPG upload failed (downloads use the Etsy copy):',sendError.message));
+   }
+  }
   console.log('['+app.name+'] PSD_TIMINGS '+JSON.stringify({
    template:claim.item.name,artworkId:claim.job.artworkId||null,
    ...timings,totalMs:Date.now()-startedAt,preparedFromCache:!!render.preparedFromCache
@@ -570,6 +590,35 @@ async function warmUpLane(){
   }
 }
 
+// ---------------------------------------------------- full-size JPGs
+// Mockups reported ready send their full-size JPG here, oldest first and one
+// at a time, once the worker has had nothing else to do for a few seconds, so
+// renders, crops and Etsy copies never wait behind them. Resumed after a restart.
+const FULL_UPLOAD_QUIET_MS=3000;
+let requestFullUploads=()=>{},fullUploadsRequested=null;
+const nextFullUploadRequest=()=>{fullUploadsRequested=new Promise(resolve=>{requestFullUploads=resolve})};
+nextFullUploadRequest();
+async function fullUploadLane(){
+  const failures=new Map(); // name -> {count, retryAt}
+  while(!stopping){
+    nextFullUploadRequest();
+    const quiet=!active.size&&Date.now()-lastWorkAt>=FULL_UPLOAD_QUIET_MS;
+    const next=quiet?(await pendingFullUploads()).find(entry=>!(failures.get(entry.name)?.retryAt>Date.now())):null;
+    if(!next){await Promise.race([sleep(quiet?15000:1000),stopped,fullUploadsRequested]);continue}
+    const app=APP_CONNECTIONS.find(item=>item.appUrl===next.appUrl);
+    if(!app){await dropFullUpload(next.name);continue}
+    try{
+      const result=await sendFullUpload(next,{api:clientFor(app),upload:uploadFile});
+      await dropFullUpload(next.name);failures.delete(next.name);
+      if(result==='uploaded')console.log('['+app.name+'] Full-size JPG uploaded for mockup '+next.itemId+'.');
+    }catch(error){
+      const count=(failures.get(next.name)?.count||0)+1;
+      failures.set(next.name,{count,retryAt:Date.now()+Math.min(10*60*1000,15000*2**Math.min(count,6))});
+      console.error('['+app.name+'] Full-size JPG upload will be retried: '+error.message);
+    }
+  }
+}
+
 // ---------------------------------------------------- PC mockup folder
 // A shop's PSDs can live in a folder on this PC (config "mockupFolder"). The
 // folder is scanned every 15 s and the shop told about any change; renders read
@@ -664,7 +713,7 @@ async function main(){
   const updateCheck=setInterval(installUpdateWhenIdle,5000);
   updateCheck.unref();
   try{
-    await Promise.all([cropLane(),mockupLane(),warmUpLane(),mockupFolderLane()]);
+    await Promise.all([cropLane(),mockupLane(),warmUpLane(),mockupFolderLane(),fullUploadLane()]);
   }finally{
     if(idleCheck)clearInterval(idleCheck);
     clearInterval(ticker);
