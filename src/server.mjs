@@ -3032,7 +3032,7 @@ const server = http.createServer(async (req, res) => {
       if(!Number.isSafeInteger(id)||id<1)
         return sendJson(res,400,{ok:false,error:'Provide an existing Etsy listing ID.'});
       const session=await getEtsySession();
-      if(!String(session.scope||'').split(/\\s+/).includes('listings_r'))
+      if(!String(session.scope||'').split(/\s+/).includes('listings_r'))
         return sendJson(res,403,{ok:false,error:'Etsy listings_r scope is required.'});
       const auth={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
       const listing=await getListing({listingId:id,...auth});
