@@ -16,13 +16,18 @@ sharp.concurrency(1);
 
 export const FULFILLMENT_RATIOS = Object.freeze(['2x3', '3x4', '4x5', '11x14', '5x7', '14x15']);
 export const SQUARE_FULFILLMENT_RATIOS=Object.freeze(['1x1']);
+export const PANORAMIC_FULFILLMENT_RATIOS=Object.freeze(['1x2','1x3']);
 export function fulfillmentRatiosForOrientation(orientation){
  return String(orientation||'').toLowerCase()==='square'?
-  SQUARE_FULFILLMENT_RATIOS:FULFILLMENT_RATIOS;
+  SQUARE_FULFILLMENT_RATIOS:
+  String(orientation||'').toLowerCase()==='landscape'?
+    [...FULFILLMENT_RATIOS,...PANORAMIC_FULFILLMENT_RATIOS]:FULFILLMENT_RATIOS;
 }
 
 export const FULFILLMENT_RATIO_DIMENSIONS = Object.freeze({
   '1x1':[1,1],
+  '1x2':[1,2],
+  '1x3':[1,3],
   '2x3': [2, 3],
   '3x4': [3, 4],
   '4x5': [4, 5],
@@ -35,6 +40,8 @@ export const FULFILLMENT_RATIO_DIMENSIONS = Object.freeze({
 // original master pixels and must never upscale to these reference dimensions.
 export const FULFILLMENT_RATIO_MIN_PIXELS = Object.freeze({
   '1x1':[12000,12000],  // 40x40, 300 PPI
+  '1x2':[8750,17500], // large panoramic landscape, within Sensaria size limit
+  '1x3':[5800,17400], // 20x60 at about 290 PPI
   // Sensaria GO rejects RGB uploads over 17,500 px, so the 2x3 crop is made at
   // the largest exact 2:3 size within that limit (about 292 DPI at 40x60).
   '2x3': [11666, 17499], // 40x60
@@ -46,6 +53,20 @@ export const FULFILLMENT_RATIO_MIN_PIXELS = Object.freeze({
 });
 
 export const SIZE_TO_FULFILLMENT_RATIO = Object.freeze({
+  '8x16':'1x2',
+  '10x20':'1x2',
+  '12x24':'1x2',
+  '16x32':'1x2',
+  '18x36':'1x2',
+  '20x40':'1x2',
+  '24x48':'1x2',
+  '30x60':'1x2',
+  '8x24':'1x3',
+  '10x30':'1x3',
+  '12x36':'1x3',
+  '16x48':'1x3',
+  '20x60':'1x3',
+
   '5x5':'1x1',
   '8x8':'1x1',
   '10x10':'1x1',
@@ -103,7 +124,7 @@ export function fulfillmentRatioObjectKey(artworkId, ratio) {
   const id = String(artworkId || '').trim().toUpperCase();
   if (!/^SAC\d+$/.test(id)) throw new Error(`Invalid artwork ID: ${artworkId}`);
   const normalized = String(ratio || '').trim().toLowerCase();
-  if (![...FULFILLMENT_RATIOS,...SQUARE_FULFILLMENT_RATIOS].includes(normalized)) throw new Error(`Unsupported fulfillment ratio: ${ratio}`);
+  if (![...FULFILLMENT_RATIOS,...SQUARE_FULFILLMENT_RATIOS,...PANORAMIC_FULFILLMENT_RATIOS].includes(normalized)) throw new Error(`Unsupported fulfillment ratio: ${ratio}`);
   return `artworks/${id}/fulfillment/${normalized}.jpg`;
 }
 
