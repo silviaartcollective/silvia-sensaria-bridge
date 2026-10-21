@@ -77,8 +77,16 @@ async function listJSON(prefix,regex,limit=1000) {
  return results;
 }
 export async function listMockupTemplates(){
- const records=await listJSON(ROOT+'/templates/',/\/meta\.json$/,1800);
- return folderOrUploads(records.filter(x=>x.status!=='deleted')).sort((a,b)=>a.name.localeCompare(b.name));
+ const records=await listJSON(ROOT+'/templates/',/\/meta\.json$/,1800),folder=await getPcMockupFolder();
+ return folderOrUploads(records.filter(x=>x.status!=='deleted')).map(r=>withFolderOrientation(r,folder))
+  .sort((a,b)=>a.name.localeCompare(b.name));
+}
+// The folder names are applied whenever templates are read, so a folder rule
+// takes effect at once, not only when the worker next reports the folder.
+function withFolderOrientation(record,folder){
+ if(record?.source!=='pc'||record.orientationSource==='user')return record;
+ const orientation=orientationFromFolder(record.localPath,folder);
+ return orientation?{...record,orientation,orientationSource:'folder'}:record;
 }
 // While the PC mockup folder holds PSDs, the template list is exactly that
 // folder: uploaded templates are kept (and offered again if the folder is
@@ -90,7 +98,7 @@ const twinName=record=>String(record?.name||'').toLowerCase();
 export async function getMockupTemplate(id){
  const value=await optional(templateKey(assertId(id)));
  if(!value||value.status==='deleted')throw Error('Mockup template not found.');
- return value;
+ return withFolderOrientation(value,await getPcMockupFolder());
 }
 export async function reserveMockupTemplate({name,size,collection='Unsorted',orientation='unclassified',squareCompatible=false}){
  const filename=safeFilename(name),ext=extFile(filename,['psd','psb']),bytes=Number(size);

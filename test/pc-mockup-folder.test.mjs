@@ -103,3 +103,30 @@ test('the chosen folder\'s own name sorts the PSDs directly in it, and unsorted 
  assert.match(read('src/mockup-api.mjs'),/syncPcTemplates\(body\.files,\{mockupFolder:await getPcMockupFolder\(\)\}\)/);
  assert.match(read('src/mockup-generator-client.js'),/not sorted yet and left out: /);
 });
+
+test('the panel lists every PSD that produced no JPG, with why: layer to choose, failed, rendering, or left out',async()=>{
+ const vm=await import('node:vm');
+ const client=read('src/mockup-generator-client.js');
+ const pick=name=>client.slice(client.indexOf('function '+name+'('),client.indexOf('\nfunction ',client.indexOf('function '+name+'(')+10));
+ const context={job:{artworkOrientation:'landscape',templates:[
+  {id:'a',name:'Horizontal Close up framed black mockup.psd',status:'needs_mapping'},
+  {id:'b',name:'mockup 19.psd',status:'processing',progress:'Preparing PSD template on PC'},
+  {id:'c',name:'Paper Roll.psd',status:'failed',error:'PSD template is not supported: 16-bit CMYK.'},
+  {id:'d',name:'Bedroom Mockup.psd',status:'completed'}]},
+  templates:[
+  {id:'e',source:'pc',status:'ready',localPath:'Horizontal Close up framed natural oak mockup.psd',orientation:'unclassified'},
+  {id:'f',source:'pc',status:'ready',localPath:'Vertical/Room.psd',orientation:'portrait'},
+  {id:'g',source:'pc',status:'ready',localPath:'New.psd',orientation:'landscape'},
+  {id:'d',source:'pc',status:'ready',localPath:'Bedroom Mockup.psd',orientation:'landscape'}],detectedArtworkOrientation:'landscape'};
+ vm.runInNewContext(pick('templateFitsOrientation')+pick('notGenerated')+';this.rows=notGenerated();',context);
+ const why=Object.fromEntries(context.rows.map(r=>[r.name,r.reason]));
+ assert.equal(context.rows.length,6);
+ assert.match(why['Horizontal Close up framed black mockup.psd'],/Choose its artwork layer/);
+ assert.match(why['mockup 19.psd'],/Rendering on the PC now · Preparing PSD template on PC/);
+ assert.match(why['Paper Roll.psd'],/16-bit CMYK\. Fix the PSD or use Retry failed\./);
+ assert.match(why['Horizontal Close up framed natural oak mockup.psd'],/not sorted yet/);
+ assert.match(why['Vertical/Room.psd'],/it is a vertical template/);
+ assert.match(why['New.psd'],/Queue the mockups again to include it/);
+ // The folder rule applies whenever templates are read, without waiting for the worker.
+ assert.match(read('src/mockup-generator.mjs'),/return withFolderOrientation\(value,await getPcMockupFolder\(\)\);/);
+});

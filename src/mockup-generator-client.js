@@ -114,9 +114,29 @@ function clearCurrentBatch(){
  message('New master selected. Previous batches are archived; fresh mockups queue after this artwork uploads.');
 }
 // PSD generation is optional; draft submission must never wait for the worker.
+// The PSDs of this batch that produced no JPG yet, and the folder PSDs left out
+// of it, each with the reason, so nothing goes missing without explanation.
+function notGenerated(){
+ if(!job)return [];
+ const rows=job.templates.filter(t=>t.status!=='completed').map(t=>({name:t.name,id:t.id,status:t.status,
+  reason:t.status==='needs_mapping'?'Choose its artwork layer: it has more than one possible one.':
+   t.status==='failed'?(t.error||'Failed on the PC.')+' Fix the PSD or use Retry failed.':
+   t.status==='processing'?'Rendering on the PC now'+(t.progress?' · '+t.progress:'')+'. A large PSD takes a while the first time.':
+   'Waiting for the PC worker.'}));
+ const inBatch=new Set(job.templates.map(t=>t.id));
+ const art=job.artworkOrientation&&job.artworkOrientation!=='unclassified'?job.artworkOrientation:detectedArtworkOrientation;
+ for(const t of templates.filter(t=>t.source==='pc'&&t.status==='ready'&&!inBatch.has(t.id)))
+  rows.push({name:t.localPath,id:t.id,status:'left-out',reason:t.orientation==='unclassified'
+   ?'Not in this batch: not sorted yet. Put it in a Vertical, Horizontal or Square folder, or choose its orientation in the saved templates list.'
+   :!art||templateFitsOrientation(t,art)?'Not in this batch: it was added to the folder or sorted after the batch started. Queue the mockups again to include it.'
+   :'Not in this batch: it is a '+({portrait:'vertical',landscape:'horizontal',square:'square'}[t.orientation]||t.orientation)+' template.'});
+ return rows;
+}
 function renderPreviews(){
  const completed=job?job.templates.filter(t=>t.status==='completed'):[];
+ const missing=notGenerated();
  const signature=(job?.id||'none')+'|'+completed.map(t=>t.id+':'+(t.finishedAt||'')).join(';')+
+  '|'+missing.map(row=>row.id+':'+row.status+':'+row.reason).join(';')+
   '|'+completed.map(t=>isSelected(job.id,t.id)?'1':'0').join('')+'|'+attaching+
   '|'+currentBatch()+'|'+lastAppliedBatchId+'|'+appliedCount;
  // Do not continuously tear down and re-download thumbnails on each 6-second poll.
@@ -137,6 +157,7 @@ function renderPreviews(){
  $('mg-deselect-all').disabled=!job;
  if(!completed.length){
   list.append(create('p','Finished JPGs will appear here while your PC worker generates them.',{class:'mg-preview-empty'}));
+  showNotGenerated(missing);
   return;
  }
  for(const template of completed){
@@ -155,7 +176,24 @@ function renderPreviews(){
    ?template.dimensions.width+' × '+template.dimensions.height:'Ready JPG'));
   row.append(checkbox,image,description);list.append(row);
  }
+ showNotGenerated(missing);
  list.scrollTop=savedScrollTop; // Keep review position while new JPGs finish generating.
+}
+function showNotGenerated(missing){
+ const box=$('mg-not-generated');
+ box.hidden=!missing.length;box.replaceChildren();
+ if(!missing.length)return;
+ box.append(create('strong','Not generated ('+missing.length+')'));
+ for(const row of missing){
+  const item=create('div','',{class:'mg-not-generated-item'});
+  item.append(create('b',row.name),create('span',row.reason));
+  if(row.status==='needs_mapping'){
+   const choose=create('button','Choose artwork layer',{type:'button',class:'btn secondary'});
+   choose.addEventListener('click',()=>act(async()=>{await mappingPrompt();$('mg-mapping').scrollIntoView({behavior:'smooth',block:'center'})}));
+   item.append(choose);
+  }
+  box.append(item);
+ }
 }
 function selectionChanged(){
  // Selection is a review step: changing a checkbox must not silently upload JPGs.
