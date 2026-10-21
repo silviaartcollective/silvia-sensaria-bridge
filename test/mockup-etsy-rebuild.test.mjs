@@ -67,7 +67,8 @@ test('vertical landscape and square mockups remain separated',()=>{
  assert.match(creator,/id="mg-psds-horizontal"/);
  assert.match(creator,/id="mg-psds"/);
  assert.match(read('src/mockup-generator.mjs'),/validateTemplateSelection/);
- assert.match(read('src/mockup-api.mjs'),/artworkOrientation:manifest\.orientation/);
+ // Panoramic masters are told apart by their size (test/panoramic-mockups.test.mjs).
+ assert.match(read('src/mockup-api.mjs'),/artworkOrientation:mockupOrientationOf\(manifest\)/);
 });
 
 test('PSD jobs render natively on the PC worker with no browser fallback',()=>{

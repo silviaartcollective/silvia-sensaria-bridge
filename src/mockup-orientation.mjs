@@ -7,12 +7,27 @@ export function artworkOrientationFromPixels(width,height){
  if(w===h)return 'square';
  return w>h?'landscape':'portrait';
 }
+// Mockups only: an artwork about twice as wide as it is tall (2:1, 3:1 …) is
+// panoramic and gets panoramic templates. Prints still treat it as landscape.
+// The PC worker uses the same ratio for templates (worker/local-templates.mjs).
+export const PANORAMIC_RATIO=1.9;
+export function mockupOrientationFromPixels(width,height){
+ const orientation=artworkOrientationFromPixels(width,height);
+ return orientation==='landscape'&&Number(width)/Number(height)>=PANORAMIC_RATIO?'panoramic':orientation;
+}
+// The mockup orientation of an uploaded artwork, from its master's size when known.
+export function mockupOrientationOf(manifest){
+ const {width,height}=manifest?.master||{};
+ if(Number(width)>0&&Number(height)>0)return mockupOrientationFromPixels(width,height);
+ return manifest?.orientation||'unclassified';
+}
 export function normalizeTemplateOrientation(value){
  const v=String(value||'unclassified').trim().toLowerCase();
  if(v==='vertical')return 'portrait';
  if(v==='horizontal')return 'landscape';
- if(['portrait','landscape','square','unclassified'].includes(v))return v;
- throw Error('Choose vertical, horizontal or square-compatible template orientation.');
+ if(v==='panorama')return 'panoramic';
+ if(['portrait','landscape','square','panoramic','unclassified'].includes(v))return v;
+ throw Error('Choose vertical, horizontal, square-compatible or panoramic template orientation.');
 }
 export function templateMatchesArtwork(template,orientation){
  const artwork=normalizeTemplateOrientation(orientation);
@@ -22,7 +37,7 @@ export function templateMatchesArtwork(template,orientation){
  return kind===artwork;
 }
 export function validateTemplateSelection(templates,orientation){
- if(!['portrait','landscape','square'].includes(String(orientation)))
+ if(!['portrait','landscape','square','panoramic'].includes(String(orientation)))
   throw Error('Detect the master artwork orientation before queueing mockups.');
  const mismatch=(templates||[]).find(t=>!templateMatchesArtwork(t,orientation));
  if(mismatch)throw Error('Template "'+String(mismatch.name||mismatch.id||'unknown')+
