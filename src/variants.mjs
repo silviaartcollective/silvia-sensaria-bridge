@@ -68,10 +68,10 @@ export const SILVIA_POSTER_ETSY_CAD_PER_USD = 1.486;
 export const SILVIA_SALE_DISCOUNT_PERCENT = 25;
 export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
   P: {
-    // New verified Sensaria poster sizes use the existing adjacent price tiers.
+    // Poster prices step upward by size rather than reusing equal adjacent tiers.
     '5x7': 52.95,
     '5x5': 52.95,
-    '8x8': 52.95,
+    '8x8': 53.95,
     '10x10': 55.95,
     '12x12': 59.95,
     '16x16': 69.95,
@@ -81,8 +81,8 @@ export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
     '30x30': 122.95,
     '20x30': 95.95,
     '8x12': 57.95,
-    '8x10': 52.95,
-    '11x14': 57.95,
+    '8x10': 54.95,
+    '11x14': 59.95,
     '12x16': 62.95,
     '12x18': 65.95,
     '16x20': 72.95,
