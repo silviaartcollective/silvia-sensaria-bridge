@@ -44,10 +44,14 @@ export function mockupFolderFile(folder,relativePath){
 // Identifies one version of a PSD that is edited in place.
 export const localPsdVersion=(relativePath,mtimeMs)=>'pc:'+relativePath+'@'+Math.round(Number(mtimeMs)||0);
 
-// Orientation from the artwork layer's shape: within 4% of square is square.
+// Orientation from the artwork layer's shape: within 4% of square is square,
+// and about twice as wide as tall or wider is panoramic (the same ratio as the
+// shop's PANORAMIC_RATIO in src/mockup-orientation.mjs).
+export const PANORAMIC_RATIO=1.9;
 export function orientationFromShape({width,height}){
   const ratio=Number(width)/Number(height);
   if(!(ratio>0))return 'unclassified';
   if(Math.abs(ratio-1)<=0.04)return 'square';
+  if(ratio>=PANORAMIC_RATIO)return 'panoramic';
   return ratio>1?'landscape':'portrait';
 }

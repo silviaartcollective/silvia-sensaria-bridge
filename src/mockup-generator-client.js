@@ -16,6 +16,13 @@ let initialLoad=Promise.resolve(),selectionVersion=0,attachTimer=null,attaching=
 let previewRenderKey='';
 let detectedArtworkOrientation=null,lastAutoOrientation=null;
 let orientationDetection=Promise.resolve();
+// About twice as wide as tall or wider is panoramic (PANORAMIC_RATIO in
+// src/mockup-orientation.mjs): such artwork gets panoramic templates only.
+const PANORAMIC_RATIO=1.9;
+function mockupOrientation(width,height){
+ if(width===height)return 'square';
+ return width<height?'portrait':width/height>=PANORAMIC_RATIO?'panoramic':'landscape';
+}
 function templateFitsOrientation(template,orientation){
  const stored=String(template?.orientation||'unclassified').toLowerCase();
  return orientation==='square'?stored==='square'||template?.squareCompatible===true:
@@ -33,7 +40,7 @@ async function inspectArtworkOrientation(file){
   const bitmap=await createImageBitmap(file);
   const width=bitmap.width,height=bitmap.height;
   bitmap.close();
-  detectedArtworkOrientation=width===height?'square':width>height?'landscape':'portrait';
+  detectedArtworkOrientation=mockupOrientation(width,height);
   showOrientation();
   await loadTemplates();
  }catch{
@@ -129,13 +136,13 @@ function notGenerated(){
   const other=t.orientation!=='unclassified'&&art&&!templateFitsOrientation(t,art);
   const kind=ORIENTATION_WORD[t.orientation]||t.orientation;
   rows.push({name:t.localPath,id:t.id,status:other?'other-orientation':'left-out',kind,reason:t.orientation==='unclassified'
-   ?'Not in this batch: not sorted yet. Put it in a Vertical, Horizontal or Square folder, or choose its orientation in the saved templates list.'
+   ?'Not in this batch: not sorted yet. Put it in a Vertical, Horizontal, Square or Panoramic folder, or choose its orientation in the saved templates list.'
    :!other?'Not in this batch: it was added to the folder or sorted after the batch started. Queue the mockups again to include it.'
    :'Not in this batch: it is a '+kind+' template.'});
  }
  return rows;
 }
-const ORIENTATION_WORD={portrait:'vertical',landscape:'horizontal',square:'square'};
+const ORIENTATION_WORD={portrait:'vertical',landscape:'horizontal',square:'square',panoramic:'panoramic'};
 function renderPreviews(){
  const completed=job?job.templates.filter(t=>t.status==='completed'):[];
  const missing=notGenerated();
@@ -570,7 +577,7 @@ async function loadTemplates(){
   // From the mockup folder on the PC: used straight from the file.
   if(template.source==='pc')title.append(create('span','PC',{class:'mg-pc-tag',title:'In the mockup folder on the PC'}));
   const orientation=create('select','',{'aria-label':'Template orientation for '+template.name});
-  for(const [id,label] of [['unclassified','Unclassified'],['portrait','Vertical'],['landscape','Horizontal'],['square','Square']]){
+  for(const [id,label] of [['unclassified','Unclassified'],['portrait','Vertical'],['landscape','Horizontal'],['square','Square'],['panoramic','Panoramic']]){
    const opt=create('option',label,{value:id});
    orientation.append(opt);
   }
@@ -596,9 +603,11 @@ async function loadTemplates(){
  if(detectedArtworkOrientation&&unsorted.length)
   message(unsorted.length+' PSD'+(unsorted.length===1?'':'s')+' in the mockup folder '+(unsorted.length===1?'is':'are')+
    ' not sorted yet and left out: '+unsorted.slice(0,6).map(t=>t.localPath).join(', ')+(unsorted.length>6?'…':'')+
-   '. Put them in a Vertical, Horizontal or Square folder, or choose their orientation in the saved templates list.',true);
+   '. Put them in a Vertical, Horizontal, Square or Panoramic folder, or choose their orientation in the saved templates list.',true);
  if(detectedArtworkOrientation&&!templates.some(t=>t.status==='ready'&&templateFitsOrientation(t,detectedArtworkOrientation)))
-  message('No '+detectedArtworkOrientation+'-compatible templates yet. Upload them or classify saved PSDs before generating.',true);
+  message(detectedArtworkOrientation==='panoramic'
+   ?'This artwork is panoramic and there are no panoramic templates yet. Put panoramic PSDs in a Panoramic folder inside the mockup folder, or set their orientation to Panoramic in the saved templates list.'
+   :'No '+detectedArtworkOrientation+'-compatible templates yet. Upload them or classify saved PSDs before generating.',true);
 }
 // Permanent PSD upload is not dependent on a master artwork or the PC renderer.
 // Browser uploads up to two large PSDs at once; saved R2 templates survive refresh.
@@ -753,9 +762,9 @@ function showPcFolderStatus(worker){
  if(!worker?.online){status.textContent='Saved. The PC worker reads the folder once it is online.';return}
  if(!found||found.path!==pcFolderSaved){status.textContent='Saved. The PC worker picks it up within a few seconds.';return}
  if(found.error){status.classList.add('warn');status.textContent=found.error+' Check the path on the PC.';return}
- // How the PSDs were sorted: by their Vertical, Horizontal or Square subfolder.
+ // How the PSDs were sorted: by their Vertical, Horizontal, Square or Panoramic subfolder.
  const pc=templates.filter(t=>t.source==='pc'&&t.status==='ready'),count=kind=>pc.filter(t=>t.orientation===kind).length;
- const sorted=[[count('portrait'),'vertical'],[count('landscape'),'horizontal'],[count('square'),'square'],
+ const sorted=[[count('portrait'),'vertical'],[count('landscape'),'horizontal'],[count('square'),'square'],[count('panoramic'),'panoramic'],
   [count('unclassified'),'not sorted yet']].filter(([n])=>n).map(([n,label])=>n+' '+label).join(', ');
  status.textContent='The PC worker sees '+found.count+' PSD'+(found.count===1?'':'s')+' in this folder'+
   (sorted?' ('+sorted+')':'')+'. New and edited ones appear below within 15 seconds; templates uploaded earlier are hidden while the folder is in use.';
@@ -1011,7 +1020,10 @@ $('master_file').addEventListener('change',()=>{
 window.addEventListener('pod-artwork-uploaded',event=>{
  const info=event.detail||{},file=$('master_file').files?.[0];
  if(['portrait','landscape','square'].includes(String(info.orientation||'').toLowerCase())){
-  const verified=String(info.orientation).toLowerCase();
+  // The stored master's size tells a panoramic artwork from a horizontal one.
+  const verified=Number(info.width)>0&&Number(info.height)>0?mockupOrientation(Number(info.width),Number(info.height)):
+   String(info.orientation).toLowerCase()==='landscape'&&detectedArtworkOrientation==='panoramic'?'panoramic':
+   String(info.orientation).toLowerCase();
   if(verified!==detectedArtworkOrientation){
    detectedArtworkOrientation=verified;lastAutoOrientation=null;showOrientation();
    orientationDetection=loadTemplates();

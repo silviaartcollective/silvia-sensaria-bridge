@@ -38,7 +38,7 @@ The **same running worker** processes two queues: production artwork crops and P
 - Each preparation is checked against Photoshop's composite using the Smart Object's original pixels. If the template cannot be reproduced exactly, that PSD fails with the reason; a wrong mockup is never produced.
 - After that, each mockup is a warp and composite, typically about a second plus the R2 upload.
 - **It uses the whole PC.** Several mockups render at once, one per render thread: half the CPU cores, between 2 and 6. Production crops run alongside instead of making mockups wait. Only one first-time template preparation runs at a time, because it reads the whole PSD into memory. Set `POD_MOCKUP_CONCURRENCY` to change the number of parallel renders.
-- If a PSD has several visible Smart Objects, the top one in the Layers panel is the artwork (v4.7.1). To use another one, choose the artwork layer in the Product Creator; the choice is saved with the template.
+- If a PSD has several visible Smart Objects, the top one in the Layers panel is the artwork unless another one is clearly it (a placeholder name, or a frame ring or texture on top) (v4.7.1). To use another one, choose the artwork layer in the Product Creator; the choice is saved with the template.
 
 **Template requirements:**
 - RGB or grayscale, 8 or 16 bits/channel.
@@ -64,7 +64,8 @@ PSD templates can stay in a folder on this PC instead of being uploaded:
 - **Choosing the folder:** in the Product Creator, set **Mockup folder on the PC** (for example `D:\Mockups\Silvia`). Each shop can have its own folder. A `"mockupFolder"` set for a shop in `config.local.json` takes priority.
 - **Scanning:** every 15 seconds the worker scans the folder and its subfolders for `.psd` and `.psb` files and tells the shop. New PSDs appear in the template list, marked **PC**, and deleted ones disappear.
 - **Editing:** an edited PSD is picked up on the next scan and prepared again while the worker is idle. Nothing is ever uploaded to or downloaded from R2; mockups render straight from the files.
-- **Orientation:** subfolders named **Vertical**, **Horizontal** or **Square** set it. Otherwise the worker tells it from the shape of the artwork layer once the PSD is prepared. Choosing an orientation in the template list overrides both.
+- **Orientation:** subfolders named **Vertical**, **Horizontal**, **Square** or **Panoramic** set it. Otherwise the worker tells it from the shape of the artwork layer once the PSD is prepared (about twice as wide as tall or wider is panoramic, v4.7.2). Choosing an orientation in the template list overrides both.
+- **Panoramic artwork** (about 2:1 or wider) gets the panoramic templates only; other horizontal artwork gets the horizontal ones.
 - **Settings stay put:** each PSD keeps its settings (artwork layer, orientation) as long as it keeps its name and place in the folder.
 - **Removing templates:** delete or move the file; templates from the folder cannot be deleted in the app.
 
@@ -87,4 +88,4 @@ From **v4.6.0** the worker updates itself. Every heartbeat reply from the Silvia
 3. Run `setup-worker.cmd` (press Enter to keep your saved tokens).
 4. Run `start-worker.cmd`.
 
-The dashboards should show **Crop + Mockup Worker v4.7.1**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+The dashboards should show **Crop + Mockup Worker v4.7.2**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.

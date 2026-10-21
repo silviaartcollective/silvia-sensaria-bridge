@@ -16,6 +16,7 @@ import {
 } from './r2.mjs';
 import {randomUUID,createHmac} from 'node:crypto';
 import {streamMockupZip} from './mockup-zip.mjs';
+import {mockupOrientationOf} from './mockup-orientation.mjs';
 import {loadArtworkManifest,saveArtworkManifest} from './artwork-storage.mjs';
 import {copyArtworkObject,artworkObjectInfo,getArtworkObjectStart} from './r2.mjs';
 
@@ -284,7 +285,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     const job=await createMockupJob({
       filename:master.originalFilename||artworkId+'.jpg',
       size:info.size,templateIds:body.templateIds,
-       artworkOrientation:manifest.orientation,fitMode:body.fitMode||'cover'
+       artworkOrientation:mockupOrientationOf(manifest),fitMode:body.fitMode||'cover'
     });
     job.artworkId=artworkId;job.sourceMasterKey=master.key;
     await putMockupJob(job);
@@ -318,7 +319,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     // A batch whose artwork went straight to the PC worker gets its R2 copy now.
     if(current.artworkLocal&&!await artworkObjectExists(current.artworkKey))
      await copyArtworkObject(manifest.master.key,current.artworkKey);
-    const job=await linkMockupArtwork(id,{artworkId,masterKey:manifest.master.key,orientation:manifest.orientation});
+    const job=await linkMockupArtwork(id,{artworkId,masterKey:manifest.master.key,orientation:mockupOrientationOf(manifest)});
     return send(200,{job}),true;
    }
    if(req.method==='POST'&&parts[2]==='control'){
