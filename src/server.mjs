@@ -109,6 +109,7 @@ import {
 import { normalizeCropSize,sizeCropRatioKey,sizeCropTarget,sizeCropObjectKey } from './size-crops.mjs';
 import {
   FULFILLMENT_RATIOS,
+  fulfillmentRatiosForOrientation,
   FULFILLMENT_RATIO_MIN_PIXELS,
   fulfillmentRatioObjectKey
 } from './artwork-ratios.mjs';
@@ -2011,7 +2012,8 @@ async function performListingConversion(body){
         artworkId,
         catalog: products,
         readinessStateId,
-        defaultQuantity: 999
+        defaultQuantity: 999,
+        orientation: manifest.orientation
       });
 
       await withEtsyListingRetry(() => updateListingInventory({
@@ -2742,7 +2744,7 @@ const server = http.createServer(async (req, res) => {
               throw Error('Master artwork changed before default crops completed.');
             latest.fulfillmentRatios=assets;
             latest.fulfillmentRatioInsufficient={};
-            latest.fulfillmentRatiosReady=FULFILLMENT_RATIOS.every(
+            latest.fulfillmentRatiosReady=fulfillmentRatiosForOrientation(currentJob.orientation).every(
               ratio=>Boolean(assets[ratio]?.productionReady));
             latest.fulfillmentRatiosUpdatedAt=new Date().toISOString();
             latest.cropWorkerJobId=currentJob.id;
@@ -2822,8 +2824,8 @@ const server = http.createServer(async (req, res) => {
         throw Error('Master image geometry was not verified. Confirm the R2 artwork upload again.');
       const orientation=manifest.orientation;
       const size=input.size?normalizeCropSize(input.size):null;
-      if(orientation==='square'&&!size)
-        throw Error('Square masters need an explicit on-demand crop size.');
+      if(orientation==='square'&&size&&Number(size.split('x')[0])!==Number(size.split('x')[1]))
+        throw Error('Square masters require square production crop sizes.');
       if(!['landscape','portrait','square'].includes(orientation))
         throw Error('Unknown master image orientation; complete R2 upload again.');
       if(size){
@@ -4975,7 +4977,7 @@ const server = http.createServer(async (req, res) => {
       // A crop failure must never block creation of the Etsy draft.
       let cropQueue = null;
       let cropQueueWarning = '';
-      if (!manifest.fulfillmentRatiosReady || FULFILLMENT_RATIOS.some(
+      if (!manifest.fulfillmentRatiosReady || fulfillmentRatiosForOrientation(manifest.orientation).some(
         ratio => !manifest.fulfillmentRatios?.[ratio]?.productionReady
       )) {
         try {
@@ -5009,7 +5011,8 @@ const server = http.createServer(async (req, res) => {
         artworkId: body.artwork_id,
         catalog: products,
         readinessStateId: body.readiness_state_id,
-        defaultQuantity: 999
+        defaultQuantity: 999,
+        orientation: manifest.orientation
       });
       body.price = variantInventory.minimumPrice;
       body.quantity = 999;
