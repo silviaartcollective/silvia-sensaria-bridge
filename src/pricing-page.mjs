@@ -339,137 +339,78 @@ applyPrices.addEventListener('click',async()=>{
 });
 
 
-const tplPreview=document.getElementById('tpl-preview');
-const tplApply=document.getElementById('tpl-apply');
-const tplAll=document.getElementById('tpl-select-all');
-const tplList=document.getElementById('tpl-list');
-const tplStatus=document.getElementById('tpl-status');
-let templatePreviewRows=[];
-function templateSelections(){
- return Array.from(tplList.querySelectorAll('input[name="default-template"]:checked')).map(box=>{
-  const row=templatePreviewRows.find(item=>String(item.listingId)===box.value);
-  return row?{listingId:row.listingId,fingerprint:row.fingerprint}:null;
- }).filter(Boolean);
+const tplP=document.getElementById('tpl-preview'),tplA=document.getElementById('tpl-apply');
+const tplAll=document.getElementById('tpl-select-all'),tplL=document.getElementById('tpl-list'),tplS=document.getElementById('tpl-status');
+let tplRows=[];
+function selectedTemplates(){
+  return [...tplL.querySelectorAll('input[name="template-choice"]:checked')].map(c=>{
+    const x=tplRows.find(y=>String(y.listingId)===c.value);
+    return x?{listingId:x.listingId,fingerprint:x.fingerprint}:null;
+  }).filter(Boolean);
 }
-function refreshTemplateButtons(){
- const checked=templateSelections();
- tplApply.disabled=checked.length===0;
- tplAll.disabled=!templatePreviewRows.some(item=>item.canUpdate);
- tplApply.textContent=checked.length?'Update selected templates ('+checked.length+')':'Update selected templates';
+function tplControls(){
+  tplA.disabled=!selectedTemplates().length;
+  tplAll.disabled=!tplRows.some(r=>r.canUpdate);
+  tplA.textContent='Update selected templates ('+selectedTemplates().length+')';
 }
-function drawTemplatePreview(data){
- templatePreviewRows=data.templates||[];
- tplList.replaceChildren();
- tplStatus.textContent=String(data.shopListingCount||0)+' Etsy listings scanned or found; '+
-   String(templatePreviewRows.length)+' linked templates inspected; '+
-   String(data.templatesNeedingChanges||0)+' need variation/price updates.'+
-   (data.partialScan?' First 250 listings scanned; enter specific IDs to inspect more.':'');
- for(const item of templatePreviewRows){
-  const card=document.createElement('div');card.className='sync-item';
-  const label=document.createElement('label');label.style.display='flex';label.style.gap='8px';label.style.alignItems='flex-start';
-  const check=document.createElement('input');check.type='checkbox';check.name='default-template';check.value=String(item.listingId);
-  check.disabled=!item.canUpdate;check.checked=false;
-  check.addEventListener('change',refreshTemplateButtons);
-  const info=document.createElement('span');
-  const title=document.createElement('b');
-  title.textContent='#'+item.listingId+' · '+String(item.title||'Untitled')+
-    (item.orientation?' · '+item.orientation:'');
-  info.appendChild(title);
-  const details=document.createElement('div');
-  details.style.marginTop='5px';
-  details.textContent=item.error?String(item.error):item.canUpdate?
-    'Enabled: '+item.enabledVariantCount+
-    ' · New SKUs: '+item.added.length+
-    ' · Removed SKUs: '+item.removed.length+
-    ' · Prices changed: '+item.repriced.length+
-    ' · Total variations: '+item.previousVariantCount+' → '+item.targetVariantCount:
-    'Already matches this orientation’s default template.';
-  info.appendChild(details);
-  if(item.canUpdate){
-   const examples=document.createElement('div');
-   examples.className='muted';
-   examples.style.marginTop='4px';
-   examples.textContent='Example changes: '+
-     [...item.added.slice(0,3),...item.repriced.slice(0,2).map(r=>r.sku+' 
-  rows.innerHTML='<tr><td colspan="17">Loading…</td></tr>';
-
+async function previewDefaultTemplates(){
+  tplP.disabled=true;tplA.disabled=true;tplS.textContent='Checking live Etsy template inventory…';
   try{
-    const r=await fetch('/api/pricing?market='+encodeURIComponent(market.value||'CA'),{cache:'no-store'});
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Pricing failed');
-    render(d);
-  }catch(error){
-    rows.innerHTML='<tr><td colspan="17" class="bad">'+String(error.message||error)+'</td></tr>';
-  }
+    const raw=document.getElementById('tpl-ids').value.trim();
+    const ids=raw?raw.split(/[,;\\s]+/).filter(Boolean):[];
+    if(ids.length>30||ids.some(s=>!/^[1-9]\\d*$/.test(s)))throw Error('Provide up to 30 valid listing IDs.');
+    const response=await fetch('/api/pricing/templates-preview',{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({listingIds:ids.map(Number)})
+    });
+    const data=await response.json();
+    if(!response.ok||!data.ok)throw Error(data.error||'Template preview failed');
+    tplRows=data.templates||[];tplL.replaceChildren();
+    tplS.textContent=String(tplRows.length)+' verified linked template(s) inspected; '+
+      String(data.templatesNeedingChanges||0)+' need updated variants or prices.'+
+      (data.partialScan?' First 250 shop listings scanned. Enter IDs for more.':'');
+    for(const item of tplRows){
+      const panel=document.createElement('div');panel.className='sync-item';
+      const label=document.createElement('label');label.style.display='flex';label.style.gap='10px';
+      const checkbox=document.createElement('input');
+      checkbox.type='checkbox';checkbox.name='template-choice';checkbox.value=String(item.listingId);
+      checkbox.disabled=!item.canUpdate;checkbox.addEventListener('change',tplControls);
+      const details=document.createElement('span');
+      const header=document.createElement('b');
+      header.textContent='#'+item.listingId+' · '+String(item.title||'Untitled')+(item.orientation?' · '+item.orientation:'');
+      const line=document.createElement('div');
+      line.textContent=item.error?item.error:item.canUpdate?
+        'Variations '+item.previousVariantCount+' → '+item.targetVariantCount+
+        ' | New SKUs '+item.added.length+' | Removed '+item.removed.length+
+        ' | Repriced '+item.repriced.length:
+        'Already matches the default inventory.';
+      details.append(header,line);label.append(checkbox,details);panel.append(label);tplL.append(panel);
+    }
+    tplControls();
+  }catch(err){tplRows=[];tplL.replaceChildren();tplS.textContent='Preview failed: '+String(err.message||err);tplControls();}
+  finally{tplP.disabled=false;}
 }
-
-market.addEventListener('change',load);
-load();
-</script>
-</body>
-</html>`;
-}
-+r.fromUsd+' → 
-  rows.innerHTML='<tr><td colspan="17">Loading…</td></tr>';
-
-  try{
-    const r=await fetch('/api/pricing?market='+encodeURIComponent(market.value||'CA'),{cache:'no-store'});
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Pricing failed');
-    render(d);
-  }catch(error){
-    rows.innerHTML='<tr><td colspan="17" class="bad">'+String(error.message||error)+'</td></tr>';
-  }
-}
-
-market.addEventListener('change',load);
-load();
-</script>
-</body>
-</html>`;
-}
-+r.toUsd)].join(' · ');
-   info.appendChild(examples);
-  }
-  label.append(check,info);card.appendChild(label);tplList.appendChild(card);
- }
- refreshTemplateButtons();
-}
-async function previewTemplates(){
- tplPreview.disabled=true;tplApply.disabled=true;tplStatus.textContent='Checking linked Etsy templates and current prices…';
- try{
-  const raw=document.getElementById('tpl-ids').value.trim();
-  const ids=raw?raw.split(/[,;\s]+/).filter(Boolean):[];
-  if(ids.length>30||ids.some(v=>!/^[1-9]\d*$/.test(v)))throw Error('Use up to 30 valid listing IDs per preview.');
-  const res=await fetch('/api/pricing/templates-preview',{method:'POST',
-   headers:{'content-type':'application/json'},body:JSON.stringify({listingIds:ids.map(Number)})});
-  const data=await res.json();if(!res.ok||!data.ok)throw Error(data.error||'Template preview failed.');
-  drawTemplatePreview(data);
- }catch(err){tplStatus.textContent='Template preview failed: '+String(err.message||err);tplList.replaceChildren();templatePreviewRows=[];refreshTemplateButtons();}
- finally{tplPreview.disabled=false;}
-}
-tplPreview.addEventListener('click',previewTemplates);
+tplP.addEventListener('click',previewDefaultTemplates);
 tplAll.addEventListener('click',()=>{
- tplList.querySelectorAll('input[name="default-template"]:not(:disabled)').forEach(box=>box.checked=true);
- refreshTemplateButtons();
+  tplL.querySelectorAll('input[name="template-choice"]:not(:disabled)').forEach(box=>{box.checked=true});
+  tplControls();
 });
-tplApply.addEventListener('click',async()=>{
- const templates=templateSelections();if(!templates.length)return;
- if(!confirm('Rebuild the complete Size × Product - Style inventory for '+templates.length+
- ' selected listing(s)? This may add or remove variations. Artwork, SEO, shipping profiles and media stay unchanged. Confirm to submit to Etsy.'))return;
- tplApply.disabled=true;tplPreview.disabled=true;tplStatus.textContent='Updating and verifying selected Etsy templates…';
+tplA.addEventListener('click',async()=>{
+ const templates=selectedTemplates();if(!templates.length)return;
+ if(!confirm('Rebuild the selected default listing Size and Style variations? Existing sizes may be added or removed. Etsy media, SEO and shipping stay unchanged.'))return;
+ tplA.disabled=true;tplP.disabled=true;tplS.textContent='Updating templates in Etsy…';
  try{
-  const res=await fetch('/api/pricing/templates-apply',{method:'POST',
-   headers:{'content-type':'application/json'},
-   body:JSON.stringify({confirm:'REBUILD SILVIA TEMPLATES',templates})});
-  const data=await res.json();if(!res.ok||!data.ok)throw Error(data.error||'Etsy template update failed.');
-  await previewTemplates();
-  const fails=(data.results||[]).filter(row=>row.error);
-  tplStatus.textContent=String(data.verifiedUpdated||0)+' verified template(s) updated. '+
-   String(data.failed||0)+' failed.'+
-   (fails.length?' Errors: '+fails.map(v=>'#'+v.listingId+': '+v.error).join(' | '):'');
- }catch(err){tplStatus.textContent='Template update failed: '+String(err.message||err);}
- finally{tplPreview.disabled=false;refreshTemplateButtons();}
+   const response=await fetch('/api/pricing/templates-apply',{method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({confirm:'REBUILD SILVIA TEMPLATES',templates})
+   });
+   const data=await response.json();
+   if(!response.ok||!data.ok)throw Error(data.error||'Template update failed');
+   await previewDefaultTemplates();
+   tplS.textContent=String(data.verifiedUpdated||0)+' listing(s) verified updated, '+String(data.failed||0)+' failed.'+
+      (data.failed?' '+(data.results||[]).filter(x=>x.error).map(x=>'#'+x.listingId+': '+x.error).join(' | '):'');
+ }catch(err){tplS.textContent='Update failed: '+String(err.message||err);}
+ finally{tplP.disabled=false;tplControls();}
 });
 
 async function load(){
