@@ -1,9 +1,9 @@
 import sharp from 'sharp';
 import {
   getPrintifyVariants,
-  getPrintifyProducts,
   createPrintifyPricingDraft,
   getPrintifyPricingDraft,
+  deletePrintifyPricingDraft,
   uploadPrintifyPricingImage,
   printifyConfigStatus
 } from './printify.mjs';
@@ -18,7 +18,7 @@ import {
 
 const DRAFT_PREFIX = '[PRIVATE PRICE CHECK — NOT FOR SALE]';
 // One capture at a time; a lookup that arrives meanwhile waits for it and
-// then finds the prices it saved instead of creating the same products.
+// then finds the prices it saved instead of making the same test products.
 let current = null;
 
 function safeNumber(value) {
@@ -182,13 +182,6 @@ async function captureCosts({
     const targets = [...pairs.values()].slice(0, limit);
     const created = [];
     const errors = [];
-    // A product/printer already in the Printify shop (an earlier price check,
-    // or a real product) is reused, never created again. If the shop's
-    // products cannot be read, nothing is created: it could be a duplicate.
-    const shopProducts = targets.length ? await getPrintifyProducts() : [];
-    const existingFor = target => shopProducts.find(product =>
-      Number(product?.blueprint_id) === Number(target.blueprintId) &&
-      Number(product?.print_provider_id) === Number(target.providerId));
     let imageId = null;
     const getImageId = async () => {
       if (!imageId) imageId = await uploadNeutralImage();
@@ -197,21 +190,6 @@ async function captureCosts({
     for (const target of targets) {
       let draft = null;
       try {
-        const existing = existingFor(target);
-        if (existing) {
-          let prices = variantCosts(existing, target);
-          if (!prices.length && existing.id) prices = variantCosts(await getPrintifyPricingDraft(existing.id), target);
-          if (!prices.length) throw new Error('The existing Printify product "' + String(existing.title || existing.id).slice(0, 80) +
-            '" shows no production costs.');
-          await savePrintifyCostLibrary(prices);
-          created.push({
-            blueprintId: target.blueprintId, providerId: target.providerId,
-            product: target.product, printProvider: target.printProvider,
-            pricesCaptured: prices.length, savedInR2: true, reusedProductId: String(existing.id || ''),
-            createdProductId: null, warning: ''
-          });
-          continue;
-        }
         const variantsPayload = await getPrintifyVariants(target.blueprintId, target.providerId);
         const variants = Array.isArray(variantsPayload)
           ? variantsPayload : variantsPayload?.variants || [];
@@ -238,9 +216,8 @@ async function captureCosts({
         if (!prices.length) {
           throw new Error('Printify returned no supplier production costs for the draft');
         }
-        // The unpublished product stays in Printify: later lookups read its
-        // current costs from the shop, and it is reused instead of recreated.
-        // The saved copy keeps the costs if it is ever deleted in Printify.
+        // Saved prices are used by every later lookup, so this product and
+        // printer is never created again; the test product is deleted below.
         let persisted = false;
         let persistenceWarning = '';
         try {
@@ -256,8 +233,7 @@ async function captureCosts({
           printProvider: target.printProvider,
           pricesCaptured: prices.length,
           savedInR2: persisted,
-          reusedProductId: null,
-          createdProductId: String(draft.id),
+          draftId: String(draft.id),
           warning: persistenceWarning
         });
       } catch (error) {
@@ -267,10 +243,24 @@ async function captureCosts({
           product: target.product,
           printProvider: target.printProvider,
           error: error?.message || String(error),
-          // A product created before the failure stays, unpublished, and is
-          // reused by the next capture.
           draftId: draft?.id ? String(draft.id) : null
         });
+      } finally {
+        // The test product is deleted right after its prices are read, also
+        // when reading or saving them failed.
+        if (draft?.id) {
+          const item = [...created, ...errors].find(entry => entry.draftId === String(draft.id));
+          try {
+            await deletePrintifyPricingDraft(draft.id);
+            if (item) item.temporaryDraftDeleted = true;
+          } catch (error) {
+            if (item) {
+              item.temporaryDraftDeleted = false;
+              item.warning = [item.warning, 'The test product "' + String(draft.id) + '" could not be deleted: ' +
+                (error?.message || String(error)) + '. Delete it in Printify.'].filter(Boolean).join(' ');
+            }
+          }
+        }
       }
     }
     invalidatePrintifyCatalogCache();
@@ -283,7 +273,7 @@ async function captureCosts({
       captured: created.reduce((n,item)=>n+item.pricesCaptured,0),
       created, errors,
       pendingProviderPairsEstimate: Math.max(0,targetCount-created.length),
-      note: 'At most one unpublished, private price-check product per Printify product and printer is kept in the Printify shop and reused; nothing is published or ordered.'
+      note: 'Each private, unpublished test product was deleted right after its prices were read; the prices are saved for later lookups. Nothing was published or ordered.'
     };
   }
 }

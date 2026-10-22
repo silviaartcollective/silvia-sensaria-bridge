@@ -87,7 +87,7 @@ table.offer-table th{font-size:9px}
 <main>
 <h1>Custom Size Lookup</h1>
 <p class="sub">Enter the customer's destination, exact requested size and product. The app checks the connected providers specifically for that request and ranks the available options by estimated landed cost.</p>
-<div class="notice"><strong>Read-only quote:</strong> This lookup never creates an Etsy listing, shipping profile or supplier order. (To read Printify's print prices, it makes at most one private, unpublished price-check product per Printify product and printer in your Printify shop, and reuses it.) Prodigi, Printify, Gelato, PrintShrimp and compatible Artelo poster routes are checked for this exact request. The destination list includes the full ISO country list, including countries outside the shop's normal Etsy shipping profile. Sensaria uses the captured full catalog plus captured shipping zones.</div>
+<div class="notice"><strong>Read-only quote:</strong> This lookup never creates an Etsy listing, shipping profile or supplier order. (To read Printify's print prices the first time, it makes a private, unpublished test product in your Printify shop and deletes it right after; the prices are saved.) Prodigi, Printify, Gelato, PrintShrimp and compatible Artelo poster routes are checked for this exact request. The destination list includes the full ISO country list, including countries outside the shop's normal Etsy shipping profile. Sensaria uses the captured full catalog plus captured shipping zones.</div>
 
 <section class="card">
   <div class="lookup">
@@ -165,7 +165,7 @@ table.offer-table th{font-size:9px}
 <div class="notice" id="etsy-private-order-note" style="display:none"><strong>Etsy private custom order:</strong> Use the <strong>Artwork after shop discount</strong> figure as the intended final artwork charge in Etsy's <strong>Price</strong> field. Enter the <strong>Custom delivery charged to buyer</strong> amount directly in Etsy's <strong>Shipping price</strong> field (or US$0 for free delivery). No shipping profile is required. <strong>Check the customer's final checkout total for any additional Etsy sale or coupon</strong> before sending the private listing.</div>
 <section class="card" id="printify-library-card" style="display:none">
  <h2 style="margin:0 0 8px">Printify Production Price Library</h2>
- <p class="sub" style="margin:0 0 14px">Printify shows its print price only on products in your Printify shop. For each Printify product and printer without a price, the app makes <strong>one private, unpublished price-check product</strong> in Printify, reads its prices for every size, and reuses it from then on, so the same product is never created twice. Nothing is published to Etsy or ordered.</p>
+ <p class="sub" style="margin:0 0 14px">Printify shows its print price only on products in your Printify shop. For each Printify product and printer without a price, the app makes a <strong>private, unpublished test product</strong> in Printify, reads its prices for every size, and <strong>deletes it right away</strong>. The prices are saved, so later lookups for that product and printer need no test product. Nothing is published to Etsy or ordered.</p>
  <button class="primary" id="build-printify-library" type="button">Capture missing Printify prices now</button>
  <p class="status" id="printify-library-status">Missing prices are captured automatically after each comparison.</p>
 </section>
@@ -334,8 +334,8 @@ customCropButton.addEventListener('click',async()=>{
 });
 shippingMode.addEventListener('change',()=>{if(lastLookupData)render(lastLookupData);});
 // Printify shows print prices only on products in the shop. Missing ones are
-// captured automatically, once per Printify product and printer: the app makes
-// one private, unpublished price-check product and reuses it from then on.
+// captured automatically: the app makes a private, unpublished test product,
+// reads its prices for every size, deletes it, and keeps the prices.
 async function capturePrintifyPrices(){
  libraryButton.disabled=true;
  libraryStatus.textContent='Getting Printify\u2019s print prices for this size (only the first time for each Printify product and printer)…';
@@ -355,10 +355,9 @@ async function capturePrintifyPrices(){
    if(!response.ok||!data.ok)throw Error(data.error||'Unable to capture Printify prices');
    const successes=data.created||[];
    const failures=data.errors||[];
-   const made=successes.filter(item=>item.createdProductId).length;
-   const reused=successes.filter(item=>item.reusedProductId).length;
-   const warning=successes.filter(item=>item.warning).map(item=>item.printProvider+': '+item.warning).slice(0,3);
-   libraryStatus.textContent='Captured '+data.captured+' Printify print prices · '+made+' private price-check product(s) created, '+reused+' reused.'+
+   const deleted=[...successes,...failures].filter(item=>item.temporaryDraftDeleted).length;
+   const warning=[...successes,...failures].filter(item=>item.warning).map(item=>item.printProvider+': '+item.warning).slice(0,3);
+   libraryStatus.textContent='Captured '+data.captured+' Printify print prices from '+successes.length+' test product(s); '+deleted+' deleted from Printify again.'+
      (data.pendingProviderPairsEstimate?' Still missing: '+data.pendingProviderPairsEstimate+' (captured on the next lookup).':'')+
      (failures.length?' Failures: '+failures.map(item=>item.printProvider+': '+item.error).join(' | '):'')+(warning.length?' Notes: '+warning.join(' | '):'');
    return data;
@@ -370,7 +369,7 @@ async function capturePrintifyPrices(){
  }
 }
 libraryButton.addEventListener('click',async()=>{
- if(!window.confirm('Capture the missing Printify print prices for this size? For each Printify product and printer without a price, the app makes one private, unpublished price-check product in your Printify shop and reuses it later. Nothing is published or ordered.'))return;
+ if(!window.confirm('Capture the missing Printify print prices for this size? For each Printify product and printer without a price, the app makes a private, unpublished test product in your Printify shop, reads its prices and deletes it right away. Nothing is published or ordered.'))return;
  if(await capturePrintifyPrices())await runLookup();
 });
 async function requestCustomQuote(body,maxWaitMs){
