@@ -4,7 +4,6 @@ import {
   getPrintifyProducts,
   createPrintifyPricingDraft,
   getPrintifyPricingDraft,
-  deletePrintifyPricingDraft,
   uploadPrintifyPricingImage,
   printifyConfigStatus
 } from './printify.mjs';
@@ -18,7 +17,9 @@ import {
 } from './printify-cost-store.mjs';
 
 const DRAFT_PREFIX = '[PRIVATE PRICE CHECK — NOT FOR SALE]';
-let running = false;
+// One capture at a time; a lookup that arrives meanwhile waits for it and
+// then finds the prices it saved instead of creating the same products.
+let current = null;
 
 function safeNumber(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -120,14 +121,36 @@ async function createUnpublished(payload, getImageId) {
   }
 }
 
-export async function buildPrintifyCostsForRequest({
+// The costs of every variant of a product in the Printify shop.
+function variantCosts(product, target) {
+  return (product?.variants || [])
+    .filter(v => Number.isSafeInteger(safeNumber(v?.cost)) && Number(v.cost) >= 0)
+    .map(v => ({
+      blueprintId: target.blueprintId,
+      providerId: target.providerId,
+      variantId: v.id,
+      costCents: Number(v.cost)
+    }));
+}
+
+export async function buildPrintifyCostsForRequest(input = {}) {
+  while (current) await current.catch(() => {});
+  const run = captureCosts(input);
+  current = run;
+  try {
+    return await run;
+  } finally {
+    if (current === run) current = null;
+  }
+}
+
+async function captureCosts({
   countryCode, productCode, width, height, frame = '', maxDrafts = 3,
   confirm = ''
 } = {}) {
   if (confirm !== 'CREATE_UNPUBLISHED_PRINTIFY_PRICING_DRAFTS') {
     throw new Error('Explicit confirmation required for unpublished Printify draft creation');
   }
-  if (running) throw new Error('A Printify cost-library scan is already in progress');
   if (!printifyConfigStatus().ready) throw new Error('Printify API token is not configured');
   if (!['P','C','FC'].includes(String(productCode).toUpperCase())) {
     throw new Error('Only Poster, Canvas and Framed Canvas are allowed');
@@ -137,8 +160,7 @@ export async function buildPrintifyCostsForRequest({
   const size = safeSize(width, height);
   const product = String(productCode).toUpperCase();
   const limit = Math.max(1, Math.min(4, Math.floor(Number(maxDrafts) || 3)));
-  running = true;
-  try {
+  {
     const row = {
       productCode: product, size,
       finish: product === 'FC' ? frame : '—'
@@ -160,6 +182,13 @@ export async function buildPrintifyCostsForRequest({
     const targets = [...pairs.values()].slice(0, limit);
     const created = [];
     const errors = [];
+    // A product/printer already in the Printify shop (an earlier price check,
+    // or a real product) is reused, never created again. If the shop's
+    // products cannot be read, nothing is created: it could be a duplicate.
+    const shopProducts = targets.length ? await getPrintifyProducts() : [];
+    const existingFor = target => shopProducts.find(product =>
+      Number(product?.blueprint_id) === Number(target.blueprintId) &&
+      Number(product?.print_provider_id) === Number(target.providerId));
     let imageId = null;
     const getImageId = async () => {
       if (!imageId) imageId = await uploadNeutralImage();
@@ -168,6 +197,21 @@ export async function buildPrintifyCostsForRequest({
     for (const target of targets) {
       let draft = null;
       try {
+        const existing = existingFor(target);
+        if (existing) {
+          let prices = variantCosts(existing, target);
+          if (!prices.length && existing.id) prices = variantCosts(await getPrintifyPricingDraft(existing.id), target);
+          if (!prices.length) throw new Error('The existing Printify product "' + String(existing.title || existing.id).slice(0, 80) +
+            '" shows no production costs.');
+          await savePrintifyCostLibrary(prices);
+          created.push({
+            blueprintId: target.blueprintId, providerId: target.providerId,
+            product: target.product, printProvider: target.printProvider,
+            pricesCaptured: prices.length, savedInR2: true, reusedProductId: String(existing.id || ''),
+            createdProductId: null, warning: ''
+          });
+          continue;
+        }
         const variantsPayload = await getPrintifyVariants(target.blueprintId, target.providerId);
         const variants = Array.isArray(variantsPayload)
           ? variantsPayload : variantsPayload?.variants || [];
@@ -190,36 +234,20 @@ export async function buildPrintifyCostsForRequest({
           if (attempt) await new Promise(resolve => setTimeout(resolve, 800));
           pricedDraft = await getPrintifyPricingDraft(draft.id);
         }
-        const prices = (pricedDraft?.variants || [])
-          .filter(v => Number.isSafeInteger(safeNumber(v?.cost)) && Number(v.cost) >= 0)
-          .map(v => ({
-            blueprintId: target.blueprintId,
-            providerId: target.providerId,
-            variantId: v.id,
-            costCents: Number(v.cost)
-          }));
+        const prices = variantCosts(pricedDraft, target);
         if (!prices.length) {
           throw new Error('Printify returned no supplier production costs for the draft');
         }
+        // The unpublished product stays in Printify: later lookups read its
+        // current costs from the shop, and it is reused instead of recreated.
+        // The saved copy keeps the costs if it is ever deleted in Printify.
         let persisted = false;
         let persistenceWarning = '';
         try {
           await savePrintifyCostLibrary(prices);
           persisted = true;
         } catch (error) {
-          // Keep the unpublished draft if the R2 save failed; its costs
-          // remain recoverable via the Printify shop-products endpoint.
           persistenceWarning = error?.message || String(error);
-        }
-        let removed = false;
-        let removeWarning = '';
-        if (persisted) {
-          try {
-            await deletePrintifyPricingDraft(draft.id);
-            removed = true;
-          } catch (error) {
-            removeWarning = error?.message || String(error);
-          }
         }
         created.push({
           blueprintId: target.blueprintId,
@@ -228,9 +256,9 @@ export async function buildPrintifyCostsForRequest({
           printProvider: target.printProvider,
           pricesCaptured: prices.length,
           savedInR2: persisted,
-          temporaryDraftDeleted: removed,
-          retainedDraftId: removed ? null : String(draft.id),
-          warning: persistenceWarning || removeWarning || ''
+          reusedProductId: null,
+          createdProductId: String(draft.id),
+          warning: persistenceWarning
         });
       } catch (error) {
         errors.push({
@@ -239,7 +267,8 @@ export async function buildPrintifyCostsForRequest({
           product: target.product,
           printProvider: target.printProvider,
           error: error?.message || String(error),
-          // A draft may remain, unpublished, if capture failed after creation.
+          // A product created before the failure stays, unpublished, and is
+          // reused by the next capture.
           draftId: draft?.id ? String(draft.id) : null
         });
       }
@@ -254,11 +283,9 @@ export async function buildPrintifyCostsForRequest({
       captured: created.reduce((n,item)=>n+item.pricesCaptured,0),
       created, errors,
       pendingProviderPairsEstimate: Math.max(0,targetCount-created.length),
-      note: 'Only unpublished, private Printify test products were created. No product was published or ordered. Successfully saved pricing probes are deleted from Printify; any unsaved drafts remain unpublished for safety.'
+      note: 'At most one unpublished, private price-check product per Printify product and printer is kept in the Printify shop and reused; nothing is published or ordered.'
     };
-  } finally {
-    running = false;
   }
 }
 
-export const __test = { draftPayload, labelsForVariant, imagePayload, safeSize };
+export const __test = { draftPayload, labelsForVariant, imagePayload, safeSize, variantCosts };
