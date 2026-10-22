@@ -170,6 +170,32 @@ export async function getConverterArtworkRevisionStatus(shopId,listingId){
   ready:ready||record.status==='activated',progress:job?.progress||0,
   currentRatio:job?.currentRatio||'',message:error||job?.error||job?.message||''};
 }
+// The status of several listings' artwork jobs from one read of the crop
+// queue, for a page running several at once. Waiting jobs get their place
+// in the queue (the PC worker crops one job at a time, oldest first).
+export async function getConverterArtworkRevisionStatuses(shopId,listingIds){
+ const ids=[...new Set(listingIds.map(Number).filter(id=>Number.isSafeInteger(id)&&id>0))].slice(0,60);
+ const records=await Promise.all(ids.map(id=>getConverterArtworkRevision(shopId,id).catch(()=>null)));
+ const jobs=(await readCropJobStore()).jobs||[];
+ const pending=jobs.filter(job=>job.status==='pending').sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)));
+ const statuses={};
+ for(const [index,record] of records.entries()){
+  if(!record){statuses[ids[index]]={exists:false};continue}
+  const job=record.jobId?jobs.find(item=>item.id===record.jobId)||null:null;
+  let ready=false,error='';
+  if(job?.status==='completed'&&record.status!=='activated')
+   try{await checkedRevisionAssets({...record,jobId:record.jobId},job);ready=true}
+   catch(e){error=String(e.message||e)}
+  const place=job?.status==='pending'?pending.findIndex(item=>item.id===job.id)+1:0;
+  statuses[ids[index]]={exists:true,revision:record.revision,artworkId:record.artworkId,
+   filename:record.filename,source:record.source||'upload',jobId:record.jobId||null,
+   status:record.status==='activated'?'activated':job?.status||record.status,
+   ready:ready||record.status==='activated',progress:job?.progress||0,queuePosition:place,
+   queuedAt:record.cropQueuedAt||null,
+   currentRatio:job?.currentRatio||'',message:error||job?.error||job?.message||''};
+ }
+ return statuses;
+}
 export async function assertConverterArtworkReady({shopId,listingId,revision,artworkId}){
  const record=await getConverterArtworkRevision(shopId,listingId);
  if(!record||record.revision!==String(revision)||record.artworkId!==artId(artworkId))

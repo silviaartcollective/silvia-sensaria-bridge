@@ -52,7 +52,7 @@ import {
  updateConversionJob,cancelConversion
 } from './listing-conversion-queue.mjs';
 import {
- reserveConverterArtworkRevision,reserveConverterArtworkRegeneration,startConverterArtworkCrop,getConverterArtworkRevisionStatus,
+ reserveConverterArtworkRevision,reserveConverterArtworkRegeneration,startConverterArtworkCrop,getConverterArtworkRevisionStatus,getConverterArtworkRevisionStatuses,
  assertConverterArtworkReady,activateConverterArtworkRevision
 } from './converter-artwork-revision.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
@@ -4503,6 +4503,19 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Several listings' artwork jobs at once (Listings page). It only reads
+  // this app's job records and crop queue: no Etsy call per poll.
+  if(req.method==='GET'&&url.pathname==='/api/listing-converter/reconvert/statuses'){
+    if(!requireAdminApi(req,res))return;
+    try{
+      const ids=String(url.searchParams.get('listingIds')||'').split(',').filter(Boolean);
+      if(!ids.length||ids.length>60||ids.some(id=>!/^[1-9]\d{0,19}$/.test(id)))
+        return sendJson(res,400,{ok:false,error:'Give 1 to 60 Etsy listing IDs.'});
+      const session=await getEtsySession();
+      return sendJson(res,200,{ok:true,statuses:await getConverterArtworkRevisionStatuses(String(session.shop.shop_id),ids)});
+    }catch(error){return sendJson(res,500,{ok:false,error:String(error.message||error)});}
+  }
+
   // Staged reconversion requires a fresh master and a separately verified crop job.
   if ((req.method==='POST'&&(
      url.pathname==='/api/listing-converter/reconvert/reserve'||
@@ -4526,7 +4539,8 @@ const server = http.createServer(async (req, res) => {
      if(!Number.isSafeInteger(listingId)||listingId<=0)
       return sendJson(res,400,{ok:false,error:'Invalid Etsy listing ID.'});
      const map=await loadListingConverterMap();
-     const session=await getEtsySession({forceRefresh:true}),shopId=String(session.shop.shop_id);
+     // A status read uses the cached Etsy login; changes refresh it.
+     const session=await getEtsySession({forceRefresh:req.method==='POST'}),shopId=String(session.shop.shop_id);
      // Converted listings are verified through the converter map; Product
      // Creator listings through their artwork manifest and Etsy SKUs.
      const etsyListing=map.listings?.[String(listingId)]?.status==='converted'?null:

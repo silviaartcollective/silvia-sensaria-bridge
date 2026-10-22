@@ -68,7 +68,7 @@ function fixture({geometry={width:6000,height:4000,orientation:'landscape'}}={})
  const body=source.replace(/^\s*import\s+[\s\S]*?\s+from\s+['"][^'"]+['"];?\s*$/gm,'').replace(/^export /gm,'');
  const sandbox=vm.createContext({...stubs,console:{...console,info(){},warn(){}}});
  vm.runInContext(body+';globalThis.api={reserveConverterArtworkRegeneration,startConverterArtworkCrop,'+
-  'activateConverterArtworkRevision,cleanupStaleDerivedFiles,foreignRatioCrops};',sandbox);
+  'activateConverterArtworkRevision,cleanupStaleDerivedFiles,foreignRatioCrops,getConverterArtworkRevisionStatuses};',sandbox);
  const args={shopId:'123456',listingId:4201324221,artworkId:identifier};
  function completeCrops(revision,stagedMaster,jobId){
   const job=jobs.get(jobId);job.status='completed';
@@ -157,6 +157,24 @@ test('a new master keeps the crops of the layout its listing sold before', ()=>{
  // Only ratios neither layout uses are unused: the sandbox lists 2x3, 3x4, 4x5, 11x14, 1x1, 1x2, 1x3.
  assert.deepEqual([...f.api.foreignRatioCrops(['2x3','3x4','4x5','11x14'],['1x2','1x3'])],['1x1']);
  assert.deepEqual([...f.api.foreignRatioCrops(['1x2','1x3'],['1x2','1x3'])],['2x3','3x4','4x5','11x14','1x1']);
+});
+
+test('one status read covers several listings, with each waiting job\'s place in the crop queue', async()=>{
+ const f=fixture();
+ f.jobs.set('older',{id:'older',status:'pending',createdAt:'2026-01-01T00:00:00.000Z'});
+ const reserved=await f.api.reserveConverterArtworkRegeneration(f.args);
+ const started=await f.api.startConverterArtworkCrop({...f.args,revision:reserved.revision});
+ f.jobs.get(started.job.id).createdAt='2026-01-02T00:00:00.000Z';
+ let statuses=await f.api.getConverterArtworkRevisionStatuses('123456',[f.args.listingId,999,'x']);
+ assert.equal(statuses[f.args.listingId].status,'pending');
+ assert.equal(statuses[f.args.listingId].queuePosition,2,'second in line behind the older job');
+ assert.equal(statuses[f.args.listingId].ready,false);
+ assert.deepEqual({...statuses[999]},{exists:false});
+ assert.equal(Object.keys(statuses).length,2,'invalid IDs are dropped');
+ f.completeCrops(reserved.revision,'artworks/'+identifier+'/.reconvert/'+reserved.revision+'/master.jpg',started.job.id);
+ statuses=await f.api.getConverterArtworkRevisionStatuses('123456',[f.args.listingId]);
+ assert.equal(statuses[f.args.listingId].ready,true);
+ assert.equal(statuses[f.args.listingId].queuePosition,0);
 });
 
 test('cleanup only looks inside the derived folders of that one artwork', async()=>{
