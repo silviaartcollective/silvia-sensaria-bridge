@@ -85,8 +85,26 @@ test('Master Listings shows listing cards with their Etsy photo, like the conver
  assert.match(client,/previewsActive<4/);
  assert.match(client,/new IntersectionObserver/);
  assert.match(client,/className='listing-card'/);
- // A card's Etsy link opens Etsy, not the editor; Escape or the backdrop closes the editor.
- assert.match(client,/if\(!event\.target\.closest\('a'\)\)chooseListing/);
+ // A card's Etsy link and artwork controls do not open the editor; Escape or the backdrop closes it.
+ assert.match(client,/if\(!event\.target\.closest\('a,\.card-artwork'\)\)chooseListing/);
  assert.match(client,/event\.key==='Escape'/);
  assert.match(client,/el\('editor-backdrop'\)\.addEventListener\('click',closeEditor\)/);
+});
+
+test('each listing card can re-upload or regenerate its artwork, several at once', () => {
+ const client = readFileSync(new URL('../src/listings-client.js', import.meta.url), 'utf8');
+ const page = renderListingsPage();
+ // A converter-style control on every card with an artwork ID, kept out of the card's editor click.
+ assert.match(client, /if\(row\.artworkId\)body\.append\(artworkArea\(row\)\)/);
+ assert.match(client, /wrap\.addEventListener\('click',event=>event\.stopPropagation\(\)\)/);
+ assert.match(page, /\.card-artwork \.bar/);
+ assert.match(page, /href=\\?"pod-crop-worker:\/\/start\\?">Launch PC crop worker<\/a><button id=\\?"reload-list/);
+ // One job per listing (no page-wide lock), two uploads at a time, one status request for all.
+ assert.doesNotMatch(client, /artworkBusy/);
+ assert.match(client, /uploadsActive>=2/);
+ assert.match(client, /reconvert\/statuses\?listingIds='\+waiting\.map/);
+ assert.doesNotMatch(client, /reconvert\/status\?listingId/);
+ // Runs still on their way come back after a reload; recent finished ones are applied.
+ assert.match(client, /if\(!data\.hasMore\)\{void resumeArtworkJobs\(\);break;\}/);
+ assert.match(client, /status\.ready&&recent/);
 });
