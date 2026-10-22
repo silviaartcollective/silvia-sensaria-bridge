@@ -24,8 +24,10 @@ services:
         value: shadow
       - key: FULFILLMENT_LIVE_SUBMISSION_ENABLED
         value: "false"
+      # Order Tracking sends tracking to Etsy (Mark shipped on Etsy, or automatic
+      # completion from Gmail). "false" switches that off.
       - key: ETSY_SHIPMENT_SUBMISSION_ENABLED
-        value: "false"
+        value: "true"
       - key: GELATO_FULFILLMENT_ENABLED
         value: "false"
       - key: PRODIGI_FULFILLMENT_ENABLED
