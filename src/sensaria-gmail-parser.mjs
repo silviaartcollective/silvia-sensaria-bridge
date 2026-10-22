@@ -47,7 +47,20 @@ export function extractGmailText(payload){
   walk(payload,0);
   return cleanMessageBody(plain.join(' ')||html.join(' '));
 }
-export function carrierFromShipment(text,url=''){
+// A UPS tracking number: 1Z, 15 characters, then the check digit UPS computes
+// from them (letters count as (position in the alphabet + 2) mod 10, every
+// second character double). Only UPS issues numbers that pass this check.
+export function isUpsTrackingNumber(value){
+  const number=String(value||'').toUpperCase();
+  if(!/^1Z[A-Z0-9]{16}$/.test(number))return false;
+  let sum=0;
+  for(let i=2;i<17;i++){
+    const c=number[i],digit=/[0-9]/.test(c)?Number(c):(c.charCodeAt(0)-63)%10;
+    sum+=i%2?digit*2:digit;
+  }
+  return (10-sum%10)%10===Number(number[17]);
+}
+export function carrierFromShipment(text,url='',trackingNumber=''){
   const body=String(text||'');
   const host=String(url||'').toLowerCase();
   const match=body.match(/(?:carrier|shipped\s+(?:via|with)|shipping\s+(?:company|provider))\s*[:\-]?\s*(UPS|USPS|FedEx|DHL|Canada Post|Purolator|OnTrac|DPD)\b/i);
@@ -58,6 +71,8 @@ export function carrierFromShipment(text,url=''){
     [/dhl\.com/,'DHL'],[/ontrac\.com/,'OnTrac'],
     [/canadapost\.ca/,'Canada Post'],[/purolator\.com/,'Purolator'],[/dpd\./,'DPD']
   ])if(pattern.test(host))return name;
+  // Sensaria's emails may name no carrier and link a redirect, not ups.com.
+  if(isUpsTrackingNumber(trackingNumber))return 'UPS';
   return '';
 }
 export function parseSensariaShipment({from,subject='',body='',messageId=''},records=[]){
@@ -79,7 +94,7 @@ export function parseSensariaShipment({from,subject='',body='',messageId=''},rec
   const urls=[...String(body).matchAll(/https?:\/\/[^\s"'<>)]{8,500}/gi)]
     .map(x=>x[0].replace(/(?:&amp;|[.,;]+)$/gi,'')); 
   const url=urls.find(x=>/(?:ups|fedex|usps|dhl|canadapost|ontrac|purolator|dpd)/i.test(x))||'';
-  const carrier=carrierFromShipment(title+' '+content,url);
+  const carrier=carrierFromShipment(title+' '+content,url,trackings[0]);
   if(!carrier)return {status:'review',trackingNumber:trackings[0],reason:'Carrier could not be verified.'};
   const shipment={trackingNumber:trackings[0],carrier,trackingUrl:url,sourceMessageId:String(messageId).slice(0,100)};
   const refs=(records||[]).filter(r=>r?.supplier==='sensaria'&&
