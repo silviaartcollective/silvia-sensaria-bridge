@@ -163,18 +163,22 @@ async function refreshGmailStatus(){
   $('gmail-connect').style.display=res.configured&&!connected?'inline-block':'none';
   $('gmail-scan').disabled=!connected||Boolean(res.scanning);
   $('gmail-disconnect').style.display=connected?'inline-block':'none';
+  $('gmail-auto-complete').disabled=!connected;
+  $('gmail-auto-complete').checked=Boolean(res.autoCompleteEtsy);
   box.className='status'+(connected?' success':'');
   box.textContent=!res.configured
    ?'Setup required: add Gmail OAuth client ID, client secret, redirect URI, and a 32-byte encryption key to Render. Then use Connect Gmail.'
    :connected
     ?'Connected (read-only): '+(res.emailAddress||'Gmail')+
-      (res.scanning?' · Background scan running':' · Scans are scheduled every 30 minutes while the app server is running.')
+      (res.scanning?' · Background scan running':' · Checked every 15 minutes while the app server is running.')+
+      (res.autoCompleteEtsy?' Verified tracking is sent to Etsy automatically.':' Tracking is staged for you to send to Etsy.')
     :'Gmail has not yet been connected. Authorize only the mailbox where Sensaria sends shipment updates.';
   const last=res.lastRun;
   if(last){
     $('gmail-results').textContent='Last scan: '+last.checkedAt+
       ' · '+(last.scanned||0)+' messages inspected · '+(last.staged||0)+
-      ' new tracking numbers staged · '+(last.duplicates||0)+' already present.'+
+      ' new tracking numbers staged · '+(last.linked||0)+' orders linked by receipt number · '+
+      (last.completedOnEtsy?.length||0)+' completed on Etsy · '+(last.duplicates||0)+' already present.'+
       (last.message?' '+last.message:'')+
       (last.needsReview?.length?' '+last.needsReview.length+' message(s) need review.':'');
   }
@@ -190,7 +194,9 @@ $('gmail-scan').addEventListener('click',()=>run(async()=>{
   await refresh();
   await refreshGmailStatus();
   const rows=Array.isArray(scan.needsReview)?scan.needsReview:[];
+  const completed=Array.isArray(scan.completedOnEtsy)?scan.completedOnEtsy:[];
   const summary='Gmail scan finished: '+(scan.staged||0)+' tracking number(s) staged, '+
+    completed.length+' order(s) completed on Etsy, '+
     (scan.duplicates||0)+' duplicate(s), '+rows.length+' needing review.'+
     (scan.message?'\n'+scan.message:'');
   const problems=rows.slice(0,10).map(item=>
@@ -198,6 +204,22 @@ $('gmail-scan').addEventListener('click',()=>run(async()=>{
     (item.trackingNumber?' (tracking '+item.trackingNumber+')':'')).join('\n');
   message(summary+(problems?'\n'+problems:''));
 }));
+$('gmail-auto-complete').addEventListener('change',event=>{
+  // Another action is running: put the switch back rather than leave it unsaved.
+  if(busy){event.target.checked=!event.target.checked;return;}
+  void toggleAutoComplete(event);
+});
+const toggleAutoComplete=event=>run(async()=>{
+  const on=event.target.checked;
+  if(on&&!window.confirm('Complete Etsy orders automatically?\n\nWhen a verified Sensaria shipment email arrives, the tracking is sent to Etsy: Etsy marks the order shipped and emails the buyer. Tracking already staged from Gmail is sent on the next scan.')){
+    event.target.checked=false;return;
+  }
+  try{
+    await api('/api/tracking/gmail/settings',on?{autoCompleteEtsy:true,confirm:'COMPLETE ETSY ORDERS AUTOMATICALLY'}:{autoCompleteEtsy:false});
+  }catch(error){event.target.checked=!on;throw error;}
+  await refreshGmailStatus();
+  message(on?'Automatic completion is on. Verified Sensaria tracking is sent to Etsy on each scan.':'Automatic completion is off. Gmail tracking is staged for you to send.');
+});
 $('gmail-disconnect').addEventListener('click',()=>run(async()=>{
   if(!window.confirm('Disconnect Gmail from this shop app? This revokes Gmail access and leaves existing staged tracking intact.'))return;
   await api('/api/tracking/gmail/disconnect',{confirm:'DISCONNECT GMAIL'});
@@ -205,7 +227,7 @@ $('gmail-disconnect').addEventListener('click',()=>run(async()=>{
   message('Gmail disconnected. Existing staged tracking was preserved.');
 }));
 const gmailCallback=new URL(location.href).searchParams.get('gmail');
-if(gmailCallback==='connected')message('Gmail was connected. Shipment tracking will be staged only after a verified supplier order link.');
+if(gmailCallback==='connected')message('Gmail was connected. Sensaria shipment emails are checked every 15 minutes, or now with Scan Sensaria emails.');
 else if(gmailCallback==='error')message('Gmail connection could not finish. Check the server settings and try Connect Gmail again.',true);
 void refreshGmailStatus();
 

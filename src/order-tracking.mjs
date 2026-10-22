@@ -346,8 +346,10 @@ export function prepareStagedEtsyShipment(record, receipt, input, shopId) {
   return {receiptId:id,trackingNumber:shipment.trackingNumber,carrier:etsyCarrierCode(shipment.carrier),alreadyOnEtsy:found};
 }
 export async function sendStagedShipmentToEtsy(session,input) {
-  if(String(process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED||'').toLowerCase()!=='true')
-    throw new Error('Etsy shipment submission is disabled. Etsy must approve this endpoint, then enable ETSY_SHIPMENT_SUBMISSION_ENABLED.');
+  // createReceiptShipment needs the transactions_w scope the app already asks for.
+  // ETSY_SHIPMENT_SUBMISSION_ENABLED=false on Render switches sending off.
+  if(String(process.env.ETSY_SHIPMENT_SUBMISSION_ENABLED||'').toLowerCase()==='false')
+    throw new Error('Sending tracking to Etsy is switched off (ETSY_SHIPMENT_SUBMISSION_ENABLED=false on Render).');
   if(input?.confirm!=='MARK SHIPPED ON ETSY')
     throw new Error('Explicit MARK SHIPPED ON ETSY confirmation required. Etsy emails the buyer.');
   const id=receiptId(input.receiptId);

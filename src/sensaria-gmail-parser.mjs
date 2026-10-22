@@ -80,21 +80,31 @@ export function parseSensariaShipment({from,subject='',body='',messageId=''},rec
     .map(x=>x[0].replace(/(?:&amp;|[.,;]+)$/gi,'')); 
   const url=urls.find(x=>/(?:ups|fedex|usps|dhl|canadapost|ontrac|purolator|dpd)/i.test(x))||'';
   const carrier=carrierFromShipment(title+' '+content,url);
+  if(!carrier)return {status:'review',trackingNumber:trackings[0],reason:'Carrier could not be verified.'};
+  const shipment={trackingNumber:trackings[0],carrier,trackingUrl:url,sourceMessageId:String(messageId).slice(0,100)};
   const refs=(records||[]).filter(r=>r?.supplier==='sensaria'&&
     /^\d{5,18}$/.test(String(r?.supplierOrderId||''))&&
     new RegExp('(^|[^0-9])'+String(r.supplierOrderId)+'([^0-9]|$)').test(title+' '+content));
   // The order number in a shipment email must identify exactly one already
   // linked receipt. A customer name or artwork title never counts as proof.
-  if(refs.length!==1)return {
-    status:'review',reason:refs.length>1?'Supplier order ID is ambiguous.':'No linked Sensaria order ID found in the shipment email.',
-    trackingNumber:trackings[0],carrier
-  };
-  if(!carrier)return {status:'review',receiptId:refs[0].receiptId,
-    trackingNumber:trackings[0],reason:'Carrier could not be verified.'};
-  return {
+  if(refs.length>1)return {status:'review',reason:'Supplier order ID is ambiguous.',trackingNumber:trackings[0],carrier};
+  if(refs.length===1)return {
     status:'matched',receiptId:String(refs[0].receiptId),
-    supplierOrderId:String(refs[0].supplierOrderId),
-    trackingNumber:trackings[0],carrier,
-    trackingUrl:url,sourceMessageId:String(messageId).slice(0,100)
+    supplierOrderId:String(refs[0].supplierOrderId),...shipment
   };
+  // No linked order: the Sensaria CSV's PO Number is the Etsy receipt number.
+  // The scanner keeps a number only if Etsy confirms it is one of this shop's
+  // paid, open receipts.
+  const candidates=receiptNumberCandidates(title+' '+content,trackings[0]);
+  if(!candidates.length)return {status:'review',reason:'No Etsy receipt number or linked Sensaria order ID found in the shipment email.',
+    trackingNumber:trackings[0],carrier};
+  return {status:'check_receipt',candidates,...shipment};
+}
+
+// Numbers in the email that could be an Etsy receipt number (9–12 digits),
+// other than ones inside the tracking number.
+export function receiptNumberCandidates(text,trackingNumber=''){
+  const tracking=String(trackingNumber);
+  return [...new Set([...String(text||'').matchAll(/(?<![0-9A-Za-z])([1-9][0-9]{8,11})(?![0-9A-Za-z])/g)].map(m=>m[1]))]
+    .filter(number=>!tracking.includes(number)).slice(0,5);
 }
