@@ -5,7 +5,7 @@ import { loadArtworkManifest,saveArtworkManifest } from './artwork-storage.mjs';
 import { createCropJob,getCropJob,readCropJobStore } from './crop-job-store.mjs';
 import { checkedRevisionAssets } from './artwork-revision.mjs';
 import {inspectStoredMasterGeometry} from './master-geometry.mjs';
-import {FULFILLMENT_RATIOS,fulfillmentRatioObjectKey,fulfillmentRatiosForOrientation} from './artwork-ratios.mjs';
+import {FULFILLMENT_RATIOS,SQUARE_FULFILLMENT_RATIOS,PANORAMIC_FULFILLMENT_RATIOS,fulfillmentRatioObjectKey,fulfillmentRatiosForOrientation} from './artwork-ratios.mjs';
 import { getJsonObject,putJsonObject,artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl,
   copyArtworkObject,deleteArtworkObject,listArtworkObjectKeys,listArtworkObjects } from './r2.mjs';
 
@@ -151,7 +151,7 @@ export async function startConverterArtworkCrop({shopId,listingId,revision,artwo
   return {record,job,reused:true};
  }
  const result=await createCropJob({artworkId:record.artworkId,
-  masterKey:record.masterKey,orientation:record.orientation});
+  masterKey:record.masterKey,orientation:record.orientation,width:geometry.width,height:geometry.height});
  record.jobId=result.job.id;record.status='cropping';record.cropQueuedAt=new Date().toISOString();
  await putJsonObject(keyFor(shopId,listingId),record);
  return {record,job:result.job,reused:result.reused};
@@ -187,12 +187,12 @@ export async function assertConverterArtworkReady({shopId,listingId,revision,art
 }
 // Staged uploads and crops are disposable; successful artwork always uses
 // artworks/ID/master.ext + artworks/ID/fulfillment/{ratio}.jpg + manifest.json.
-export function canonicalReconversionKeys(artworkId,extension,orientation='portrait'){
+export function canonicalReconversionKeys(artworkId,extension,orientation='portrait',master={}){
  const id=artId(artworkId),ext=String(extension||'').toLowerCase();
  if(!/^(jpg|jpeg|png|webp|tif|tiff)$/.test(ext))throw Error('Invalid master extension.');
  return {
   master:'artworks/'+id+'/master.'+ext,
-  ratios:Object.fromEntries(fulfillmentRatiosForOrientation(orientation).map(r=>[r,fulfillmentRatioObjectKey(id,r)]))
+  ratios:Object.fromEntries(fulfillmentRatiosForOrientation(orientation,master).map(r=>[r,fulfillmentRatioObjectKey(id,r)]))
  };
 }
 const pendingRoot=(record)=>'artworks/'+artId(record.artworkId)+'/.reconvert/'+record.revision+'/';
@@ -213,6 +213,14 @@ export async function cleanupStaleDerivedFiles(artworkId,{now=Date.now(),minAgeM
   }
  }
  return {deleted,kept};
+}
+// Ratio crops that fit neither the old nor the new layout of an artwork (1:2
+// and 1:3 on a horizontal listing, the regular ratios on a panoramic one).
+// Its listing never sold those sizes, so no order can be downloading them.
+// A replaced master keeps its old layout's crops for orders still in progress.
+export function foreignRatioCrops(before,after){
+ const used=new Set([...before,...after]);
+ return [...FULFILLMENT_RATIOS,...SQUARE_FULFILLMENT_RATIOS,...PANORAMIC_FULFILLMENT_RATIOS].filter(ratio=>!used.has(ratio));
 }
 async function cleanupTemporary(record){
  const prefix=pendingRoot(record),keys=await listArtworkObjectKeys(prefix);
@@ -237,10 +245,10 @@ export async function activateConverterArtworkRevision({shopId,listingId,revisio
  manifest=await loadArtworkManifest(checked.artworkId);
  if(manifest.master?.key!==checked.originalMasterKey)
   throw Error('Original master changed before replacement. Nothing was deleted.');
- const ext=checked.filename.split('.').pop().toLowerCase(),dest=canonicalReconversionKeys(checked.artworkId,ext,checked.orientation);
+ const ext=checked.filename.split('.').pop().toLowerCase(),dest=canonicalReconversionKeys(checked.artworkId,ext,checked.orientation,checked.masterGeometry);
  const sources=[
   {from:checked.masterKey,to:dest.master},
-  ...fulfillmentRatiosForOrientation(checked.orientation).map(r=>({from:assets[r].key,to:dest.ratios[r]}))
+  ...fulfillmentRatiosForOrientation(checked.orientation,checked.masterGeometry).map(r=>({from:assets[r].key,to:dest.ratios[r]}))
  ];
  // Canonical assets are backed up only while promotion is in progress.
  let backups=Array.isArray(checked.promotionBackups)?checked.promotionBackups:null;
@@ -266,7 +274,7 @@ export async function activateConverterArtworkRevision({shopId,listingId,revisio
  try{
   for(const pair of sources)await copyArtworkObject(pair.from,pair.to);
   const updatedAt=new Date().toISOString();
-  const ratios=Object.fromEntries(fulfillmentRatiosForOrientation(checked.orientation).map(r=>[r,{
+  const ratios=Object.fromEntries(fulfillmentRatiosForOrientation(checked.orientation,checked.masterGeometry).map(r=>[r,{
    ...assets[r],key:dest.ratios[r],sourceMasterKey:dest.master
   }]));
   const next={
@@ -324,5 +332,15 @@ export async function activateConverterArtworkRevision({shopId,listingId,revisio
    console.info('[reconvert] '+checked.artworkId+': removed '+cleaned.deleted.length+
     ' stale derived file(s); kept '+cleaned.kept.length+' newer than 7 days.');
  }catch(error){console.warn('Stale derived file cleanup skipped:',error.message)}
+ try{
+  const removed=[],now=fulfillmentRatiosForOrientation(checked.orientation,checked.masterGeometry);
+  // Regenerating from the stored master cannot change the listing's layout.
+  const before=checked.source==='existing-master'?now:fulfillmentRatiosForOrientation(manifest.orientation,manifest.master);
+  for(const ratio of foreignRatioCrops(before,now)){
+   const key=fulfillmentRatioObjectKey(checked.artworkId,ratio);
+   if(await artworkObjectExists(key)){await deleteArtworkObject(key);removed.push(ratio)}
+  }
+  if(removed.length)console.info('[reconvert] '+checked.artworkId+': removed crops for sizes its listing does not sell: '+removed.join(', '));
+ }catch(error){console.warn('Unused ratio crop cleanup skipped:',error.message)}
  return {artworkId:checked.artworkId,revision:checked.revision,alreadyActive:false};
 }

@@ -2770,7 +2770,9 @@ const server = http.createServer(async (req, res) => {
               throw Error('Master artwork changed before default crops completed.');
             latest.fulfillmentRatios=assets;
             latest.fulfillmentRatioInsufficient={};
-            latest.fulfillmentRatiosReady=fulfillmentRatiosForOrientation(currentJob.orientation).every(
+            // The ratios this job was queued for (panoramic or regular, by the master's size).
+            latest.fulfillmentRatiosReady=(currentJob.ratios?.length?currentJob.ratios:
+              fulfillmentRatiosForOrientation(currentJob.orientation,latest.master)).every(
               ratio=>Boolean(assets[ratio]?.productionReady));
             latest.fulfillmentRatiosUpdatedAt=new Date().toISOString();
             latest.cropWorkerJobId=currentJob.id;
@@ -2866,6 +2868,8 @@ const server = http.createServer(async (req, res) => {
         artworkId,
         masterKey: manifest.master.key,
         orientation,
+        width: manifest.master.width,
+        height: manifest.master.height,
         ...(size?{size}:{})
       });
       if (!size) {
@@ -5188,14 +5192,16 @@ const server = http.createServer(async (req, res) => {
       // A crop failure must never block creation of the Etsy draft.
       let cropQueue = null;
       let cropQueueWarning = '';
-      if (!manifest.fulfillmentRatiosReady || fulfillmentRatiosForOrientation(manifest.orientation).some(
+      if (!manifest.fulfillmentRatiosReady || fulfillmentRatiosForOrientation(manifest.orientation, manifest.master).some(
         ratio => !manifest.fulfillmentRatios?.[ratio]?.productionReady
       )) {
         try {
           const created = await createCropJob({
             artworkId: body.artwork_id,
             masterKey: manifest.master.key,
-            orientation: manifest.orientation
+            orientation: manifest.orientation,
+            width: manifest.master.width,
+            height: manifest.master.height
           });
           manifest.cropWorkerJobId = created.job.id;
           manifest.cropWorkerQueuedAt = manifest.cropWorkerQueuedAt || new Date().toISOString();

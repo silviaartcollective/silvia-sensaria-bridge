@@ -10,6 +10,7 @@ import {
   getJsonObject
 } from './r2.mjs';
 import { manifestObjectKey } from './production.mjs';
+import { PANORAMIC_LAYOUT_RATIO } from './panoramic-layout.mjs';
 
 sharp.cache(false);
 sharp.concurrency(1);
@@ -17,11 +18,17 @@ sharp.concurrency(1);
 export const FULFILLMENT_RATIOS = Object.freeze(['2x3', '3x4', '4x5', '11x14', '5x7', '14x15']);
 export const SQUARE_FULFILLMENT_RATIOS=Object.freeze(['1x1']);
 export const PANORAMIC_FULFILLMENT_RATIOS=Object.freeze(['1x2','1x3']);
-export function fulfillmentRatiosForOrientation(orientation){
- return String(orientation||'').toLowerCase()==='square'?
-  SQUARE_FULFILLMENT_RATIOS:
-  String(orientation||'').toLowerCase()==='landscape'?
-    [...FULFILLMENT_RATIOS,...PANORAMIC_FULFILLMENT_RATIOS]:FULFILLMENT_RATIOS;
+// The production crops an artwork's listing sells: 1:1 for a square master,
+// 1:2 and 1:3 for a panoramic one (1.85:1 or wider: its listing has only the
+// 2:1 / 3:1 sizes), and the regular ratios for every other vertical or
+// horizontal master. `master` is the master's verified size.
+export function fulfillmentRatiosForOrientation(orientation,master={}){
+ const value=String(orientation||'').toLowerCase();
+ if(value==='square')return SQUARE_FULFILLMENT_RATIOS;
+ const width=Number(master?.width),height=Number(master?.height);
+ if(value==='panoramic'||(value==='landscape'&&width>0&&height>0&&width/height>=PANORAMIC_LAYOUT_RATIO))
+  return PANORAMIC_FULFILLMENT_RATIOS;
+ return FULFILLMENT_RATIOS;
 }
 
 export const FULFILLMENT_RATIO_DIMENSIONS = Object.freeze({
@@ -213,14 +220,14 @@ async function generateOne({ artworkId, sourcePath, sourceKey, ratio, orientatio
   }
 }
 
-export async function generateFulfillmentRatios({ artworkId, masterKey, orientation = '' }) {
+export async function generateFulfillmentRatios({ artworkId, masterKey, orientation = '', master = {} }) {
   if (!masterKey) throw new Error('Master artwork key is required');
   const sourcePath = join(tmpdir(), `silvia-${artworkId}-master-${randomUUID()}`);
   try {
     await downloadArtworkObjectToFile(masterKey, sourcePath);
     const assets = {};
     const insufficient = {};
-    for (const ratio of fulfillmentRatiosForOrientation(orientation)) {
+    for (const ratio of fulfillmentRatiosForOrientation(orientation, master)) {
       const generated = await generateOne({
         artworkId,
         sourcePath,
@@ -233,7 +240,7 @@ export async function generateFulfillmentRatios({ artworkId, masterKey, orientat
     }
     return {
       artworkId,
-      ready: fulfillmentRatiosForOrientation(orientation).every((ratio) => Boolean(assets[ratio]?.productionReady)),
+      ready: fulfillmentRatiosForOrientation(orientation, master).every((ratio) => Boolean(assets[ratio]?.productionReady)),
       assets,
       insufficient
     };
