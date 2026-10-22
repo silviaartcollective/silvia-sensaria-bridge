@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseSensariaShipment,extractGmailText,isTrustedSensariaSender,
-  trustedSensariaDomains,receiptNumberCandidates
+  trustedSensariaDomains,receiptNumberCandidates,isUpsTrackingNumber
 } from '../src/sensaria-gmail-parser.mjs';
 import {renderTrackingPage} from '../src/tracking-page.mjs';
 import {readFileSync} from 'node:fs';
@@ -36,9 +36,26 @@ test('pre-shipment label created and multiple tracking numbers are held for manu
 });
 test('unknown carrier cannot silently mark Etsy as shipped',()=>{
  const noCarrier=parseSensariaShipment({...sample,
-   body:'Order 4591174 has shipped. Tracking Number: 1Z999AA10123456784'},[order]);
+   body:'Order 4591174 has shipped. Tracking Number: 4458827730091'},[order]);
  assert.equal(noCarrier.status,'review');
  assert.match(noCarrier.reason,/carrier/i);
+ // A 1Z number with a wrong check digit is not taken for UPS.
+ const fake=parseSensariaShipment({...sample,
+   body:'Order 4591174 has shipped. Tracking Number: 1Z0V1W590338116385'},[order]);
+ assert.equal(fake.status,'review');
+ assert.match(fake.reason,/carrier/i);
+});
+test('a UPS tracking number identifies UPS when the email names no carrier and links a redirect',()=>{
+ assert.equal(isUpsTrackingNumber('1Z0V1W590338116384'),true);
+ assert.equal(isUpsTrackingNumber('1Z999AA10123456784'),true);
+ assert.equal(isUpsTrackingNumber('1Z0V1W590338116385'),false);
+ assert.equal(isUpsTrackingNumber('1Z0V1W59033811638'),false);
+ const record=parseSensariaShipment({...sample,subject:'Your order has shipped!',
+   body:'<p>Good news! Order 4591174 is on its way.</p><p>Tracking number: 1Z0V1W590338116384</p>'+
+     '<a href="https://u123.ct.sendgrid.net/ls/click?upn=abc">Track your package</a>'},[order]);
+ assert.equal(record.status,'matched');
+ assert.equal(record.carrier,'UPS');
+ assert.equal(record.trackingNumber,'1Z0V1W590338116384');
 });
 test('Gmail page remains review-first with separate Etsy shipment confirmation',()=>{
  const page=renderTrackingPage('Test Shop');
