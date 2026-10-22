@@ -43,9 +43,10 @@ test('two panoramic ratio families generate landscape crops under 17500 pixels',
  assert.deepEqual([...PANORAMIC_FULFILLMENT_RATIOS],['1x2','1x3']);
  assert.equal(fulfillmentRatioForSize('20x40'),'1x2');
  assert.equal(fulfillmentRatioForSize('12x36'),'1x3');
- const job=createCropJobRecord({artworkId:'SAC0007',masterKey:'artworks/SAC0007/master.jpg',orientation:'landscape'});
- assert.ok(job.ratios.includes('1x2')&&job.ratios.includes('1x3'));
- assert.equal(job.ratios.length,fulfillmentRatiosForOrientation('landscape').length);
+ // A panoramic master (1.85:1 or wider) is cropped to the panoramic ratios only.
+ const job=createCropJobRecord({artworkId:'SAC0007',masterKey:'artworks/SAC0007/master.jpg',orientation:'landscape',width:6000,height:2000});
+ assert.deepEqual(job.ratios,['1x2','1x3']);
+ assert.deepEqual([...fulfillmentRatiosForOrientation('landscape',{width:3700,height:2000})],['1x2','1x3']);
  const source=readFileSync(new URL('../src/artwork-ratios.mjs',import.meta.url),'utf8');
  assert.match(source,/'1x2':\[8750,17500\]/);
  assert.match(source,/'1x3':\[5800,17400\]/);
@@ -119,4 +120,15 @@ test('mixed 2:1 and 3:1 panoramic sizes appear in ascending first-dimension orde
  // Low minimum prices on these five sizes are genuine enabled poster prices.
  assert.deepEqual(posters,['8x16','10x20','12x36','20x40','24x48']);
  assert.equal(inventory('panoramic').enabledCount,70);
+});
+
+test('an ordinary horizontal or vertical master gets only the regular ratios; square gets 1:1',()=>{
+ const regular=['2x3','3x4','4x5','11x14','5x7','14x15'];
+ const horizontal=createCropJobRecord({artworkId:'SAC0011',masterKey:'artworks/SAC0011/master.jpg',orientation:'landscape',width:6000,height:4000});
+ assert.deepEqual(horizontal.ratios,regular);
+ assert.deepEqual([...fulfillmentRatiosForOrientation('landscape',{width:3699,height:2000})],regular);
+ assert.deepEqual([...fulfillmentRatiosForOrientation('portrait',{width:2000,height:6000})],regular);
+ assert.deepEqual([...fulfillmentRatiosForOrientation('square',{width:3000,height:3000})],['1x1']);
+ // Without a known size a horizontal master is not taken for panoramic.
+ assert.deepEqual([...fulfillmentRatiosForOrientation('landscape')],regular);
 });

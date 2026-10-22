@@ -71,7 +71,9 @@ export function createCropJobRecord({
   artworkId,
   masterKey,
   orientation = 'portrait',
-  size = null
+  size = null,
+  width = 0,
+  height = 0
 }, now = new Date()) {
   const id = normalizeArtworkId(artworkId);
   const key = String(masterKey || '').trim();
@@ -90,7 +92,8 @@ export function createCropJobRecord({
     orientation: safeOrientation,
     masterKey: key,
     size: normalizedSize,
-    ratios: normalizedSize ? [sizeCropRatioKey(normalizedSize)] : [...fulfillmentRatiosForOrientation(safeOrientation)],
+    // The master's size decides panoramic (1:2, 1:3) or regular ratios.
+    ratios: normalizedSize ? [sizeCropRatioKey(normalizedSize)] : [...fulfillmentRatiosForOrientation(safeOrientation, { width, height })],
     status: 'pending',
     workerId: '',
     currentRatio: '',
@@ -146,7 +149,7 @@ export function findReusableCropJob(store, input = {}) {
   const size = input.size ? normalizeCropSize(input.size) : null;
   const orientation = normalizeOrientation(input.orientation,Boolean(size));
   const masterKey = String(input.masterKey || '').trim();
-  const requiredRatios=size?[sizeCropRatioKey(size)]:[...fulfillmentRatiosForOrientation(orientation)];
+  const requiredRatios=size?[sizeCropRatioKey(size)]:[...fulfillmentRatiosForOrientation(orientation,{width:input.width,height:input.height})];
 
   return (store?.jobs || []).find(job =>
     job.artworkId === artworkId &&

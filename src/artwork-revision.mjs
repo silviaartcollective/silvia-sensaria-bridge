@@ -92,7 +92,8 @@ export async function startArtworkRevisionCrop({shopId,listingId}){
  if(geometry.orientation==='square')throw Error('Square replacement requires dedicated square crop sizes.');
  record.orientation=geometry.orientation;
  record.masterGeometry=geometry;
- const created=await createCropJob({artworkId:record.artworkId,masterKey:record.masterKey,orientation:record.orientation});
+ const created=await createCropJob({artworkId:record.artworkId,masterKey:record.masterKey,orientation:record.orientation,
+  width:geometry.width,height:geometry.height});
  record.jobId=created.job.id;record.status='cropping';record.cropQueuedAt=new Date().toISOString();
  await putJsonObject(recordKey(shopId,listingId),record);
  return {record,job:created.job,reused:created.reused};
@@ -101,7 +102,7 @@ export async function checkedRevisionAssets(record,job){
  if(!record?.jobId||!job||job.id!==record.jobId||job.status!=='completed')throw Error('New artwork crops have not completed.');
  if(job.masterKey!==record.masterKey||job.artworkId!==record.artworkId)throw Error('Crop job was generated from a different master.');
  const assets={};
- for(const ratio of fulfillmentRatiosForOrientation(record.orientation)){
+ for(const ratio of fulfillmentRatiosForOrientation(record.orientation,record.masterGeometry)){
   const asset=job.resultAssets?.[ratio],expected=cropOutputKeyForJob(job,ratio);
   if(!asset?.productionReady||asset.key!==expected||asset.sourceMasterKey!==record.masterKey||
      !Number.isFinite(Number(asset.width))||!Number.isFinite(Number(asset.height)))

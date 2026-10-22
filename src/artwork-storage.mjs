@@ -351,7 +351,8 @@ export async function generateArtworkFulfillmentRatios(artworkId) {
   const generated = await withProductionRenderSlot(() => generateFulfillmentRatios({
     artworkId,
     masterKey: manifest.master.key,
-    orientation: manifest.orientation
+    orientation: manifest.orientation,
+    master: manifest.master
   }));
 
   manifest.fulfillmentRatios = generated.assets;
