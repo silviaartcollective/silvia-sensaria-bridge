@@ -10,6 +10,15 @@ The Order Tracking page can read Sensaria's shipment emails from a connected Gma
    - or by a **Sensaria order number** linked by hand (Order Tracking → Link supplier order).
 4. The tracking is staged on that order. With **Complete Etsy orders automatically** on, it is sent to Etsy straight away; otherwise use **Mark shipped on Etsy**.
 
+### How the carrier is recognised
+The carrier must be certain; the app never guesses one, because a wrong carrier sends the buyer a tracking link that does not work. In order:
+1. The email names it: "Carrier: FedEx", "shipped via USPS", a carrier named right by the tracking number ("FedEx tracking number: …", "UPS Ground"), or a subject naming one carrier. If two carriers are named, none is used. DHL eCommerce is not taken for DHL (its parcels are tracked by the postal service).
+2. A link in the email goes to the carrier's own website (ups.com, fedex.com, usps.com, dhl.com, …) with this tracking number in it.
+3. The tracking number can only be the carrier's: UPS numbers (1Z… with UPS's check digit) and USPS numbers (22 digits starting 92–95, or international ones ending in US, each with its check digit). FedEx and DHL numbers are plain digits that other carriers' numbers can look like, so they need 1, 2 or 4.
+4. The email's **Track package** button redirects to the carrier's website with this tracking number in the address. The app reads only the redirects (never loads a page, never opens the carrier's site, never follows unsubscribe or settings links, and never asks a private network address).
+
+Anything else is listed for review with its tracking number, as is a UPS number in an email that names another carrier.
+
 An order Etsy already shows shipped with different tracking is never changed, and a tracking number already on Etsy is never sent twice. Anything that cannot be verified is listed under the scan results for review.
 
 ## One-time setup

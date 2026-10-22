@@ -1,7 +1,8 @@
 import {getJsonObject,putJsonObject,isMissingR2Object} from './r2.mjs';
 import {gmailAccessToken,gmailConnectionStatus} from './gmail-oauth.mjs';
 import {listTrackingRecords,stageShipment,linkTrackingOrder,verifyEtsyReceipt,readTrackingRecord,sendStagedShipmentToEtsy} from './order-tracking.mjs';
-import {trustedSensariaDomains,parseSensariaShipment,extractGmailText} from './sensaria-gmail-parser.mjs';
+import {trustedSensariaDomains,parseSensariaShipment,extractGmailText,extractGmailLinks} from './sensaria-gmail-parser.mjs';
+import {carrierFromTrackingLink} from './tracking-link-resolver.mjs';
 
 const STATE_KEY='integrations/gmail/silvia/sensaria-scan-v1.json';
 const SETTINGS_KEY='integrations/gmail/silvia/tracking-settings-v1.json';
@@ -82,10 +83,15 @@ async function doScan(session){
           encodeURIComponent(id)+'?format=full',token);
         const headers=Object.fromEntries((message.payload?.headers||[])
           .map(h=>[String(h.name||'').toLowerCase(),String(h.value||'')]));
-        const body=extractGmailText(message.payload);
-        return {id,result:parseSensariaShipment({
-          from:headers.from,subject:headers.subject,body,messageId:id
-        },linked)};
+        const email={from:headers.from,subject:headers.subject,body:extractGmailText(message.payload),
+          links:extractGmailLinks(message.payload),messageId:id};
+        let result=parseSensariaShipment(email,linked);
+        // No carrier named: see where the email's tracking button leads.
+        for(const link of result.trackingLinks||[]){
+          const resolvedLink=await carrierFromTrackingLink(link,result.trackingNumber).catch(()=>null);
+          if(resolvedLink){result=parseSensariaShipment({...email,resolvedLink},linked);break;}
+        }
+        return {id,result};
       }catch(error){return {id,error:String(error.message||error)};}
     }));
     inspected.push(...batch);
