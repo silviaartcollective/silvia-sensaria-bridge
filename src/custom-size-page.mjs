@@ -87,7 +87,7 @@ table.offer-table th{font-size:9px}
 <main>
 <h1>Custom Size Lookup</h1>
 <p class="sub">Enter the customer's destination, exact requested size and product. The app checks the connected providers specifically for that request and ranks the available options by estimated landed cost.</p>
-<div class="notice"><strong>Read-only quote:</strong> This lookup never creates an Etsy listing, shipping profile or supplier order. (The separate optional Printify pricing-library tool creates temporary unpublished test drafts only after confirmation.) Prodigi, Printify, Gelato, PrintShrimp and compatible Artelo poster routes are checked for this exact request. The destination list includes the full ISO country list, including countries outside the shop's normal Etsy shipping profile. Sensaria uses the captured full catalog plus captured shipping zones.</div>
+<div class="notice"><strong>Read-only quote:</strong> This lookup never creates an Etsy listing, shipping profile or supplier order. (To read Printify's print prices the first time, it makes a private, unpublished test product in your Printify shop and deletes it right after; the prices are saved.) Prodigi, Printify, Gelato, PrintShrimp and compatible Artelo poster routes are checked for this exact request. The destination list includes the full ISO country list, including countries outside the shop's normal Etsy shipping profile. Sensaria uses the captured full catalog plus captured shipping zones.</div>
 
 <section class="card">
   <div class="lookup">
@@ -165,9 +165,9 @@ table.offer-table th{font-size:9px}
 <div class="notice" id="etsy-private-order-note" style="display:none"><strong>Etsy private custom order:</strong> Use the <strong>Artwork after shop discount</strong> figure as the intended final artwork charge in Etsy's <strong>Price</strong> field. Enter the <strong>Custom delivery charged to buyer</strong> amount directly in Etsy's <strong>Shipping price</strong> field (or US$0 for free delivery). No shipping profile is required. <strong>Check the customer's final checkout total for any additional Etsy sale or coupon</strong> before sending the private listing.</div>
 <section class="card" id="printify-library-card" style="display:none">
  <h2 style="margin:0 0 8px">Printify Production Price Library</h2>
- <p class="sub" style="margin:0 0 14px">Some Printify canvas or poster printers do not expose production cost in their catalog. This tool temporarily creates <strong>unpublished private test products in Printify</strong>, captures actual supplier variant costs, saves them in the app, and removes test drafts after they are safely saved. Nothing is published to Etsy or ordered.</p>
- <button class="primary" id="build-printify-library" type="button">Capture missing Printify prices for this size</button>
- <p class="status" id="printify-library-status">Runs up to four product/provider combinations at a time. Repeat if additional providers remain.</p>
+ <p class="sub" style="margin:0 0 14px">Printify shows its print price only on products in your Printify shop. For each Printify product and printer without a price, the app makes a <strong>private, unpublished test product</strong> in Printify, reads its prices for every size, and <strong>deletes it right away</strong>. The prices are saved, so later lookups for that product and printer need no test product. Nothing is published to Etsy or ordered.</p>
+ <button class="primary" id="build-printify-library" type="button">Capture missing Printify prices now</button>
+ <p class="status" id="printify-library-status">Missing prices are captured automatically after each comparison.</p>
 </section>
 </main></div>
 <script>
@@ -218,7 +218,7 @@ function render(data){
  const missingOffers=(printifyRow.meta?.offers||[]).filter(item=>item.productionUsd==null);
  libraryCard.style.display=missingOffers.length?'block':'none';
  libraryStatus.textContent=missingOffers.length
-   ? missingOffers.length+' Printify size/provider matches need a production cost. Captured costs remain available for future lookups.'
+   ? missingOffers.length+' Printify size/printer matches have no print price yet. They are captured automatically after the comparison finishes.'
    : 'All Printify matching offers have production prices, or no shippable provider exists.';
  rows.innerHTML=order.map(name=>{const r=byProvider[name]||{};const rank=ranking.get(name);const detail=[r.reason,r.basis,r.meta?.sku?'SKU '+r.meta.sku:'',r.meta?.printProvider?'Printify: '+r.meta.printProvider:'',r.meta?.deliveryDays?.min!=null?'Delivery '+r.meta.deliveryDays.min+'–'+r.meta.deliveryDays.max+' days':'',r.provider==='Gelato'&&r.meta?.shippingCountryMinimumUsd!=null?'Country minimum shipping '+money(r.meta.shippingCountryMinimumUsd)+' vs average '+money(r.meta.shippingCountryAverageUsd)+'; recipient checkout may differ':''].filter(Boolean).join(' · ');return '<tr><td class="rank">'+(rank||'—')+'</td><td><strong>'+esc(name)+'</strong></td><td>'+statusPill(r)+'</td><td>'+money(r.productCost)+'</td><td>'+money(r.shippingCost)+'</td><td>'+money(r.totalUsd)+'</td><td>'+money(r.modeledLandedUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.planningProfitUsd)+'</td><td>'+money(providerProfits[name.toLowerCase()]?.quotedProfitUsd)+'</td><td class="detail">'+esc(detail||'—')+offerBreakdown(r,activeMode)+'</td></tr>';}).join('');
  tableWrap.classList.add('show');empty.style.display='none';
@@ -333,11 +333,12 @@ customCropButton.addEventListener('click',async()=>{
  finally{customCropButton.disabled=false;}
 });
 shippingMode.addEventListener('change',()=>{if(lastLookupData)render(lastLookupData);});
-libraryButton.addEventListener('click',async()=>{
- const hasConfirmed=window.confirm('Create up to four temporary UNPUBLISHED Printify pricing drafts for this exact size and destination? The app will capture actual production costs, save them to its price library and delete the test drafts if saved. No Etsy or supplier orders will be created.');
- if(!hasConfirmed)return;
+// Printify shows print prices only on products in the shop. Missing ones are
+// captured automatically: the app makes a private, unpublished test product,
+// reads its prices for every size, deletes it, and keeps the prices.
+async function capturePrintifyPrices(){
  libraryButton.disabled=true;
- libraryStatus.textContent='Creating private price-check drafts and capturing production costs. Please keep this page open…';
+ libraryStatus.textContent='Getting Printify\u2019s print prices for this size (only the first time for each Printify product and printer)…';
  try {
    const body={
      countryCode:country.value,productCode:product.value,
@@ -354,17 +355,22 @@ libraryButton.addEventListener('click',async()=>{
    if(!response.ok||!data.ok)throw Error(data.error||'Unable to capture Printify prices');
    const successes=data.created||[];
    const failures=data.errors||[];
-   const saved=successes.filter(item=>item.savedInR2).length;
-   const retained=successes.filter(item=>item.retainedDraftId).length;
-   const warning=successes.filter(item=>item.warning).map(item=>item.printProvider+': '+item.warning).slice(0,3);
-   libraryStatus.textContent='Captured '+data.captured+' variant production costs from '+successes.length+' product/provider models. Saved to R2: '+saved+'. Unpublished drafts retained: '+retained+'. Remaining provider models: '+data.pendingProviderPairsEstimate+'.'+(failures.length?' Failures: '+failures.map(item=>item.printProvider+': '+item.error).join(' | '):'')+(warning.length?' Notes: '+warning.join(' | '):'');
-   // Refresh quotes and provider ranking using the newly saved prices.
-   button.click();
+   const deleted=[...successes,...failures].filter(item=>item.temporaryDraftDeleted).length;
+   const warning=[...successes,...failures].filter(item=>item.warning).map(item=>item.printProvider+': '+item.warning).slice(0,3);
+   libraryStatus.textContent='Captured '+data.captured+' Printify print prices from '+successes.length+' test product(s); '+deleted+' deleted from Printify again.'+
+     (data.pendingProviderPairsEstimate?' Still missing: '+data.pendingProviderPairsEstimate+' (captured on the next lookup).':'')+
+     (failures.length?' Failures: '+failures.map(item=>item.printProvider+': '+item.error).join(' | '):'')+(warning.length?' Notes: '+warning.join(' | '):'');
+   return data;
  } catch(error) {
-   libraryStatus.textContent='Price capture could not finish: '+String(error?.message||error);
+   libraryStatus.textContent='Printify prices could not be captured: '+String(error?.message||error);
+   return null;
  } finally {
    libraryButton.disabled=false;
  }
+}
+libraryButton.addEventListener('click',async()=>{
+ if(!window.confirm('Capture the missing Printify print prices for this size? For each Printify product and printer without a price, the app makes a private, unpublished test product in your Printify shop, reads its prices and deletes it right away. Nothing is published or ordered.'))return;
+ if(await capturePrintifyPrices())await runLookup();
 });
 async function requestCustomQuote(body,maxWaitMs){
   const response=await fetch('/api/custom-size/lookup',{
@@ -376,7 +382,19 @@ async function requestCustomQuote(body,maxWaitMs){
   if(!response.ok||!data.ok)throw Error(data.error||'Custom lookup failed (HTTP '+response.status+').');
   return data;
 }
+// Each request's missing Printify prices are captured automatically once per page visit.
+const autoCaptured=new Set();
 button.addEventListener('click',async()=>{
+  const data=await runLookup();
+  const missing=(Object.values(data?.suppliers||{}).find(r=>r.provider==='Printify')?.meta?.offers||[]).filter(item=>item.productionUsd==null);
+  const key=[country.value,product.value,width.value,height.value,product.value==='FC'?frame.value:''].join('|');
+  if(!missing.length||autoCaptured.has(key))return;
+  autoCaptured.add(key);
+  status.textContent='Getting Printify\u2019s print prices for this size, then refreshing the comparison…';
+  if(await capturePrintifyPrices())await runLookup();
+});
+async function runLookup(){
+  let result=null;
   button.disabled=true;button.innerHTML='<span class="spinner"></span>Checking providers…';
   status.className='status';
   status.textContent='Retrieving the captured Sensaria price first…';
@@ -396,6 +414,7 @@ button.addEventListener('click',async()=>{
     }
     const data=await requestCustomQuote(body,36000);
     render(data);
+    result=data;
     const partial=Boolean(data.partial);
     const delayed=(data.incompleteProviders||[]).join(', ');
     status.className=partial?'status bad':'status';
@@ -414,7 +433,8 @@ button.addEventListener('click',async()=>{
   }finally{
     button.disabled=false;button.textContent='Find best option';
   }
-});
+  return result;
+}
 })();
 </script></body></html>`;
 }
