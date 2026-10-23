@@ -104,7 +104,7 @@ export function renderPricingPage() {
 </div>
 <div id="tpl-status" class="status" style="margin:12px 0">No Etsy template changes have been made. Preview before selecting listings.</div>
 <div id="tpl-list" class="sync-list"></div>
-<p class="muted">For linked default templates only. Applies changes to the full variation inventory after a second confirmation. Unlinked/custom listings are excluded. Published Etsy sale discounts and currency conversion are applied by Etsy separately.</p>
+<p class="muted">For linked default templates only. Automatically updates checked listings in sequential batches of up to 20. Applies changes to the full variation inventory after a second confirmation. Unlinked/custom listings are excluded. Published Etsy sale discounts and currency conversion are applied by Etsy separately.</p>
 </section>
 </main>
 </div>
@@ -342,6 +342,7 @@ applyPrices.addEventListener('click',async()=>{
 const tplP=document.getElementById('tpl-preview'),tplA=document.getElementById('tpl-apply');
 const tplAll=document.getElementById('tpl-select-all'),tplL=document.getElementById('tpl-list'),tplS=document.getElementById('tpl-status');
 let tplRows=[];
+let tplBusy=false;
 function selectedTemplates(){
   return [...tplL.querySelectorAll('input[name="template-choice"]:checked')].map(c=>{
     const x=tplRows.find(y=>String(y.listingId)===c.value);
@@ -349,8 +350,8 @@ function selectedTemplates(){
   }).filter(Boolean);
 }
 function tplControls(){
-  tplA.disabled=!selectedTemplates().length;
-  tplAll.disabled=!tplRows.some(r=>r.canUpdate);
+  tplA.disabled=tplBusy||!selectedTemplates().length;
+  tplAll.disabled=tplBusy||!tplRows.some(r=>r.canUpdate);
   tplA.textContent='Update selected templates ('+selectedTemplates().length+')';
 }
 async function previewDefaultTemplates(){
@@ -395,22 +396,72 @@ tplAll.addEventListener('click',()=>{
   tplL.querySelectorAll('input[name="template-choice"]:not(:disabled)').forEach(box=>{box.checked=true});
   tplControls();
 });
-tplA.addEventListener('click',async()=>{
- const templates=selectedTemplates();if(!templates.length)return;
- if(!confirm('Rebuild the selected default listing Size and Style variations? Existing sizes may be added or removed. Etsy media, SEO and shipping stay unchanged.'))return;
- tplA.disabled=true;tplP.disabled=true;tplS.textContent='Updating templates in Etsy…';
+// Etsy limits a single template rebuild request to 20 listings. Keep that
+// server-side guard and submit larger checked selections sequentially.
+async function applyDefaultTemplateBatches(templates,postBatch,onProgress){
+ const summary={processed:0,verifiedUpdated:0,unchanged:0,failed:[],batches:0};
+ const totalBatches=Math.ceil(templates.length/20);
  try{
-   const response=await fetch('/api/pricing/templates-apply',{method:'POST',
-      headers:{'content-type':'application/json'},
-      body:JSON.stringify({confirm:'REBUILD SILVIA TEMPLATES',templates})
+  for(let start=0;start<templates.length;start+=20){
+   const batch=templates.slice(start,start+20);
+   onProgress({ ...summary,total:templates.length,batch:summary.batches+1,totalBatches });
+   const data=await postBatch(batch);
+   const rows=Array.isArray(data.results)?data.results:[];
+   summary.processed+=batch.length;
+   summary.batches++;
+   summary.verifiedUpdated+=Number(data.verifiedUpdated||0);
+   summary.unchanged+=rows.filter(row=>row.updated===false&&!row.error).length;
+   summary.failed.push(...rows.filter(row=>row.error).map(row=>({
+    listingId:row.listingId,error:String(row.error)
+   })));
+   onProgress({ ...summary,total:templates.length,batch:summary.batches,totalBatches });
+  }
+ }catch(err){
+  const error=err instanceof Error?err:new Error(String(err));
+  error.partial={...summary,failed:[...summary.failed]};
+  throw error;
+ }
+ return summary;
+}
+tplA.addEventListener('click',async()=>{
+ const templates=selectedTemplates();if(!templates.length||tplBusy)return;
+ const totalBatches=Math.ceil(templates.length/20);
+ if(!confirm('Rebuild Size and Style variations for '+templates.length+' selected listing(s) in '+
+  totalBatches+' consecutive batch(es) of up to 20? Sizes may be added or removed. Etsy media, SEO and shipping stay unchanged.'))return;
+ const tplIds=document.getElementById('tpl-ids');
+ tplBusy=true;tplControls();tplP.disabled=true;tplIds.disabled=true;
+ tplS.textContent='Starting template updates…';
+ try{
+  const result=await applyDefaultTemplateBatches(templates,async batch=>{
+   const response=await fetch('/api/pricing/templates-apply',{
+    method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({confirm:'REBUILD SILVIA TEMPLATES',templates:batch})
    });
-   const data=await response.json();
+   let data;
+   try{data=await response.json();}catch{
+    throw Error('Could not read Etsy update response; do not retry blindly. Preview again to see which listings changed.');
+   }
    if(!response.ok||!data.ok)throw Error(data.error||'Template update failed');
-   await previewDefaultTemplates();
-   tplS.textContent=String(data.verifiedUpdated||0)+' listing(s) verified updated, '+String(data.failed||0)+' failed.'+
-      (data.failed?' '+(data.results||[]).filter(x=>x.error).map(x=>'#'+x.listingId+': '+x.error).join(' | '):'');
- }catch(err){tplS.textContent='Update failed: '+String(err.message||err);}
- finally{tplP.disabled=false;tplControls();}
+   return data;
+  },progress=>{
+   tplS.textContent='Batch '+progress.batch+' of '+progress.totalBatches+
+    ' · '+progress.processed+' of '+progress.total+' listings processed · '+
+    progress.verifiedUpdated+' verified updated · '+progress.failed.length+' failed.';
+  });
+  await previewDefaultTemplates();
+  const errors=result.failed.map(row=>'#'+row.listingId+': '+row.error);
+  tplS.textContent=result.verifiedUpdated+' of '+templates.length+' selected listing(s) verified updated · '+
+   result.unchanged+' already current · '+result.failed.length+' failed.'+
+   (errors.length?' Errors: '+errors.join(' | '):'');
+ }catch(err){
+  const part=err.partial;
+  tplS.textContent='Update stopped'+(part?' after '+part.processed+' of '+templates.length+
+   ' listings ('+part.verifiedUpdated+' verified updated, '+part.failed.length+' failed)':'')+
+   ': '+String(err.message||err)+'. Preview again before retrying; some listings may already be updated.'+
+   (part&&part.failed.length?' Errors: '+part.failed.map(row=>'#'+row.listingId+': '+row.error).join(' | '):'');
+ }finally{
+  tplBusy=false;tplP.disabled=false;tplIds.disabled=false;tplControls();
+ }
 });
 
 async function load(){

@@ -79,3 +79,61 @@ test('the Price & Shipping page includes both price-only and template rebuilding
  assert.match(s,/Number\(listing.shop_id\)!==Number\(session.shop.shop_id\)/);
  assert.match(s,/getListingInventory\(\{listingId:id,\.\.\.auth\}\)/);
 });
+
+function templateBatchCoordinator(){
+ const html=renderPricingPage();
+ const start=html.indexOf('async function applyDefaultTemplateBatches(');
+ const end=html.indexOf('\ntplA.addEventListener(',start);
+ assert.ok(start>=0&&end>start,'Template batch coordinator must appear in pricing page');
+ assert.match(html,/tplA\.disabled=tplBusy\|\|!selectedTemplates\(\)\.length/);
+ assert.match(html,/tplAll\.disabled=tplBusy\|\|!tplRows\.some/);
+ return new Function(html.slice(start,end)+'; return applyDefaultTemplateBatches;')();
+}
+test('template updater submits all 45 checked listings in safe sequential 20-listing batches',async()=>{
+ const run=templateBatchCoordinator();
+ const selected=Array.from({length:45},(_,i)=>({listingId:i+1,fingerprint:'fingerprint'+i}));
+ const batches=[],progress=[];
+ const result=await run(selected,async batch=>{
+  batches.push(batch.map(item=>item.listingId));
+  return {ok:true,verifiedUpdated:batch.length,results:batch.map(row=>({
+   listingId:row.listingId,updated:true,verified:true
+  }))};
+ },status=>progress.push(status));
+ assert.deepEqual(batches.map(batch=>batch.length),[20,20,5]);
+ assert.deepEqual(batches.flat(),selected.map(row=>row.listingId));
+ assert.equal(result.processed,45);
+ assert.equal(result.verifiedUpdated,45);
+ assert.equal(result.batches,3);
+ assert.deepEqual(result.failed,[]);
+ assert.equal(progress.at(-1).processed,45);
+});
+test('template updater continues after per-listing errors and retains their Etsy IDs',async()=>{
+ const run=templateBatchCoordinator();
+ const selected=Array.from({length:23},(_,i)=>({listingId:100+i}));
+ const result=await run(selected,async batch=>({
+  ok:true,
+  verifiedUpdated:batch.length-(batch.some(x=>x.listingId===112)?1:0),
+  results:batch.map(row=>row.listingId===112?
+   {listingId:112,error:'Etsy rejected this listing'}:
+   {listingId:row.listingId,updated:true,verified:true})
+ }),()=>{});
+ assert.equal(result.processed,23);
+ assert.equal(result.verifiedUpdated,22);
+ assert.deepEqual(result.failed,[{listingId:112,error:'Etsy rejected this listing'}]);
+});
+test('template updater stops after transport failure without repeating previously updated batches',async()=>{
+ const run=templateBatchCoordinator(),selected=Array.from({length:41},(_,i)=>({listingId:i+1}));
+ let calls=0;
+ await assert.rejects(()=>run(selected,async batch=>{
+  calls++;
+  if(calls===2)throw Error('Etsy connection dropped');
+  return {ok:true,verifiedUpdated:batch.length,results:[]};
+ },()=>{}),error=>{
+  assert.match(error.message,/connection dropped/);
+  assert.equal(error.partial.processed,20);
+  assert.equal(error.partial.verifiedUpdated,20);
+  assert.equal(error.partial.batches,1);
+  return true;
+ });
+ assert.equal(calls,2);
+});
