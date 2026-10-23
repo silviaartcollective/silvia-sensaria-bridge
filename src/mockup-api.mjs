@@ -422,7 +422,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    if(req.method==='POST'&&parts[2]==='fail'){
     const body=await readJson(req);
     return send(200,{job:await failMockupItem(id,ownerCheck(body),str(body.templateId),
-     str(body.error||'PSD rendering failed on the PC worker'),!!body.needsMapping)}),true;
+     str(body.error||'PSD rendering failed on the PC worker'),!!body.needsMapping,{retry:body.retry===true})}),true;
    }
    if(req.method==='DELETE'&&parts[2]==='download'&&isId(parts[3])){
     return send(200,{job:await deleteMockupOutput(id,parts[3])}),true;

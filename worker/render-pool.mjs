@@ -13,7 +13,8 @@ const threads = [], idle = [], waiting = [];
 let nextId = 0;
 
 function spawn() {
-  const thread = new Worker(new URL('./render-thread.mjs', import.meta.url));
+  // POD_RENDER_THREAD_SCRIPT stands in for the renderer in tests.
+  const thread = new Worker(process.env.POD_RENDER_THREAD_SCRIPT || new URL('./render-thread.mjs', import.meta.url));
   thread.jobs = new Map();
   thread.on('message', message => {
     const job = thread.jobs.get(message.id);
@@ -58,23 +59,67 @@ function onePreparationAtATime(task) {
   return run;
 }
 
-async function runOnThread(op, args, onStage) {
-  const thread = await acquire();
-  return new Promise((resolve, reject) => {
+// A render that runs longer than this is stopped (its thread is ended and
+// replaced), so one stuck PSD never holds a render slot for good. A prepared
+// template renders in seconds; a first-time preparation reads the whole PSD.
+// POD_RENDER_TIMEOUT_MINUTES / POD_PREPARE_TIMEOUT_MINUTES change them (or
+// *_SECONDS, for tests).
+const limit = (name, fallbackMinutes) => {
+  const seconds = Number(process.env[name + '_SECONDS']);
+  if (seconds > 0) return seconds * 1000;
+  return Math.max(1, Number(process.env[name + '_MINUTES']) || fallbackMinutes) * 60_000;
+};
+export function renderTimeLimitMs({ prepared, psdSize = 0 }) {
+  if (prepared) return limit('POD_RENDER_TIMEOUT', 5);
+  const extra = Math.ceil(Math.max(0, Number(psdSize) || 0) / (100 * 1024 * 1024)) * 2 * 60_000;
+  return Math.min(limit('POD_PREPARE_TIMEOUT', 10) + extra, 45 * 60_000);
+}
+
+function runOnThread(op, args, onStage, { timeLimitMs = 0, onThread = () => {} } = {}) {
+  return acquire().then(thread => new Promise((resolve, reject) => {
     const id = ++nextId;
-    thread.jobs.set(id, { resolve, reject, onStage });
+    let timer = null;
+    const settle = fn => value => { clearTimeout(timer); fn(value); };
+    thread.jobs.set(id, { resolve: settle(resolve), reject: settle(reject), onStage });
+    onThread(thread, id);
+    if (timeLimitMs) timer = setTimeout(() => {
+      const job = thread.jobs.get(id);
+      if (!job) return;
+      thread.jobs.delete(id);
+      job.reject(Error('PSD render timed out after ' + Math.max(1, Math.round(timeLimitMs / 60000)) + ' min and was stopped.'));
+      void thread.terminate(); // its slot gets a fresh thread
+    }, timeLimitMs);
     thread.postMessage({ id, op, args });
-  });
+  }));
+}
+
+// The background warm-up gives way: a real batch that needs a first-time
+// preparation stops the warm-up one, which is redone later.
+let warmUp = null;
+function stopWarmUp() {
+  if (!warmUp) return;
+  const { thread, id } = warmUp;
+  warmUp = null;
+  const job = thread.jobs.get(id);
+  if (!job) return;
+  thread.jobs.delete(id);
+  job.reject(Object.assign(Error('Advance preparation stopped for a mockup batch.'), { warmUpStopped: true }));
+  void thread.terminate();
 }
 
 export async function renderInPool({ psdPath, artworkPath, outputPath, mapping = null, psdSize = 0, psdVersion = '', fitMode = 'contain', onStage = () => {} }) {
   const args = { psdPath, artworkPath, outputPath, mapping, psdSize, psdVersion, fitMode };
-  const render = () => runOnThread('render', args, onStage);
-  if (await isTemplatePrepared({ psdPath, mapping, psdSize, psdVersion })) return render();
+  const prepared = await isTemplatePrepared({ psdPath, mapping, psdSize, psdVersion });
+  const render = () => runOnThread('render', args, onStage, { timeLimitMs: renderTimeLimitMs({ prepared, psdSize }) });
+  if (prepared) return render();
+  stopWarmUp();
   return onePreparationAtATime(render);
 }
 
 // Prepares a template ahead of time (background warm-up), one at a time.
 export function prepareInPool({ psdPath, mapping = null, psdSize = 0, psdVersion = '' }) {
-  return onePreparationAtATime(() => runOnThread('prepare', { psdPath, mapping, psdSize, psdVersion }, () => {}));
+  return onePreparationAtATime(() => runOnThread('prepare', { psdPath, mapping, psdSize, psdVersion }, () => {}, {
+    timeLimitMs: renderTimeLimitMs({ prepared: false, psdSize }),
+    onThread: (thread, id) => { warmUp = { thread, id }; }
+  })).finally(() => { warmUp = null; });
 }

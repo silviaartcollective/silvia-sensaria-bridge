@@ -366,8 +366,8 @@ test('the worker renders several mockups at once, alongside crops, and claims th
  assert.match(source,/await Promise\.all\(\[cropLane\(\),mockupLane\(\),warmUpLane\(\),mockupFolderLane\(\),fullUploadLane\(\)\]\);/);
  assert.match(source,/if\(running\.size>=RENDER_THREADS\)\{await Promise\.race\(running\);continue\}/);
  assert.match(source,/continue; \/\/ claim the next queued PSD straight away/);
- assert.match(pool,/new Worker\(new URL\('\.\/render-thread\.mjs', import\.meta\.url\)\)/);
- assert.match(pool,/if \(await isTemplatePrepared\(\{ psdPath, mapping, psdSize, psdVersion \}\)\) return render\(\);/);
+ assert.match(pool,/new Worker\(process\.env\.POD_RENDER_THREAD_SCRIPT \|\| new URL\('\.\/render-thread\.mjs', import\.meta\.url\)\)/);
+ assert.match(pool,/const prepared = await isTemplatePrepared\(\{ psdPath, mapping, psdSize, psdVersion \}\);[\s\S]*if \(prepared\) return render\(\);/);
  assert.doesNotMatch(source,/<12000/);
 });
 

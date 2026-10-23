@@ -22,7 +22,7 @@ test('PSD rendering runs on the PC worker and its errors remain visible in Produ
  const client=src('mockup-generator-client.js');
  assert.ok(renderer.includes('renderInPool('));
  assert.ok(renderer.includes('onStage'));
- assert.ok(worker.includes('api.mockupFail(id,mockupOwner,itemId,error,false)'));
+ assert.ok(worker.includes('api.mockupFail(id,mockupOwner,itemId,error,false,{retry})'));
  assert.ok(client.includes("t.progress"));
  assert.ok(!client.includes('await pp.init()'));
 });

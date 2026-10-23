@@ -30,6 +30,8 @@ import {startLocalIntake} from './local-intake.mjs';
 import {patchAgPsd} from './patch-ag-psd.mjs';
 import {downloadCached,cachedFilePath} from './asset-cache.mjs';
 import {keepForFullUpload,pendingFullUploads,dropFullUpload,sendFullUpload} from './full-uploads.mjs';
+import {isTransientError,withUploadRetries} from './retry.mjs';
+import {mockupArtwork} from './mockup-artwork.mjs';
 import sharp from 'sharp';
 import { spawn } from 'node:child_process';
 import {
@@ -133,7 +135,11 @@ async function downloadToFile(url, extension = '.jpg') {
   }
 }
 
-async function uploadFile(url, filePath) {
+// A dropped or slow connection is retried; a refused upload (4xx) is not.
+function uploadFile(url, filePath) {
+  return withUploadRetries(() => uploadFileOnce(url, filePath));
+}
+async function uploadFileOnce(url, filePath) {
   const info = await stat(filePath);
   const response = await fetch(url, {
     method: 'PUT',
@@ -154,9 +160,11 @@ async function uploadFile(url, filePath) {
   return info.size;
 }
 
-async function uploadBuffer(url,body){
-  const response=await fetch(url,{method:'PUT',headers:{'Content-Type':'image/jpeg'},body,signal:AbortSignal.timeout(2*60*1000)});
-  if(!response.ok)throw new Error('R2 upload failed (HTTP '+response.status+')');
+function uploadBuffer(url,body){
+  return withUploadRetries(async()=>{
+    const response=await fetch(url,{method:'PUT',headers:{'Content-Type':'image/jpeg'},body,signal:AbortSignal.timeout(2*60*1000)});
+    if(!response.ok)throw new Error('R2 upload failed (HTTP '+response.status+')');
+  });
 }
 
 async function processJob(app, job) {
@@ -307,10 +315,16 @@ async function processPSDJob(app,claim){
   }
   measure('templateReadMs');
   await stage('Preparing master artwork on PC');
-  artworkPath=(await downloadCached(claim.artworkUrl,{
+  const masterPath=(await downloadCached(claim.artworkUrl,{
    shop:app.appUrl,id:claim.job.id,key:claim.job.artworkKey,
    size:claim.job.artworkSize,ext:path.extname(claim.job.filename)||'.jpg'},stage)).path;
   measure('artworkReadMs');
+  // Every render of the batch reads one 6000 px copy, made once, not the full master.
+  artworkPath=await mockupArtwork(masterPath).catch(error=>{
+   console.error('['+app.name+'] Could not make the smaller mockup artwork; using the master:',error.message);
+   return masterPath;
+  });
+  measure('artworkShrinkMs');
   outputPath=path.join(os.tmpdir(),'pod-mockup-'+id+'-'+crypto.randomUUID()+'.jpg');
   tempPaths.add(outputPath);
   const render=await renderMockupOnPC({
@@ -382,14 +396,13 @@ async function processPSDJob(app,claim){
    console.error('['+app.name+'] PSD mockup completed, but post-completion reporting failed '+claim.item.name+': '+error.message);
    return;
   }
-  console.error('['+app.name+'] PSD mockup failed '+claim.item.name+': '+error.message);
-  try{await queue(()=>api.mockupFail(id,mockupOwner,itemId,error,false))}
+  // One PSD's problem never pauses the batch: the others carry on. A
+  // temporary one (a dropped connection, a render stopped for taking too
+  // long) puts the PSD back in the queue; the shop gives it up to 3 tries.
+  const retry=!error.nativeUnsupported&&(isTransientError(error)||/render thread stopped/i.test(error.message||''));
+  console.error('['+app.name+'] PSD mockup '+(retry?'will be retried ':'failed ')+claim.item.name+': '+error.message);
+  try{await queue(()=>api.mockupFail(id,mockupOwner,itemId,error,false,{retry}))}
   catch(reportError){console.error('['+app.name+'] Could not mark PSD failed:',reportError.message)}
-  if(!error.nativeUnsupported&&/timed out|time.?out|did not respond|interrupted|stalled/i.test(error.message||'')){
-   console.error('['+app.name+'] Pausing the batch after an unresponsive PSD renderer. Completed JPGs are safe.');
-   try{await queue(()=>api.mockupPause(id,mockupOwner))}
-   catch(pauseError){console.error('['+app.name+'] Could not pause stalled batch:',pauseError.message)}
-  }
  }finally{
   alive=false;clearInterval(keepAlive);
   const batch=app.appUrl+'|'+id,left=(inFlightByBatch.get(batch)||1)-1;
@@ -569,7 +582,7 @@ async function warmUpLane(){
           try{if(await prepareLocalTemplate(app,template))prepared++}
           catch(error){
             // Deleted since the last scan: the next scan removes it from the shop.
-            if(!/no longer in the mockup folder/.test(error.message))
+            if(!error.warmUpStopped&&!/no longer in the mockup folder/.test(error.message))
               console.error('['+app.name+'] Could not prepare '+template.name+' from the mockup folder:',error.message);
           }
           continue;
@@ -581,7 +594,7 @@ async function warmUpLane(){
           const psdPath=(await downloadCached(template.url,meta)).path;
           await prepareInPool({psdPath,mapping,psdSize:template.size});
           prepared++;
-        }catch(error){console.error('['+app.name+'] Could not prepare '+template.name+' in advance:',error.message)}
+        }catch(error){if(!error.warmUpStopped)console.error('['+app.name+'] Could not prepare '+template.name+' in advance:',error.message)}
       }
       if(prepared)console.log('['+app.name+'] Prepared '+prepared+' PSD template(s) in advance.');
     }

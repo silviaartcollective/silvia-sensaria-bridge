@@ -349,7 +349,7 @@ export async function controlMockupJob(id,action,owner){
   if(!j.artworkUploaded)throw Error('Upload artwork first.');
   for(const t of j.templates){
    if(action==='regenerate'||['failed','needs_mapping','processing','deleted'].includes(t.status)){
-    t.status='queued';t.error=null;
+    t.status='queued';t.error=null;t.attempts=0; // a fresh set of automatic retries
     // Verified JPGs stay in R2 until replacements pass validation.
    }
   }
@@ -435,12 +435,25 @@ export function markMockupItemFailed(item,message,needsMapping=false){
  item.progress=item.error;
  return true;
 }
-export async function failMockupItem(id,owner,templateId,message,needsMapping=false){
+// A PSD that failed for a temporary reason (retry) goes back in the queue,
+// up to MOCKUP_MAX_ATTEMPTS claims; the rest of the batch is not held up.
+export const MOCKUP_MAX_ATTEMPTS=3;
+export function requeueMockupItem(item,message){
+ if(item.status!=='processing'||Number(item.attempts||0)>=MOCKUP_MAX_ATTEMPTS)return false;
+ item.status='queued';item.error=null;item.startedAt=null;
+ item.progress=limitText('Trying again ('+(Number(item.attempts||0)+1)+'/'+MOCKUP_MAX_ATTEMPTS+') after: '+message,220);
+ return true;
+}
+export async function failMockupItem(id,owner,templateId,message,needsMapping=false,{retry=false}={}){
  return withMockupJobLock(id,async()=>{
  const j=await getMockupJob(id);
  if(!isLeaseOwner(j,owner))throw Error('Worker lease expired or belongs to another browser.');
  const item=j.templates.find(x=>x.id===templateId);
  if(!item)throw Error('Selected PSD is not part of this job.');
+ if(retry&&!needsMapping&&requeueMockupItem(item,message)){
+  j.history.push({at:iso(),event:'retry',name:item.name,reason:limitText(message,300)});
+  await putMockupJob(j);return j;
+ }
  if(!markMockupItemFailed(item,message,needsMapping))return j; // Keep a verified JPG completed.
  j.history.push({at:iso(),event:item.status,name:item.name,reason:item.error});
  await putMockupJob(j);return j;
