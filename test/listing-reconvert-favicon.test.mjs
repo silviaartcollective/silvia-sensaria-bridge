@@ -51,7 +51,9 @@ test('reconversion reuses mapped artwork and prevents cross-listing mutations',(
  assert.ok(server.includes("url.pathname==='/api/listing-converter/reconvert/crop'"));
  assert.ok(server.includes("badSkus.length"),'postconversion SKUs must be verified');
  assert.ok(server.includes("priceVerification.changed"),'postconversion prices must be verified');
- assert.ok(server.includes("existingMediaPreserved: true"),'media stays intact');
+ // Other photos stay; the choose-frame preset goes in photo slot 5.
+ assert.ok(server.includes("framePhoto=await placeConverterFramePhoto(listingId)"),'choose-frame in slot 5');
+ assert.ok(server.includes("const CONVERTER_FRAME_SLOT=5;"));
  assert.ok(server.includes("existingSeoPreserved: true"),'SEO stays intact');
 });
 

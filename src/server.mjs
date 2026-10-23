@@ -74,6 +74,7 @@ import { automaticallyPrepareReceipt, selectAutomaticCandidates } from './auto-f
 import { classify, quote, savePlan, approve, markOrdered } from './custom-order-workflow.mjs';
 import { recentPaidReceipts, receiptTransactions } from './etsy-orders-read.mjs';
 import { buildPrintifyCostsForRequest } from './printify-cost-builder.mjs';
+import {scanForPhoto,replacePhotos,stopPhotoJob,photoJobRunning,photoFingerprint,comparePhotos,photoUrl,placePhotoAtSlot} from './photo-replacer.mjs';
 import { buildTestReceipt } from './test-order.mjs';
 import { etsyReceiptToSensariaCsvFromR2 } from './fulfillment.mjs';
 import {validateSensariaCsvOrder} from './sensaria-order-csv.mjs';
@@ -89,7 +90,9 @@ import {
   artworkObjectInfo,
   listArtworkManifestKeys,
   getJsonObject,
-  putJsonObject
+  putJsonObject,
+  putArtworkObject,
+  isMissingR2Object
 } from './r2.mjs';
 import {
   reserveArtworkUpload,
@@ -828,6 +831,96 @@ async function presetMediaStatus() {
   return {
     configured: items.every((item) => item.exists),
     items
+  };
+}
+
+// ---------------------------------------------------------------- photo replacer
+const PHOTO_REPLACER_JOB_KEY='settings/photo-replacer/job.json';
+async function photoReplacerImages(listingId){
+  const session=await getEtsySession();
+  return getEtsyListingImages({listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+}
+// Only Etsy's own photo addresses are downloaded.
+async function etsyPhotoBuffer(url){
+  const parsed=new URL(String(url||''));
+  if(parsed.protocol!=='https:'||!/(^|\.)etsystatic\.com$/i.test(parsed.hostname))throw Error('Not an Etsy photo address.');
+  const response=await fetch(parsed.href,{signal:AbortSignal.timeout(20000)});
+  if(!response.ok)throw Error('Etsy photo download failed ('+response.status+').');
+  return Buffer.from(await response.arrayBuffer());
+}
+// The preset slot (choose option / frame / promotion) the chosen photo is, if any.
+async function presetRoleForPhoto(url){
+  const reference=await photoFingerprint(await etsyPhotoBuffer(url));
+  for(const preset of PRESET_MEDIA.filter(item=>item.role!=='video')){
+    if(!await artworkObjectExists(preset.key))continue;
+    const installed=await photoFingerprint((await getArtworkObject(preset.key)).body);
+    if(comparePhotos(reference,installed).kind!=='different')return preset.role;
+  }
+  return null;
+}
+// Each converted listing shows the "choose your frame" preset (choose-frame.png
+// in Cloudflare R2) as its 5th photo, replacing what was there.
+const CONVERTER_FRAME_SLOT=5;
+async function placeConverterFramePhoto(listingId){
+  const preset=PRESET_MEDIA.find(item=>item.role==='choose-frame');
+  if(!await artworkObjectExists(preset.key))return {status:'skipped',reason:preset.filename+' is not in Cloudflare R2.'};
+  const object=await etsyReadyImage(preset.key);
+  return placePhotoAtSlot(photoReplacerDeps(),{listingId,slot:CONVERTER_FRAME_SLOT,
+    photo:{buffer:object.body,filename:'Choose Frame.jpg',contentType:object.contentType||'image/jpeg'}});
+}
+function photoReplacerDeps(){
+  let prepared=null,preparedKey='';
+  const loadJob=async()=>{try{return await getJsonObject(PHOTO_REPLACER_JOB_KEY)}catch(error){if(isMissingR2Object(error))return null;throw error}};
+  const etsyArgs=async()=>{const s=await getEtsySession();return {shopId:s.shop.shop_id,keystring:s.keystring,sharedSecret:s.sharedSecret,accessToken:s.accessToken}};
+  return {
+    newId:()=>crypto.randomUUID(),
+    pause:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
+    loadJob,saveJob:job=>putJsonObject(PHOTO_REPLACER_JOB_KEY,job),
+    listListings:async()=>(await allShopListingsForPriceSync(await getEtsySession())).map(item=>({
+      listingId:Number(item.listing_id),title:item.title,state:item.state,artworkId:artworkIdFromSkus(item.skus)||null})),
+    getImages:listingId=>photoReplacerImages(listingId),
+    fetchImage:etsyPhotoBuffer,
+    // The new photo as Etsy gets it (resized like the other listing photos).
+    newImage:async()=>{
+      const job=await loadJob();
+      if(!job?.newImage?.key)throw Error('The new photo is missing; start again.');
+      if(prepared&&preparedKey===job.newImage.key)return prepared;
+      const optimized=await optimizeEtsyImageObject(await getArtworkObject(job.newImage.key));
+      preparedKey=job.newImage.key;
+      prepared={buffer:optimized.body,contentType:optimized.contentType||'image/jpeg',
+        filename:String(job.newImage.filename||'photo').replace(/\.\w+$/,'')+(String(optimized.contentType).includes('png')?'.png':'.jpg')};
+      return prepared;
+    },
+    uploadPhoto:async({listingId,rank,overwrite,buffer,filename,contentType})=>{
+      const args=await etsyArgs();
+      return withEtsyListingRetry(()=>uploadListingImage({...args,listingId,imageBuffer:buffer,filename,contentType,rank,overwrite}));
+    },
+    deletePhoto:async({listingId,listingImageId})=>withEtsyListingRetry(async()=>deleteListingImage({...await etsyArgs(),listingId,listingImageId})),
+    setRank:async({listingId,listingImageId,rank})=>withEtsyListingRetry(async()=>setListingImageRank({...await etsyArgs(),listingId,listingImageId,rank})),
+    // New drafts use the new photo too: it is saved over the preset, in the preset's format.
+    updatePreset:async role=>{
+      const preset=PRESET_MEDIA.find(item=>item.role===role&&role!=='video');
+      const job=await loadJob();
+      if(!preset||!job?.newImage?.key)return;
+      const source=(await getArtworkObject(job.newImage.key)).body;
+      const body=preset.contentType==='image/png'?await sharp(source).rotate().png().toBuffer():await sharp(source).rotate().jpeg({quality:92}).toBuffer();
+      await putArtworkObject({key:preset.key,body,contentType:preset.contentType});
+      presetEtsyImages.delete(preset.key);
+    },
+    // The app's record of which Etsy photo is which follows the swap.
+    onReplaced:async({artworkId,oldImageId,newImageId})=>{
+      if(!artworkId)return;
+      const job=await loadJob();
+      await updateArtworkManifest(artworkId,current=>{
+        for(const receipt of current?.etsyMedia?.images||[]){
+          if(String(receipt.listingImageId)!==String(oldImageId))continue;
+          receipt.listingImageId=String(newImageId);
+          if(!(job?.updatePreset&&PRESET_MEDIA.some(item=>item.key===receipt.key))){
+            receipt.key=job?.newImage?.key||receipt.key;receipt.filename=job?.newImage?.filename||receipt.filename;
+          }
+        }
+      });
+    }
   };
 }
 
@@ -2064,6 +2157,13 @@ async function performListingConversion(body){
       // Taxonomy property updates can also change listing fields.
       await ensureConverterListingSeo(session,listingId,expectedDescription,originalShopSectionId);
 
+      // The choose-frame preset goes in photo slot 5. A photo problem does not
+      // undo a verified conversion; it is recorded for review.
+      let framePhoto;
+      try{framePhoto=await placeConverterFramePhoto(listingId)}
+      catch(error){framePhoto={status:'failed',error:String(error?.message||error).slice(0,240)};
+        console.warn('Choose-frame photo for converted listing '+listingId+':',framePhoto.error)}
+
       manifest.etsyConfiguredAt = new Date().toISOString();
       manifest.etsyConfiguration = {
         listingId,
@@ -2072,7 +2172,8 @@ async function performListingConversion(body){
         enabledVariants: variantInventory.enabledCount,
         materials: listingDefaults.fixedAttributes?.Materials || [],
         attributes: attributes.results,
-        existingMediaPreserved: true,
+        existingMediaPreserved: framePhoto?.status!=='placed',
+        framePhoto,
         existingSeoPreserved: true
       };
       await saveArtworkManifest(manifest);
@@ -4340,6 +4441,78 @@ const server = http.createServer(async (req, res) => {
       'cache-control':'private, no-store','x-content-type-options':'nosniff'});
     return res.end(js);
   }
+  if(req.method==='GET' && url.pathname==='/photo-replacer-client.js'){
+    if(!requireAdminApi(req,res))return;
+    const js=readFileSync(new URL('./photo-replacer-client.js',import.meta.url),'utf8');
+    res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
+      'cache-control':'private, no-store','x-content-type-options':'nosniff'});
+    return res.end(js);
+  }
+  // Listings → Replace a photo: one photo swapped in every listing (see photo-replacer.mjs).
+  if(url.pathname==='/api/photo-replacer'||url.pathname.startsWith('/api/photo-replacer/')){
+    if(!requireAdminApi(req,res))return;
+    if(req.method==='POST'){
+      const origin=String(req.headers.origin||''),host=String(req.headers.host||'');
+      if(!host||(origin&&origin!==String(req.headers['x-forwarded-proto']||'https')+'://'+host)||
+         req.headers['sec-fetch-site']==='cross-site')
+        return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    }
+    try{
+      const action=url.pathname.slice('/api/photo-replacer'.length);
+      if(req.method==='GET'&&action===''){
+        let job=null;try{job=await getJsonObject(PHOTO_REPLACER_JOB_KEY)}catch(error){if(!isMissingR2Object(error))throw error}
+        if(job&&!photoJobRunning()&&['scanning','replacing'].includes(job.status))job.status='stopped';
+        return sendJson(res,200,{ok:true,job,running:photoJobRunning()});
+      }
+      if(req.method==='GET'&&action==='/listing-photos'){
+        const listingId=Number(url.searchParams.get('listingId'));
+        if(!Number.isSafeInteger(listingId)||listingId<=0)return sendJson(res,400,{ok:false,error:'Invalid Etsy listing ID.'});
+        const images=await photoReplacerImages(listingId);
+        return sendJson(res,200,{ok:true,photos:images.map(image=>({listingImageId:String(image.listing_image_id),
+          rank:Number(image.rank),url:photoUrl(image),width:image.full_width||null,height:image.full_height||null}))});
+      }
+      if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'Method not allowed.'});
+      const body=await readJsonBody(req);
+      if(action==='/upload'){
+        const type=String(body.contentType||'').toLowerCase(),size=Number(body.size);
+        if(!['image/jpeg','image/png','image/webp'].includes(type))return sendJson(res,400,{ok:false,error:'Choose a JPG, PNG or WebP photo.'});
+        if(!(size>0&&size<=20*1024*1024))return sendJson(res,400,{ok:false,error:'The photo must be 20 MB or smaller.'});
+        const key='photo-replacer/'+crypto.randomUUID()+'.'+({'image/jpeg':'jpg','image/png':'png','image/webp':'webp'})[type];
+        return sendJson(res,200,{ok:true,key,uploadUrl:await signedArtworkUploadUrl(key,type)});
+      }
+      if(action==='/scan'){
+        const session=await getEtsySession();
+        if(!String(session.scope||'').split(/\s+/).includes('listings_w'))
+          return sendJson(res,403,{ok:false,error:'Reconnect Etsy: replacing photos needs the listings_w permission.'});
+        const listingId=Number(body.listingId),slot=Number(body.slot);
+        const key=String(body.newImage?.key||'');
+        if(!/^photo-replacer\/[0-9a-f-]{36}\.(jpg|png|webp)$/.test(key)||!await artworkObjectExists(key))
+          return sendJson(res,400,{ok:false,error:'Upload the new photo first.'});
+        if(!Number.isSafeInteger(slot)||slot<1||slot>20)return sendJson(res,400,{ok:false,error:'Choose a photo slot from 1 to 20.'});
+        const images=await photoReplacerImages(listingId);
+        const chosen=images.find(image=>String(image.listing_image_id)===String(body.listingImageId));
+        if(!chosen)return sendJson(res,400,{ok:false,error:'That photo is no longer on the listing. Choose it again.'});
+        const reference={listingId,listingImageId:String(chosen.listing_image_id),rank:Number(chosen.rank),
+          url:photoUrl(chosen),width:chosen.full_width||null,height:chosen.full_height||null};
+        const presetRole=await presetRoleForPhoto(reference.url).catch(()=>null);
+        const job=await scanForPhoto(photoReplacerDeps(),{reference,slot,presetRole,
+          newImage:{key,filename:String(body.newImage?.filename||'photo').replace(/[^\w .()-]/g,'').slice(0,100)||'photo',
+            contentType:String(body.newImage?.contentType||'image/jpeg')}});
+        return sendJson(res,200,{ok:true,job,running:true});
+      }
+      if(action==='/replace'){
+        if(body.confirm!=='REPLACE PHOTOS ON ETSY')
+          return sendJson(res,400,{ok:false,error:'Explicit confirmation is required: this changes photos on Etsy.'});
+        const deps=photoReplacerDeps();
+        const current=await deps.loadJob();
+        if(current){current.updatePreset=Boolean(body.updatePreset&&current.presetRole);await deps.saveJob(current)}
+        const job=await replacePhotos(deps,{listingIds:Array.isArray(body.listingIds)?body.listingIds:[]});
+        return sendJson(res,200,{ok:true,job,running:true});
+      }
+      if(action==='/stop')return sendJson(res,200,{ok:true,stopping:stopPhotoJob()});
+      return sendJson(res,404,{ok:false,error:'Unknown photo replacer action.'});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
+  }
   if(req.method==='GET'&&url.pathname==='/api/master-listings'){
     if(!requireAdminApi(req,res))return;
     try{
@@ -4873,6 +5046,8 @@ const server = http.createServer(async (req, res) => {
           items: status.items
         });
       }
+      // A replaced preset photo must not be served from the in-memory Etsy copy.
+      for (const item of uploaded) presetEtsyImages.delete(item.key);
       return sendJson(res, 200, { ok: true, ...status });
     } catch (error) {
       return sendJson(res, 500, { ok: false, error: error?.message || String(error) });

@@ -125,6 +125,6 @@ test('reconverter UI submits work to persistent Etsy queue after crop verificati
  assert.ok(server.includes('activateConverterArtworkRevision({'));
  assert.ok(server.includes("async function runPendingListingConversions()"));
  assert.ok(server.includes('cachedConverterShippingProfiles(session)'));
- assert.ok(server.includes('existingMediaPreserved: true'));
+ assert.ok(server.includes('framePhoto=await placeConverterFramePhoto(listingId)'));
  assert.ok(server.includes('existingSeoPreserved: true'));
 });

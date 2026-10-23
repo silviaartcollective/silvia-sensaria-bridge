@@ -13,11 +13,12 @@ async function request(path,body){
 }
 function showTab(tab){
  const converter=tab==='converter';
- for(const name of ['master','converter','templates']){
+ for(const name of ['master','converter','templates','photos']){
   el(name+'-panel').classList.toggle('hidden',name!==tab);
   const b=el('tab-'+name);const active=name===tab;
   b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));
  }
+ if(tab==='photos')window.photoReplacer?.open();
  if(tab==='templates'&&!templatesLoaded){
   templatesLoaded=true;
   void loadTemplates();
@@ -48,6 +49,7 @@ setInterval(resizeConverterFrame,3500);
 el('tab-master').addEventListener('click',()=>showTab('master'));
 el('tab-converter').addEventListener('click',()=>showTab('converter'));
 el('tab-templates').addEventListener('click',()=>showTab('templates'));
+el('tab-photos').addEventListener('click',()=>showTab('photos'));
 function filteredList(){
  const q=el('listing-search').value.trim().toLowerCase();
  return listings.filter(o=>!q||String(o.listingId).includes(q)||
@@ -629,5 +631,5 @@ el('tpl-save').addEventListener('click',async()=>{
 });
 
 const tab=new URL(location.href).searchParams.get('tab');
-showTab(['converter','templates'].includes(tab)?tab:'master');
+showTab(['converter','templates','photos'].includes(tab)?tab:'master');
 })();

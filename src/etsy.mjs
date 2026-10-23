@@ -691,6 +691,8 @@ export async function uploadListingImage({
   contentType = 'image/jpeg',
   rank = 1,
   altText = '',
+  // true replaces the photo at `rank` (Etsy's in-place replace).
+  overwrite = false,
   keystring,
   sharedSecret,
   accessToken
@@ -699,7 +701,7 @@ export async function uploadListingImage({
   const blob = new Blob([imageBuffer], { type: contentType || 'image/jpeg' });
   form.append('image', blob, filename);
   form.append('rank', String(rank));
-  form.append('overwrite', 'false');
+  form.append('overwrite', overwrite ? 'true' : 'false');
   form.append('is_watermarked', 'false');
   if (altText) form.append('alt_text', String(altText).slice(0, 500));
 
