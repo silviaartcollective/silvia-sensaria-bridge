@@ -1,4 +1,8 @@
 import {renderMockupGeneratorSection,renderMockupPreviewPanel} from './mockup-generator-ui.mjs';
+import {readFileSync} from 'node:fs';
+// The SEO paste reader (seo-paste.mjs) runs in the page as it is tested.
+const SEO_PASTE_SCRIPT='window.parseSeoPaste=(()=>{'+readFileSync(new URL('./seo-paste.mjs',import.meta.url),'utf8')
+  .replace(/^export /gm,'')+'\nreturn parseSeoPaste;})();';
 function esc(value) {
   return String(value ?? '')
     .replaceAll('&','&amp;')
@@ -142,7 +146,8 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
             <textarea id="seo_generator_output" placeholder="Paste the complete SEO output here..."></textarea>
           </label>
           <button class="btn secondary" id="apply-seo-btn" type="button">Apply SEO Output</button>
-          <div class="uploadmeta">Paste SEO Title, ABOUT THIS ARTWORK, MORE ART FROM SILVIA ART COLLECTIVE, Style, and SEO Tags (13). Style automatically selects the matching Etsy listing attribute. Older Homestyle (1) output is still supported.</div>
+          <div class="status" id="seo-paste-status" role="status" style="display:none"></div>
+          <div class="uploadmeta">Paste the title, description (or ABOUT THIS ARTWORK), shop section (MORE ART FROM … with its link), Style and tags. Headings can be written any common way (Tags, SEO Tags (13), **Etsy Tags:** …), and tags can be separated by commas, lines, bullets or hashtags. Anything missing is listed after you apply.</div>
         </div>
         <label>Etsy title<input id="title" maxlength="140" required placeholder="Enter the SEO title for this artwork"></label>
         <label>Short SEO Description <span class="hint">placed below ABOUT THIS ARTWORK</span><textarea id="seo_description" required placeholder="Paste the Short SEO Description from your SEO generator..."></textarea></label>
@@ -292,38 +297,6 @@ function normalizedSeoLine(value){
     .toLowerCase();
 }
 
-function seoLines(text){
-  return String(text||'').split(/\\r?\\n/);
-}
-
-function blockAfterHeading(text,labels,stopLabels){
-  const lines=seoLines(text);
-  const normalizedLabels=labels.map(normalizedSeoLine);
-  const normalizedStops=stopLabels.map(normalizedSeoLine);
-  let start=-1;
-
-  for(let i=0;i<lines.length;i++){
-    const current=normalizedSeoLine(lines[i]);
-    if(normalizedLabels.includes(current)){
-      start=i+1;
-      break;
-    }
-  }
-  if(start<0)return '';
-
-  const collected=[];
-  for(let i=start;i<lines.length;i++){
-    const current=normalizedSeoLine(lines[i]);
-    if(current && normalizedStops.includes(current))break;
-    collected.push(lines[i]);
-  }
-  return collected.join('\\n').trim();
-}
-
-function firstNonEmptyLine(value){
-  return String(value||'').split(/\\r?\\n/).map(x=>x.trim()).find(Boolean)||'';
-}
-
 function selectSeoShopSection(){
   const sectionName=document.getElementById('seo_section_name').value.trim();
   const sectionUrl=document.getElementById('seo_section_url').value.trim();
@@ -368,51 +341,15 @@ function warnOnShopSectionChange(){
 
 function applySeoOutput(){
   const text=seoGeneratorOutput.value.trim();
-  if(!text)return;
-
-  const title=firstNonEmptyLine(blockAfterHeading(
-    text,
-    ['SEO Title'],
-    ['Short SEO Description','ABOUT THIS ARTWORK','MORE ART FROM SILVIA ART COLLECTIVE','Style','Homestyle (1)','Homestyle','SEO Tags (13)','SEO Tags']
-  ));
-
-  const description=blockAfterHeading(
-    text,
-    ['Short SEO Description','ABOUT THIS ARTWORK'],
-    ['MORE ART FROM SILVIA ART COLLECTIVE','Style','Homestyle (1)','Homestyle','SEO Tags (13)','SEO Tags']
-  );
-
-  const moreArt=blockAfterHeading(
-    text,
-    ['MORE ART FROM SILVIA ART COLLECTIVE'],
-    ['Style','Homestyle (1)','Homestyle','SEO Tags (13)','SEO Tags']
-  );
-  const moreArtLines=moreArt.split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean);
-  const sectionName=moreArtLines.find(x=>!/^https?:\\/\\//i.test(x))||'';
-  const sectionUrl=moreArtLines.find(x=>/^https?:\\/\\//i.test(x))||'';
-
-  const homestyle=firstNonEmptyLine(blockAfterHeading(
-    text,
-    ['Homestyle (1)','Homestyle'],
-    ['Style','SEO Tags (13)','SEO Tags']
-  ));
-
-  const styleText=firstNonEmptyLine(blockAfterHeading(
-    text,
-    ['Style'],
-    ['Homestyle (1)','Homestyle','SEO Tags (13)','SEO Tags']
-  ));
-
-  const tags=blockAfterHeading(
-    text,
-    ['SEO Tags (13)','SEO Tags'],
-    []
-  ).split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean).join(' ');
-
-  if(title)document.getElementById('title').value=title.replace(/^[-•]\\s*/,'').trim();
-  if(description)document.getElementById('seo_description').value=description.trim();
-  document.getElementById('seo_section_name').value=sectionName;
-  document.getElementById('seo_section_url').value=sectionUrl;
+  const report=document.getElementById('seo-paste-status');
+  report.style.display='block';
+  if(!text){report.className='status warn';report.textContent='Paste the SEO output first.';return;}
+  const seo=window.parseSeoPaste(text);
+  if(seo.title)document.getElementById('title').value=seo.title;
+  if(seo.description)document.getElementById('seo_description').value=seo.description;
+  document.getElementById('seo_section_name').value=seo.sectionName;
+  document.getElementById('seo_section_url').value=seo.sectionUrl;
+  const styleText=seo.style,homestyle=seo.homestyle;
   const chosenStyle=styleText||homestyle;
   if(styleText)document.getElementById('homestyle').value='';
   if(chosenStyle){
@@ -436,11 +373,17 @@ function applySeoOutput(){
     const hs=document.getElementById('homestyle-status');
     hs.style.display='block';
     hs.className='status ok';
-    hs.innerHTML='<strong>Homestyle:</strong> '+homestyle+' · will be applied automatically to Etsy';
+    hs.textContent='Homestyle: '+homestyle+' · will be applied automatically to Etsy';
   }
-  if(tags){document.getElementById('tags').value=tags.replace(/^[-•]\\s*/,'').trim();chosenInForm.add('tags')}
-
+  if(seo.tags.length){document.getElementById('tags').value=seo.tags.join(', ');chosenInForm.add('tags')}
   selectSeoShopSection();
+  // Say what was filled in and what the paste is missing.
+  const named=seo.found.map(part=>part==='tags'?seo.tags.length+' tags':part);
+  const needed=seo.missing.filter(part=>['title','description','tags'].includes(part));
+  report.className='status '+(needed.length?'warn':seo.missing.length||seo.notes.length?'':'ok');
+  report.textContent=(named.length?'Filled in: '+named.join(', ')+'.':'Nothing recognised in the paste.')+
+    (seo.missing.length?' Missing from the paste: '+seo.missing.join(', ')+(needed.length?' (fill in below before creating the draft)':'')+'.':'')+
+    (seo.notes.length?' '+seo.notes.join(' '):'');
 }
 applySeoButton.addEventListener('click',applySeoOutput);
 section.addEventListener('change',warnOnShopSectionChange);
@@ -996,12 +939,18 @@ const PRESET_IMAGE_ROLES=['choose-option','choose-frame','promotion'];
 const PRESET_ROLE_LABELS={'choose-option':'Choose Option','choose-frame':'Choose Frame',promotion:'Promotion',video:'Video'};
 let lastPresetStatus=null;
 
+// Each installed preset has a Remove button; the photos left for mockups follow.
+function presetRemoveButtons(items){
+  return items.filter(x=>x.exists).map(x=>'<button type="button" class="btn secondary" data-remove-preset="'+x.role+'" style="margin:6px 6px 0 0;padding:4px 10px">Remove '+(PRESET_ROLE_LABELS[x.role]||x.role)+'</button>').join('');
+}
 function renderPresetStatus(status){
   lastPresetStatus=status;
   const items=Array.isArray(status?.items)?status.items:[];
+  const images=items.filter(x=>x.exists&&x.role!=='video').length;
+  const room='<br>'+images+' of the 20 Etsy photos are presets, so up to '+(20-images)+' mockups fit.';
   if(status?.configured){
     presetMediaStatus.className='status ok';
-    presetMediaStatus.innerHTML='<strong>Preset media installed.</strong><br>Choose Option · Choose Frame · Promotion · Video will be added automatically to every listing.';
+    presetMediaStatus.innerHTML='<strong>Preset media installed.</strong><br>Choose Option · Choose Frame · Promotion · Video will be added automatically to every listing.'+room+'<br>'+presetRemoveButtons(items);
     installPresetsButton.style.display='none';
     presetFilesInput.style.display='none';
     return;
@@ -1011,11 +960,12 @@ function renderPresetStatus(status){
   const installed=items.filter(x=>x.exists).map(label),missing=items.filter(x=>!x.exists).map(label);
   presetMediaStatus.className='status'+(installed.length?' ok':'');
   presetMediaStatus.innerHTML=installed.length
-    ?'<strong>Installed: '+installed.join(' · ')+'.</strong><br>Added automatically to every listing. Optional: '+missing.join(', ')+'.'
+    ?'<strong>Installed: '+installed.join(' · ')+'.</strong><br>Added automatically to every listing. Optional: '+missing.join(', ')+'.'+room+'<br>'+presetRemoveButtons(items)
     :'<strong>Optional.</strong> Choose up to 3 preset images and 1 video to add to every listing. Images named Option, Frame or Promotion go to that slot.';
   installPresetsButton.style.display='';
   presetFilesInput.style.display='';
 }
+
 
 // Up to 3 images and 1 video, in any combination. An image named like Option,
 // Frame or Promotion/Offer goes to that slot; other images fill the image
@@ -1081,6 +1031,8 @@ async function installPresetMedia(){
       headers:{'content-type':'application/json'},body:JSON.stringify({roles:mapped.map(x=>x.role)})});
     const done=await readJsonResponse(complete,'Preset media confirmation');
     if(!complete.ok)throw new Error(done.error||'Preset upload did not complete.');
+    // The mockup panel recounts the photo slots left for mockups.
+    window.dispatchEvent(new Event('pod-presets-changed'));
     presetFilesInput.value='';
     renderPresetStatus(done);
   }catch(error){
@@ -1092,6 +1044,22 @@ async function installPresetMedia(){
 }
 
 installPresetsButton.addEventListener('click',installPresetMedia);
+presetMediaStatus.addEventListener('click',async event=>{
+  const role=event.target.closest?.('[data-remove-preset]')?.dataset.removePreset;
+  if(!role)return;
+  if(!confirm('Remove the preset "'+(PRESET_ROLE_LABELS[role]||role)+'"? New drafts will leave it out. Listings already on Etsy keep their photos.'))return;
+  event.target.disabled=true;
+  try{
+    const response=await fetch('/api/presets/remove',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({role})});
+    const data=await readJsonResponse(response,'Preset removal');
+    if(!response.ok)throw new Error(data.error||'The preset could not be removed.');
+    renderPresetStatus(data);
+    window.dispatchEvent(new Event('pod-presets-changed'));
+  }catch(error){
+    presetMediaStatus.className='status warn';
+    presetMediaStatus.textContent=error.message||String(error);
+  }
+});
 document.getElementById('orientation').addEventListener('change',()=>void applyTemplateForArtwork());
 window.addEventListener('pod-artwork-uploaded',event=>{
   const detail=event.detail||{};
@@ -1292,6 +1260,7 @@ form.addEventListener('submit',async(e)=>{
   }
 });
 </script>
+<script>${SEO_PASTE_SCRIPT}</script>
 <script type="module" src="/assets/mockup-generator-client.js"></script>
 </body></html>`;
 }

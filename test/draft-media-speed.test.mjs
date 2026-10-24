@@ -96,11 +96,12 @@ test('the Product Creator saves the chosen mockups and order before it creates t
  assert.match(client,/await pendingApplySaved\.catch\(\(\)=>\{\}\);/);
 });
 
-test('photos upload two at a time, and one at a time for good once Etsy refuses a simultaneous edit',()=>{
+test('photos upload three at a time; a refusal slows only this upload and the next 10 minutes',()=>{
  const server=read('src/server.mjs');
  const uploader=server.slice(server.indexOf('async function uploadPhotosToListing'),server.indexOf('async function ensureListingPhotoOrder'));
- assert.match(server,/const ETSY_PHOTO_LANES=2;/);
- assert.match(uploader,/lanes=1;etsyAcceptsParallelPhotos=false;/);
+ assert.match(server,/const ETSY_PHOTO_LANES=3,ETSY_LANE_COOLDOWN_MS=10\*60\*1000;/);
+ assert.match(uploader,/lanes--;etsyLaneLimit=Math\.min\(etsyLaneLimit,lanes\);etsyLaneLimitAt=Date\.now\(\);/);
+ assert.match(uploader,/lanes=etsyStartingLanes\(\)/);
  // The refused photo is sent again only after the other upload has finished.
  assert.match(uploader,/await Promise\.allSettled\(\[\.\.\.inFlight\]\);\s*result=await oneAtATime\(\(\)=>send\(photo,object,true\)\);/);
  assert.match(uploader,/const attempt=lanes>1\?send\(photo,object,false\):oneAtATime\(\(\)=>send\(photo,object,true\)\);/);

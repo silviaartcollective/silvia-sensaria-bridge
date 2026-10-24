@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {renderProductCreator} from '../src/product-creator.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from '../src/etsy-style.mjs';
+import {parseSeoPaste} from '../src/seo-paste.mjs';
 
 test('pasted Style values override fixed Art deco without creating duplicate Style fields',()=>{
  assert.equal(canonicalWallArtStyle(' contemporary '),'Contemporary');
@@ -29,6 +30,7 @@ test('full SEO paste fills title, artwork description, section, Style and all ta
  fields['style-status']={textContent:'',style:{display:'none'},className:''};
  fields['homestyle-status']={innerHTML:'',style:{display:'none'},className:''};
  fields['seo-section-status']={textContent:'',style:{display:'none'},className:''};
+ fields['seo-paste-status']={textContent:'',style:{display:'none'},className:''};
  const section={options:[
   {value:'59806016',textContent:'Neutral Landscape Art'},
   {value:'60115367',textContent:'Abstract & Contemporary'},
@@ -52,7 +54,7 @@ white floral art, neutral floral art, floral wall art, textured flowers, white f
  // Both shops need to parse a Silvia section heading for pasted cross-shop examples.
  const script=source.replace(/MORE ART FROM JAPANDI ART COLLECTIVE/g,'MORE ART FROM SILVIA ART COLLECTIVE');
  // chosenInForm: fields the user or the SEO set, which a listing template leaves alone.
- const ctx={seoGeneratorOutput:input,document:{getElementById:id=>fields[id]},section,chosenInForm:new Set()};
+ const ctx={seoGeneratorOutput:input,document:{getElementById:id=>fields[id]},section,chosenInForm:new Set(),window:{parseSeoPaste}};
  vm.runInNewContext(script+'\napplySeoOutput();',ctx);
  assert.equal(fields.title.value,'White Floral Wall Art: Neutral Beige Sage Textured Botanical Painting');
  assert.match(fields.seo_description.value,/Soft white blossoms emerge/);
@@ -67,6 +69,8 @@ white floral art, neutral floral art, floral wall art, textured flowers, white f
  assert.equal(fields.tags.value.split(',')[12].trim(),'neutral wall decor');
  assert.equal(fields.homestyle.value,'');
  assert.deepEqual([...ctx.chosenInForm].sort(),['listing_style','shop_section_id','tags']);
+ // The paste had everything: the report says so.
+ assert.match(fields['seo-paste-status'].textContent,/^Filled in: title, description, 13 tags, style, shop section\.$/);
 });
 test('Etsy Style is submitted for draft creation using supported taxonomy property',()=>{
  const html=renderProductCreator();
