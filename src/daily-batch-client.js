@@ -64,6 +64,7 @@ async function loadPresets(){
   const seen=(data.folders||[]).map(f=>f.path+' ('+f.count+')').join(', ');
   notice('mp-status',!data.worker?.online
    ?'No preset folders found, and the PC worker is offline, so the app cannot see the mockup folder as it is now. Start the PC worker, wait a minute, then click Check again.'
+   :!data.folder?'No mockup folder on the PC is set for this shop, so the worker does not read your PSDs for it. In the Product Creator, under PSD mockups, enter the folder in "Mockup folder on the PC" (for example D:\\Mockups\\My Mockups) and click Save folder. The worker reads it within a minute; then click Check again.'
    :data.worker.error?'The PC worker cannot read the mockup folder: '+data.worker.error
    :'No preset folders found yet. Inside the PC mockup folder'+where+', make folders named Preset 1, Preset 2… and put PSDs in them (subfolders such as Vertical are fine). '+
     'The worker reports changes within a minute; then click Check again.'+(seen?'\nFolders the app sees now: '+seen+'.':''),'warn');
