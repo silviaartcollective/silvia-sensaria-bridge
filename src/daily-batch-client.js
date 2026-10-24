@@ -177,8 +177,10 @@ async function preview(file){
   return {blob:await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.85)),...size};
  }catch{return null} // e.g. TIFF: the server makes the preview from the master
 }
+let pickNote='';   // what the last choice of files left out
 function showUploads(){
  const box=el('bt-uploads');box.replaceChildren();
+ if(pickNote)box.append(make('div','notice warn',pickNote));
  for(const upload of uploads.filter(u=>u.active||u.error)){
   const row=make('div','row'),text=make('div');
   text.append(make('div','t',upload.file.name),make('div','muted',upload.error||upload.note||'Uploading… '+Math.round(upload.progress*100)+'%'));
@@ -212,10 +214,17 @@ async function uploadOne(upload){
  showUploads();show();
 }
 el('bt-files').addEventListener('change',async()=>{
- const files=[...el('bt-files').files];el('bt-files').value='';
- if(!files.length)return;
+ const picked=[...el('bt-files').files];el('bt-files').value='';
+ if(!picked.length)return;
+ // Only images; with more than the batch has room for, the first ones are taken.
+ const images=picked.filter(file=>/^image\//.test(file.type)||/\.(jpe?g|png|webp|tiff?)$/i.test(file.name));
  const room=state.max-((state.job&&!state.job.closed)?state.job.items.length:0);
- if(files.length>room){notice('bt-status','This batch has room for '+room+' more artwork'+(room===1?'':'s')+'. Choose fewer, or publish and start a new batch.','warn');return;}
+ if(room<=0){notice('bt-status','This batch is full ('+state.max+' artworks). Publish it and start a new batch for more.','warn');return;}
+ const files=images.slice(0,room),left=images.length-files.length,skipped=picked.length-images.length;
+ const said=[left&&'The first '+files.length+' were added: a batch holds '+state.max+'. Add the other '+left+' to the next batch.',
+  skipped&&skipped+' file'+(skipped===1?' was':'s were')+' not an image and '+(skipped===1?'was':'were')+' left out.'].filter(Boolean);
+ pickNote=said.join(' ');showUploads();
+ if(!files.length)return;
  await presetsLoaded;
  const added=files.map(file=>({file,active:true,progress:0,error:'',note:''}));
  uploads.push(...added);showUploads();show();
