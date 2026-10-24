@@ -4941,7 +4941,18 @@ const server = http.createServer(async (req, res) => {
           getJsonObject(BATCH_PRESET_KEY).catch(()=>null)]);
         const ready=templates.filter(t=>t.status==='ready'),presets=mockupPresets(ready);
         const chosen=presets.find(item=>presetKey(item.name)===presetKey(saved?.name))||presets[0]||null;
-        return sendJson(res,200,{ok:true,folder:folder?.path||folder||'',room,chosen:chosen?.name||'',
+        // The folder may be set on the PC (worker config) rather than in the app.
+        const worker=cropWorkerStatus();
+        // Without any preset folder: the folders the app does see, to spot a
+        // misnamed folder or one the worker has not reported yet.
+        const seen=new Map();
+        if(!presets.length)for(const t of ready.filter(t=>t.source==='pc')){
+          const dir=String(t.localPath||'').split('/').slice(0,-1).join('/')||'(directly in the mockup folder)';
+          seen.set(dir,(seen.get(dir)||0)+1);
+        }
+        return sendJson(res,200,{ok:true,folder:folder||worker.mockupFolder?.path||'',room,chosen:chosen?.name||'',
+          worker:{online:worker.online,count:worker.mockupFolder?.count??null,error:worker.mockupFolder?.error||''},
+          folders:[...seen].sort((a,b)=>b[1]-a[1]).slice(0,12).map(([path,count])=>({path,count})),
           outside:ready.filter(t=>t.source==='pc').length-presets.reduce((sum,item)=>sum+item.templates.length,0),
           presets:presets.map(item=>({name:item.name,templates:item.templates.map(t=>({id:t.id,name:t.name,localPath:t.localPath,
             orientation:t.orientation||'unclassified',squareCompatible:t.squareCompatible===true}))}))});

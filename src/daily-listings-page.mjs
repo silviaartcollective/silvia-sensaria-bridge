@@ -51,7 +51,7 @@ textarea{min-height:300px;resize:vertical;font-size:13px}label{font-size:12px;fo
 
 <section class="card" id="mockup-presets"><div class="flex"><h2>Mockup presets</h2><span class="muted" id="mp-room"></span></div>
 <p class="muted" id="mp-about">Your presets are the folders named Preset 1, Preset 2… in the PC mockup folder. Each new listing gets the PSDs from the chosen preset that suit its artwork's shape. Add, remove or move PSDs on the PC; the worker picks the change up within a minute.</p>
-<div class="pair" role="tablist" aria-label="Mockup preset" id="mp-tabs"></div>
+<div class="flex"><div class="pair" role="tablist" aria-label="Mockup preset" id="mp-tabs"></div><button type="button" id="mp-refresh">Check again</button></div>
 <div id="mp-status" class="notice hidden" role="status"></div>
 <div id="mp-groups"></div>
 </section>

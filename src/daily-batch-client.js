@@ -60,11 +60,19 @@ async function loadPresets(){
  const where=data.folder?' ('+data.folder+')':'';
  el('mp-about').textContent='Your presets are the folders named Preset 1, Preset 2… in the PC mockup folder'+where+
   '. Each new listing gets the PSDs from the chosen preset that suit its artwork\'s shape. Add, remove or move PSDs on the PC; the worker picks the change up within a minute.';
- if(!presets.length)notice('mp-status','No preset folders found yet. Inside the PC mockup folder'+where+', make folders named Preset 1, Preset 2… and put PSDs in them (subfolders such as Vertical are fine).','warn');
+ if(!presets.length){
+  const seen=(data.folders||[]).map(f=>f.path+' ('+f.count+')').join(', ');
+  notice('mp-status',!data.worker?.online
+   ?'No preset folders found, and the PC worker is offline, so the app cannot see the mockup folder as it is now. Start the PC worker, wait a minute, then click Check again.'
+   :data.worker.error?'The PC worker cannot read the mockup folder: '+data.worker.error
+   :'No preset folders found yet. Inside the PC mockup folder'+where+', make folders named Preset 1, Preset 2… and put PSDs in them (subfolders such as Vertical are fine). '+
+    'The worker reports changes within a minute; then click Check again.'+(seen?'\nFolders the app sees now: '+seen+'.':''),'warn');
+ }
  else if(data.outside>0)notice('mp-status',data.outside+' PSD'+(data.outside===1?' is':'s are')+' not in a preset folder, so new listings do not use '+(data.outside===1?'it':'them')+'.');
  else el('mp-status').classList.add('hidden');
  showPresets();
 }
+el('mp-refresh').addEventListener('click',()=>{presetsLoaded=loadPresets().catch(error=>notice('mp-status',String(error.message||error),'error'));});
 async function choose(name){
  const previous=chosen;chosen=name;showPresets();
  try{await request('/api/batch/presets',{name});}
