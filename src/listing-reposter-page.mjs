@@ -42,7 +42,7 @@ th,td{padding:11px 9px;border-bottom:1px solid var(--line);text-align:left;verti
 <div id="photos" class="imageGrid"></div>
 <div class="formgrid"><div><label for="mockup-mode">Mockup selection</label><select id="mockup-mode">
 <option value="keep">Keep original Etsy mockups</option><option value="replace">Replace with new JPEG mockups</option></select></div>
-<div id="upload-wrap" class="hidden"><label for="mockups">New JPEGs (1–10, each max 20MB)</label><input id="mockups" type="file" accept="image/jpeg" multiple></div></div>
+<div id="upload-wrap" class="hidden"><label for="mockups">New JPEGs (1–20, each max 20MB)</label><input id="mockups" type="file" accept="image/jpeg" multiple></div></div>
 <div class="card"><h2>Artwork & production files</h2>
 <p class="muted">Both choices keep the exact same artwork ID and original SAC/JAC variant SKUs. Replacing the artwork updates the stored source and fulfillment ratio files only after the PC cropper completes and the new Etsy listing is verified.</p>
 <label for="artwork-mode">Artwork source</label>
@@ -191,8 +191,8 @@ async function prepare(){
  p.mockups=[];
  if(p.mockupMode==='replace'){
  const files=[...$('mockups').files];
- if(!files.length||files.length>10||files.some(f=>f.type!=='image/jpeg'||f.size>20000000))
-   throw Error('Select 1–10 JPEG images under 20MB each.');
+ if(!files.length||files.length>20||files.some(f=>f.type!=='image/jpeg'||f.size>20000000))
+   throw Error('Select 1–20 JPEG images under 20MB each.');
  const data=await api('/api/reposter/'+id+'/uploads/reserve',{files:files.map(f=>({name:f.name,size:f.size,type:f.type}))});
  for(let i=0;i<files.length;i++){
    const response=await fetch(data.uploads[i].uploadUrl,{method:'PUT',headers:{'content-type':'image/jpeg'},body:files[i]});

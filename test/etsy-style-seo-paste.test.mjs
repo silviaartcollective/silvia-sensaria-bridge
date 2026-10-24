@@ -92,7 +92,7 @@ test('server rejects mismatched or forged SEO shop-section links before creating
  assert.throws(()=>seoEtsySectionId('https://www.etsy.com/shop/SilviaArtCollective'),/section_id/);
  assert.equal(assertSeoShopSection('',59806016),null);
  const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
- const route=server.slice(server.indexOf("if (req.method === 'POST' && url.pathname === '/etsy/drafts')"));
+ const route=server.slice(server.indexOf('async function createEtsyDraft(body)'));
  assert.ok(route.indexOf('assertSeoShopSection(body.seo_section_url,body.shop_section_id)')>=0);
  assert.ok(route.indexOf('assertSeoShopSection(body.seo_section_url,body.shop_section_id)')<route.indexOf('createDraftListing('));
 });
