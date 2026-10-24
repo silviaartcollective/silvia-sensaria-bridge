@@ -48,23 +48,38 @@ async function inspectArtworkOrientation(file){
  }
 }
 
-// Etsy shows 20 photos and up to 20 mockups can be picked (the master artwork
-// is never an Etsy photo). With the preset photos that can be more than 20: the
-// organizer shows which ones make it. Every compatible template is generated and
-// nothing is ticked until the customer picks; "Select first 20" ticks the first
-// 20 finished JPGs.
-const ETSY_MOCKUP_SLOTS=20;
+// Etsy shows 20 photos (the master artwork is never one of them). The preset
+// photos installed for every draft, and any regular mockup photos added here,
+// take some of them, so only the rest can be PSD mockups: 18 with 2 presets,
+// 17 with 3. Every compatible template is generated and nothing is ticked until
+// the customer picks; "Select first N" ticks the first N finished JPGs.
+const ETSY_PHOTOS=20;
+let presetPhotos=0;
+const regularPhotos=()=>$('mockup_files')?.files?.length||0;
+const mockupSlots=()=>Math.max(1,ETSY_PHOTOS-presetPhotos-regularPhotos());
+const slotsText=()=>'Etsy shows '+ETSY_PHOTOS+' photos'+(presetPhotos?', '+presetPhotos+' of them preset photo'+(presetPhotos===1?'':'s'):'')+
+ (regularPhotos()?' and '+regularPhotos()+' regular mockup'+(regularPhotos()===1?'':'s'):'');
+// The installed presets, read again whenever presets are installed or removed.
+async function loadPresetPhotos(){
+ try{
+  const response=await fetch('/api/presets/status',{cache:'no-store'});
+  const data=await response.json();
+  if(response.ok&&Array.isArray(data.items))presetPhotos=data.items.filter(item=>item.role!=='video'&&item.exists).length;
+ }catch{}
+ if(typeof selectionChanged==='function')selectionChanged();
+}
+window.addEventListener('pod-presets-changed',()=>void loadPresetPhotos());
 const selectionByJob=new Map();
 const selectionFor=id=>{
  if(!selectionByJob.has(id))selectionByJob.set(id,{chosen:new Set()});
  return selectionByJob.get(id);
 };
-const firstSlots=j=>new Set(j.templates.filter(t=>t.status==='completed').slice(0,ETSY_MOCKUP_SLOTS).map(t=>t.id));
+const firstSlots=j=>new Set(j.templates.filter(t=>t.status==='completed').slice(0,mockupSlots()).map(t=>t.id));
 const isSelected=(id,itemId)=>selectionFor(id).chosen.has(itemId);
 function setSelected(id,itemId,checked){
  const selection=selectionFor(id);
- if(checked&&!selection.chosen.has(itemId)&&selection.chosen.size>=ETSY_MOCKUP_SLOTS){
-  message('Up to '+ETSY_MOCKUP_SLOTS+' mockups can be picked (Etsy shows 20 photos). Untick one first.',true);
+ if(checked&&!selection.chosen.has(itemId)&&selection.chosen.size>=mockupSlots()){
+  message('Up to '+mockupSlots()+' mockups can be picked ('+slotsText()+'). Untick one first.',true);
   return false;
  }
  if(checked)selection.chosen.add(itemId);else selection.chosen.delete(itemId);
@@ -163,7 +178,7 @@ function renderPreviews(){
    ?'Archived batch: these JPGs cannot be applied to a different artwork.'
    :lastAppliedBatchId===job.id
     ?appliedCount+' JPGs selected for Etsy syncing. Confirm the result in generation status.'
-    :selected+' of '+completed.length+' JPGs selected. Click Apply selected to listing when ready.';
+    :selected+' of '+completed.length+' JPGs selected (up to '+mockupSlots()+' fit: '+slotsText()+'). Click Apply selected to listing when ready.';
  $('mg-apply-selected').disabled=!currentBatch()||!selected||attaching;
  $('mg-select-all').disabled=!job;
  $('mg-deselect-all').disabled=!job;
@@ -234,7 +249,8 @@ function selectionChanged(){
  for(const checkbox of $('mg-preview-list').querySelectorAll('input[type=checkbox]'))
   checkbox.checked=!!job&&isSelected(job.id,checkbox.value);
  $('mg-selection-status').textContent=selected+' of '+completed.length+
-  ' JPGs selected. Review the previews, then click Apply selected to listing.';
+  ' JPGs selected (up to '+mockupSlots()+' fit). Review the previews, then click Apply selected to listing.';
+ $('mg-select-all').textContent='Select first '+mockupSlots();
  $('mg-apply-selected').disabled=!currentBatch()||!selected||attaching;
  // Allow a later server update to reconcile selections without stale state.
  previewRenderKey=(job?.id||'none')+'|'+completed.map(t=>t.id+':'+(t.finishedAt||'')).join(';')+
@@ -277,7 +293,11 @@ async function useResults(){
  if(!currentBatch())throw Error('These mockups were created for a different artwork. Create a fresh batch for this master.');
  if(attaching)return;
  const batchId=job.id;
- const selected=job.templates.filter(t=>t.status==='completed'&&isSelected(batchId,t.id)).slice(0,ETSY_MOCKUP_SLOTS);
+ const ticked=job.templates.filter(t=>t.status==='completed'&&isSelected(batchId,t.id));
+ // Presets installed after picking can leave too many ticked: only the first ones fit.
+ if(ticked.length>mockupSlots())
+  throw Error(ticked.length+' mockups are ticked but only '+mockupSlots()+' fit ('+slotsText()+'). Untick '+(ticked.length-mockupSlots())+' first.');
+ const selected=ticked;
  if(!selected.length){markRequested();throw Error('Select at least one generated JPG.')}
  const artworkId=job.artworkId||$('artwork_id').value.trim();
  if(!job.artworkId&&artworkId)await linkBatchToArtwork(batchId,artworkId).catch(()=>{});
@@ -993,13 +1013,14 @@ function selectSeven(){
 function selectAllCompatible(){
  const available=[...$('mg-templates').querySelectorAll('input.mg-template-choice')].filter(cb=>!cb.disabled);
  available.forEach(cb=>{cb.checked=true});
- message('Selected all '+available.length+' compatible PSDs. Pick the '+ETSY_MOCKUP_SLOTS+' for Etsy once they are generated.');
+ message('Selected all '+available.length+' compatible PSDs. Pick up to '+mockupSlots()+' for Etsy once they are generated.');
 }
 function clearTemplates(){
  for(const cb of $('mg-templates').querySelectorAll('input.mg-template-choice'))cb.checked=false;
  message('No PSD templates selected. You can create the Etsy draft now.');
 }
 $('mockup_files').addEventListener('change',()=>{
+ selectionChanged();
  if($('mockup_files').files.length){
   requested=false;ready=false;panel.dataset.generationRequested='false';
   panel.dataset.generationReady='false';
@@ -1088,6 +1109,9 @@ for(const [id,method] of [
 // Template readiness controls auto-queue; a failed worker-status request must not
 // disable uploads or generation.
 initialLoad=loadTemplates();
+void loadPresetPhotos();
+// Presets changed in another tab count when this one is back in view.
+window.addEventListener('focus',()=>void loadPresetPhotos());
 void loadPcFolder();
 void Promise.allSettled([loadJobs(),workerStatus()]);
 initialLoad.then(()=>{

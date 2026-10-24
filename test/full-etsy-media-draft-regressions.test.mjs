@@ -6,10 +6,10 @@ const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 test('Etsy photo plan supports all 20 photo slots, three preset plus 17 original mockups',()=>{
  const source=read('src/server.mjs'),client=read('src/mockup-generator-client.js'),ui=read('src/mockup-generator-ui.mjs');
  assert.match(source,/\.slice\(0,17\)/);
- // Up to 20 mockups can be picked; the organizer shows which of them (and the
- // 3 presets) make Etsy's 20 photos.
- assert.match(client,/const ETSY_MOCKUP_SLOTS=20;/);
- assert.match(client,/\.slice\(0,ETSY_MOCKUP_SLOTS\)/);
+ // Etsy shows 20 photos; the installed preset photos (and regular mockups)
+ // take some of them, and only the rest can be picked as mockups.
+ assert.match(client,/const ETSY_PHOTOS=20;/);
+ assert.match(client,/const mockupSlots=\(\)=>Math\.max\(1,ETSY_PHOTOS-presetPhotos-regularPhotos\(\)\);/);
  assert.match(ui,/id="mg-select-seventeen"/);
  assert.match(source,/items:\[\.\.\.matched\.items,\.\.\.customImages\.slice\(12\)\]/);
 });

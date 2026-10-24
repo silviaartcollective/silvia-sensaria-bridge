@@ -54,28 +54,33 @@ test('a waiting batch says when the PC worker is busy elsewhere',()=>{
  assert.match(server,/activeApp: online \? cropWorkerHeartbeat\.activeApp/);
 });
 
-test('every compatible template is generated; nothing is ticked until picked, at most 20',async()=>{
+test('every compatible template is generated; nothing is ticked until picked; the preset photos leave the rest for mockups',async()=>{
  const vm=await import('node:vm');
  const client=read('src/mockup-generator-client.js');
- assert.match(client,/const ETSY_MOCKUP_SLOTS=20;/);
+ assert.match(client,/const ETSY_PHOTOS=20;/);
  assert.doesNotMatch(client,/templateFitsOrientation\(t,detectedArtworkOrientation\)\)\.slice\(0,16\)/);
  // Run the selection model on its own.
- const start=client.indexOf('const ETSY_MOCKUP_SLOTS=20;'),end=client.indexOf('let lastStatus=');
- const context={job:null,messages:[],message(text){context.messages.push(text)}};
- vm.runInNewContext(client.slice(start,end)+';this.api={isSelected,setSelected,selectionByJob,firstSlots};',context);
- const {isSelected,setSelected,selectionByJob,firstSlots}=context.api;
+ const start=client.indexOf('const ETSY_PHOTOS=20;'),end=client.indexOf('let lastStatus=');
+ let regular=0;
+ const context={job:null,messages:[],message(text){context.messages.push(text)},$:id=>id==='mockup_files'?{files:{length:regular}}:null,
+  window:{addEventListener(){}},fetch:async()=>({ok:false,json:async()=>({})})};
+ vm.runInNewContext(client.slice(start,end)+';this.api={isSelected,setSelected,selectionByJob,firstSlots,mockupSlots,presets:n=>{presetPhotos=n}};',context);
+ const {isSelected,setSelected,selectionByJob,firstSlots,mockupSlots,presets}=context.api;
  context.job={id:'b',templates:Array.from({length:28},(_,i)=>({id:'t'+i,status:'completed'}))};
  const ticked=()=>context.job.templates.filter(t=>isSelected('b',t.id)).length;
  assert.equal(ticked(),0,'previews start unticked');
- selectionByJob.set('b',{chosen:firstSlots(context.job)}); // "Select first 20"
- assert.equal(ticked(),20);
- assert.equal(isSelected('b','t20'),false);
- assert.equal(setSelected('b','t20',true),false,'a 21st mockup does not fit');
- assert.match(context.messages.at(-1),/Up to 20 mockups can be picked/);
+ presets(2);
+ assert.equal(mockupSlots(),18);
+ selectionByJob.set('b',{chosen:firstSlots(context.job)}); // "Select first 18"
+ assert.equal(ticked(),18);
+ assert.equal(setSelected('b','t18',true),false,'a 19th mockup does not fit with 2 presets');
+ assert.match(context.messages.at(-1),/Up to 18 mockups can be picked \(Etsy shows 20 photos, 2 of them preset photos\)/);
  setSelected('b','t0',false);
- assert.equal(setSelected('b','t20',true),true,'swapping one in works');
- assert.equal(ticked(),20);
- assert.equal(isSelected('b','t20'),true);
+ assert.equal(setSelected('b','t18',true),true,'swapping one in works');
+ assert.equal(ticked(),18);
+ presets(3);assert.equal(mockupSlots(),17,'one more preset, one mockup fewer');
+ presets(0);assert.equal(mockupSlots(),20);
+ presets(2);regular=2;assert.equal(mockupSlots(),16,'regular mockup photos count too');
 });
 
 test('completion reads only the JPEG header; dimensions come from its frame marker',async()=>{

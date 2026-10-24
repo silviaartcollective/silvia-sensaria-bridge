@@ -92,6 +92,7 @@ import {
   getJsonObject,
   putJsonObject,
   putArtworkObject,
+  deleteArtworkObject,
   isMissingR2Object
 } from './r2.mjs';
 import {
@@ -1139,6 +1140,8 @@ async function presetVideoId(shopId,key){
   try{const ids=await getJsonObject(PRESET_VIDEO_IDS_KEY);const row=ids?.[String(shopId)];return row?.key===key?row.videoId:null}
   catch{return null}
 }
+// A replaced or removed preset video must be uploaded to Etsy again.
+async function forgetPresetVideoIds(){await putJsonObject(PRESET_VIDEO_IDS_KEY,{})}
 async function savePresetVideoId(shopId,key,videoId){
   let ids={};try{ids=await getJsonObject(PRESET_VIDEO_IDS_KEY)||{}}catch{}
   ids[String(shopId)]={key,videoId,savedAt:new Date().toISOString()};
@@ -1447,13 +1450,19 @@ async function prepareMediaPlan({ session, manifest }) {
   };
 }
 
-// Photo uploads to one listing. Two run at a time while Etsy accepts that; the
-// first time Etsy refuses a simultaneous edit of the listing (HTTP 409) or asks
-// to slow down, uploads go one at a time until the server restarts. Photos are
-// read from R2 ahead of their turn, and each receipt is handed to onUploaded as
-// it arrives, so none is lost if a later upload fails.
-const ETSY_PHOTO_LANES=2;
-let etsyAcceptsParallelPhotos=true;
+// Photo uploads to one listing. Three run at a time while Etsy accepts that.
+// When Etsy refuses a simultaneous edit of the listing (HTTP 409) or asks to
+// slow down (429), this upload goes on with one lane fewer, and uploads in the
+// next 10 minutes start at that lower number; after that the full speed is
+// tried again (a single refusal used to mean one at a time until a restart).
+// Photos are read from R2 ahead of their turn, and each receipt is handed to
+// onUploaded as it arrives, so none is lost if a later upload fails.
+const ETSY_PHOTO_LANES=3,ETSY_LANE_COOLDOWN_MS=10*60*1000;
+let etsyLaneLimit=ETSY_PHOTO_LANES,etsyLaneLimitAt=0;
+function etsyStartingLanes(now=Date.now()){
+  if(now-etsyLaneLimitAt>ETSY_LANE_COOLDOWN_MS)etsyLaneLimit=ETSY_PHOTO_LANES;
+  return etsyLaneLimit;
+}
 async function uploadPhotosToListing({session,listingId,altText='',photos,onUploaded=()=>{}}){
   const reads=new Map();
   const readAhead=index=>{
@@ -1462,7 +1471,7 @@ async function uploadPhotosToListing({session,listingId,altText='',photos,onUplo
     read.catch(()=>{});
     reads.set(index,read);
   };
-  let next=0,lanes=etsyAcceptsParallelPhotos?ETSY_PHOTO_LANES:1,parallel=false;
+  let next=0,lanes=etsyStartingLanes(),parallel=false;
   const inFlight=new Set();
   // One-at-a-time uploads (including the retry of a refused one) queue here.
   let queue=Promise.resolve();
@@ -1488,8 +1497,8 @@ async function uploadPhotosToListing({session,listingId,altText='',photos,onUplo
         const refused=isEtsyListingConflict(error)||/\(429\)|rate.?limit/i.test(String(error?.message||error));
         if(!refused||(lanes===1&&!parallel))throw error;
         if(lanes>1){
-          lanes=1;etsyAcceptsParallelPhotos=false;
-          console.warn('Etsy refused simultaneous photo uploads; uploading one at a time from now on.');
+          lanes--;etsyLaneLimit=Math.min(etsyLaneLimit,lanes);etsyLaneLimitAt=Date.now();
+          console.warn('Etsy refused simultaneous photo uploads; continuing with '+lanes+' at a time.');
         }
         // Retry once the other upload has finished, so Etsy is not asked again
         // while the listing is still busy.
@@ -5048,7 +5057,25 @@ const server = http.createServer(async (req, res) => {
       }
       // A replaced preset photo must not be served from the in-memory Etsy copy.
       for (const item of uploaded) presetEtsyImages.delete(item.key);
+      if (uploaded.some((item) => item.role === 'video')) await forgetPresetVideoIds();
       return sendJson(res, 200, { ok: true, ...status });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
+  // Presets are optional: one can be removed. New drafts then leave that slot
+  // out, and the Product Creator lets one more mockup be picked.
+  if (req.method === 'POST' && url.pathname === '/api/presets/remove') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const body = await readJsonBody(req);
+      const preset = PRESET_MEDIA.find((item) => item.role === String(body?.role || ''));
+      if (!preset) return sendJson(res, 400, { ok: false, error: 'Unknown preset slot.' });
+      await deleteArtworkObject(preset.key);
+      presetEtsyImages.delete(preset.key);
+      if (preset.role === 'video') await forgetPresetVideoIds();
+      return sendJson(res, 200, { ok: true, removed: preset.role, ...(await presetMediaStatus()) });
     } catch (error) {
       return sendJson(res, 500, { ok: false, error: error?.message || String(error) });
     }
