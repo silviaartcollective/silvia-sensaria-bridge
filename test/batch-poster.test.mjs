@@ -313,3 +313,25 @@ test('each artwork keeps the preset it was added with', async () => {
   assert.deepEqual(seen.sort(), ['Preset 1', 'Preset 2']);
   assert.deepEqual((await batchStatus(shop.deps)).items.map(item => item.preset), ['Preset 2', 'Preset 1']);
 });
+
+test('an arranged photo order is kept for each artwork: its own photos, in that order', async () => {
+  const { orderForArtwork, photoOrderKey } = await import('../src/batch-poster.mjs');
+  const saved = ['generated:t3', 'key:presets/option.jpg', 'generated:t1', 'generated:gone', 'key:presets/frame.png', 'generated:t2'];
+  // t2 was not made for this artwork; t4 is new since the order was saved.
+  assert.deepEqual(orderForArtwork(saved, { templateIds: ['t1', 't3', 't4'], presetKeys: ['presets/option.jpg', 'presets/frame.png'] }),
+    ['generated:t3', 'key:presets/option.jpg', 'generated:t1', 'key:presets/frame.png', 'generated:t4']);
+  assert.equal(photoOrderKey(' Preset  1 ', 'portrait'), photoOrderKey('preset 1', 'portrait'));
+  assert.notEqual(photoOrderKey('Preset 1', 'portrait'), photoOrderKey('Preset 1', 'landscape'));
+});
+
+test('the photo order goes on the artwork after its mockups and before its draft', async () => {
+  resetBatchMemory();
+  const shop = fakeShop();
+  shop.deps.savePhotoOrder = async (item, ids) => { shop.log.push('order ' + item.artworkId + ' ' + item.preset + ' ' + item.orientation + ' ' + ids.length); };
+  await addToBatch(shop.deps, art(1, 'one.jpg', { preset: 'Preset 1' }));
+  await idle();
+  const [item] = (await batchStatus(shop.deps)).items;
+  assert.equal(item.status, 'ready');
+  const at = prefix => shop.log.findIndex(line => line.startsWith(prefix));
+  assert.ok(at('attach') < at('order ' + item.artworkId + ' Preset 1 portrait 4') && at('order') < at('draft'), shop.log.join('\n'));
+});

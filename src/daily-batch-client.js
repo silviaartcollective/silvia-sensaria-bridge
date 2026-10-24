@@ -19,7 +19,8 @@ const layoutOf=(width,height)=>width===height?'square':height>width?'portrait':w
 // ---------------------------------------------------------------- mockup presets
 // The presets are folders on the PC; the page shows them and remembers which
 // one new artworks use.
-let presets=[],chosen='',room=20,presetsLoaded=null;
+let presets=[],chosen='',room=20,presetsLoaded=null,arranged=new Set();
+const orderKey=(name,layout)=>String(name||'').trim().replace(/\s+/g,' ').toLowerCase()+'|'+layout;
 const ORDER=['portrait','landscape','square','panoramic','unclassified'];
 const presetByName=name=>presets.find(p=>p.name===name)||null;
 const countsOf=preset=>Object.keys(NAMES).map(key=>[key,preset.templates.filter(t=>t.orientation===key).length]).filter(([,n])=>n);
@@ -45,18 +46,24 @@ function showPresets(){
   const list=preset.templates.filter(t=>(key==='unclassified'?!NAMES[t.orientation]:t.orientation===key));
   if(!list.length)continue;
   const title=make('div','group-title',key==='unclassified'?'Shape not known yet ':NAMES[key]+' artworks ');
+  const custom=key!=='unclassified'&&arranged.has(orderKey(preset.name,key));
   title.append(make('span','muted',key==='unclassified'
    ?'('+list.length+'): the PC worker finds it when it opens these PSDs, or set it in the Product Creator.'
-   :'('+list.length+(list.length>room?', the first '+room+' are used':'')+')'));
+   :'('+list.length+(custom?', in your arranged photo order':list.length>room?', the first '+room+' are used':'')+')'));
+  if(key!=='unclassified'){
+   const arrange=make('button','','Arrange photos');arrange.type='button';
+   arrange.addEventListener('click',()=>void openArrange(preset.name,key).catch(error=>notice('mp-status',String(error.message||error),'error')));
+   title.append(arrange);
+  }
   const grid=make('div','tpl-grid');
-  list.forEach((template,index)=>grid.append(card(template,key!=='unclassified'&&index>=room)));
+  list.forEach((template,index)=>grid.append(card(template,!custom&&key!=='unclassified'&&index>=room)));
   groups.append(title,grid);
  }
  checks();
 }
 async function loadPresets(){
  const data=await request('/api/batch/presets');
- presets=data.presets||[];room=data.room;chosen=data.chosen||'';
+ presets=data.presets||[];room=data.room;chosen=data.chosen||'';arranged=new Set(data.arranged||[]);
  const where=data.folder?' ('+data.folder+')':'';
  el('mp-about').textContent='Your presets are the folders named Preset 1, Preset 2… in the PC mockup folder'+where+
   '. Each new listing gets the PSDs from the chosen preset that suit its artwork\'s shape. Add, remove or move PSDs on the PC; the worker picks the change up within a minute.';
@@ -78,6 +85,82 @@ async function loadPresets(){
  else el('mp-status').classList.add('hidden');
  showPresets();
 }
+// ---------------------------------------------------------------- photo order
+// The Etsy photo order for a preset and shape: the preset photos and the
+// preset's PSDs, arranged like the Product Creator's organizer.
+let arranging=null,dragId=null;
+async function openArrange(presetName,layout){
+ const data=await request('/api/batch/photo-order?'+new URLSearchParams({preset:presetName,layout}));
+ arranging={preset:data.preset,layout,tiles:new Map(data.tiles.map(t=>[t.id,t])),order:[...data.order],limit:data.limit||20,video:data.video};
+ el('po-title').textContent=data.preset+' · '+NAMES[layout]+' artworks';
+ el('po-status').textContent=data.saved?'New listings with this preset and shape use this order.':
+  'The usual order: preset photos at their usual places, the mockups in name order. Save to keep your own.';
+ el('po-modal').hidden=false;document.body.classList.add('po-open');
+ renderArrange();
+}
+function closeArrange(){arranging=null;el('po-modal').hidden=true;document.body.classList.remove('po-open');el('po-list').replaceChildren();}
+function arrangeTile(id,index){
+ const tile=arranging.tiles.get(id)||{label:id},node=make('div','po-tile'+(index>=arranging.limit?' over':''));
+ node.dataset.id=id;node.tabIndex=0;node.draggable=true;node.title=tile.label;node.setAttribute('role','listitem');
+ node.setAttribute('aria-label','Photo '+(index+1)+(index===0?', Featured':'')+(index>=arranging.limit?', not added':'')+': '+tile.label);
+ if(tile.thumb){
+  const img=make('img');img.src=tile.thumb;img.alt='';img.draggable=false;
+  img.addEventListener('error',()=>img.replaceWith(make('div','blank',tile.label)));node.append(img);
+ }else node.append(make('div','blank',tile.label));
+ node.append(make('span','po-num',String(index+1)));
+ if(index===0)node.append(make('b','po-badge','Featured'));
+ node.append(make('span','po-caption',tile.label));
+ node.addEventListener('dragstart',event=>{dragId=id;node.classList.add('dragging');event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',id);});
+ node.addEventListener('dragend',()=>{dragId=null;node.classList.remove('dragging');});
+ node.addEventListener('dragover',event=>{if(!dragId||dragId===id)return;event.preventDefault();node.classList.add('target');});
+ node.addEventListener('dragleave',()=>node.classList.remove('target'));
+ node.addEventListener('drop',event=>{event.preventDefault();node.classList.remove('target');
+  if(dragId&&dragId!==id)moveArranged(dragId,arranging.order.indexOf(id));});
+ node.addEventListener('keydown',event=>{
+  const from=arranging.order.indexOf(id),columns=getComputedStyle(el('po-list')).gridTemplateColumns.split(' ').length||6;
+  const to={ArrowLeft:from-1,ArrowRight:from+1,ArrowUp:from-columns,ArrowDown:from+columns,Home:0,End:arranging.order.length-1}[event.key];
+  if(to===undefined)return;
+  event.preventDefault();moveArranged(id,to);
+ });
+ return node;
+}
+function videoTile(){
+ const node=make('div','po-tile video');node.title='Preset video: Etsy shows it second.';node.setAttribute('role','listitem');
+ if(arranging.video.src){const video=make('video');video.src=arranging.video.src+'#t=0.5';video.preload='metadata';video.muted=true;video.addEventListener('error',()=>video.remove());node.append(video);}
+ node.append(make('span','po-caption',arranging.video.label||'Preset video'));
+ return node;
+}
+function renderArrange(focusId){
+ const list=el('po-list');list.replaceChildren();
+ const display=[...arranging.order];
+ if(arranging.video)display.splice(Math.min(1,display.length),0,'video');
+ for(const id of display){
+  if(id==='video'){list.append(videoTile());continue;}
+  const index=arranging.order.indexOf(id);
+  if(index===arranging.limit)list.append(make('div','po-limit','Etsy shows '+arranging.limit+' photos · the ones below are not added'));
+  list.append(arrangeTile(id,index));
+ }
+ if(focusId)list.querySelector('[data-id="'+CSS.escape(focusId)+'"]')?.focus();
+}
+function moveArranged(id,to){
+ const from=arranging.order.indexOf(id);
+ to=Math.max(0,Math.min(arranging.order.length-1,to));
+ if(from<0||from===to)return;
+ arranging.order.splice(from,1);arranging.order.splice(to,0,id);
+ renderArrange(id);
+}
+async function saveArranged(order){
+ const {preset,layout}=arranging;
+ const data=await request('/api/batch/photo-order',{preset,layout,order});
+ if(data.saved){el('po-status').textContent='Saved. New listings with '+preset+' ('+NAMES[layout]+') get this order.';}
+ else await openArrange(preset,layout);
+ await loadPresets();
+}
+el('po-close').addEventListener('click',closeArrange);
+el('po-modal').addEventListener('click',event=>{if(event.target===el('po-modal'))closeArrange();});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&arranging)closeArrange();});
+el('po-save').addEventListener('click',()=>void saveArranged(arranging.order).catch(error=>{el('po-status').textContent=String(error.message||error);}));
+el('po-usual').addEventListener('click',()=>void saveArranged([]).catch(error=>{el('po-status').textContent=String(error.message||error);}));
 el('mp-refresh').addEventListener('click',()=>{presetsLoaded=loadPresets().catch(error=>notice('mp-status',String(error.message||error),'error'));});
 async function choose(name){
  const previous=chosen;chosen=name;showPresets();

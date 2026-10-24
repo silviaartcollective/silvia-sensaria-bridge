@@ -32,7 +32,7 @@ import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uplo
 import {mockupObjectKey} from './production.mjs';
 import { handleMockupAPI, mockupJobFromArtwork, mockupJobFromStaged } from './mockup-api.mjs';
 import { mockupOrientationOf } from './mockup-orientation.mjs';
-import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits } from './batch-poster.mjs';
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits, photoOrderKey, orderForArtwork } from './batch-poster.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
 import { generateEtsySeo, loadAiSeoSettings, saveAiSeoSettings, aiSeoConfigured, seoImage, seoPasteText, sectionUrl, DEFAULT_AI_SEO_INSTRUCTIONS, DEFAULT_AI_SEO_MODEL } from './ai-seo.mjs';
@@ -887,6 +887,28 @@ const BATCH_JOB_KEY='settings/batch-poster/job.json';
 const BATCH_PRESET_KEY='settings/batch-poster/mockup-preset.json';
 const LAYOUT_NAMES={portrait:'Vertical',landscape:'Horizontal',square:'Square',panoramic:'Panoramic'};
 const presetPhotoRoom=async()=>ETSY_PHOTO_LIMIT-(await presetMediaStatus()).items.filter(item=>item.exists&&item.role!=='video').length;
+// The Etsy photo order arranged for each preset and shape (Arrange photos).
+const BATCH_PHOTO_ORDERS_KEY='settings/batch-poster/photo-orders.json';
+async function loadPhotoOrders(){
+  try{return (await getJsonObject(BATCH_PHOTO_ORDERS_KEY))||{}}catch(error){if(isMissingR2Object(error))return {};throw error}
+}
+// A preset's photos for one shape, in its saved order (else the usual one):
+// the preset photos and the preset's PSDs that suit the shape.
+async function presetPhotoPlan(presetName,layout){
+  const [templates,media,orders]=await Promise.all([listMockupTemplates(),presetMediaStatus(),loadPhotoOrders()]);
+  const preset=mockupPresets(templates).find(entry=>presetKey(entry.name)===presetKey(presetName));
+  if(!preset)throw Error('The mockup preset "'+(presetName||'(none)')+'" is not a folder in the PC mockup folder any more.');
+  const mockups=preset.templates.filter(t=>templateSuits(t,layout));
+  const presetImages=media.items.filter(item=>item.exists&&item.role!=='video');
+  const tiles=[
+    ...presetImages.map(item=>({id:'key:'+item.key,kind:'preset',label:PRESET_LABELS[item.role]||'Preset photo',
+      thumb:'/api/etsy-photo-organizer/thumb?key='+encodeURIComponent(item.key)})),
+    ...mockups.map(t=>({id:'generated:'+t.id,kind:'mockup',label:t.name,thumb:'/api/batch/template-preview/'+encodeURIComponent(t.id)}))];
+  const saved=orders[photoOrderKey(preset.name,layout)]?.order||null;
+  const planned=defaultPlannedOrder({presets:presetImages,generated:mockups.map(t=>'generated:'+t.id)});
+  return {preset,mockups,presetImages,tiles,saved,order:mergeOrder(saved||planned,tiles.map(t=>t.id)),
+    video:media.items.find(item=>item.exists&&item.role==='video')||null};
+}
 // A small picture of a template for the page: the worker's preview of the PSD,
 // else the last mockup made with it. Kept in memory once made.
 const templatePreviews=new Map();
@@ -937,7 +959,10 @@ function batchDeps(){
       const layout=item.orientation,[templates,room]=await Promise.all([listMockupTemplates(),presetPhotoRoom()]);
       const preset=mockupPresets(templates).find(entry=>presetKey(entry.name)===presetKey(item.preset));
       if(!preset)throw Error('The mockup preset "'+(item.preset||'(none)')+'" is not a folder in the PC mockup folder any more. Choose a preset, then try again.');
-      const ids=preset.templates.filter(t=>templateSuits(t,layout)).map(t=>t.id).slice(0,room);
+      // With an arranged order, the PSDs placed within Etsy's 20 photos; else the first that fit.
+      const plan=await presetPhotoPlan(preset.name,layout);
+      const ids=plan.saved?plan.order.slice(0,ETSY_PHOTO_LIMIT).filter(id=>id.startsWith('generated:')).map(id=>id.slice(10)):
+        preset.templates.filter(t=>templateSuits(t,layout)).map(t=>t.id).slice(0,room);
       if(!ids.length)throw Error(preset.name+' has no '+LAYOUT_NAMES[layout]+' mockups. Add some to its folder on the PC '+
         '(or set their orientation in the Product Creator), then try again.');
       const job=item.artworkId?await mockupJobFromArtwork({artworkId:item.artworkId,templateIds:ids}):
@@ -976,6 +1001,17 @@ function batchDeps(){
       return generateEtsySeo({image:await seoImage(picture),orientation:item.orientation,...(await seoShopContext(await getEtsySession()))});
     },
     attachMockups:(artworkId,jobId,templateIds)=>syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds}),
+    // The order arranged for the preset and shape goes on the artwork, as the
+    // Product Creator's organizer does; the draft is then set up in that order.
+    savePhotoOrder:async(item,templateIds)=>{
+      const saved=(await loadPhotoOrders())[photoOrderKey(item.preset,item.orientation)]?.order;
+      if(!saved?.length)return;
+      const presetKeys=(await presetMediaStatus()).items.filter(entry=>entry.exists&&entry.role!=='video').map(entry=>entry.key);
+      const tiles=orderForArtwork(saved,{templateIds,presetKeys});
+      await updateArtworkManifest(item.artworkId,current=>{
+        current.etsyPhotoOrder={tiles,jobId:item.mockupJobId,savedAt:new Date().toISOString()};
+      });
+    },
     createDraft:async item=>{
       if(!batchDefaultsCache.value||Date.now()-batchDefaultsCache.at>10*60*1000)
         batchDefaultsCache={at:Date.now(),value:await batchShopDefaults(await getEtsySession())};
@@ -4969,12 +5005,20 @@ const server = http.createServer(async (req, res) => {
           seen.set(dir,(seen.get(dir)||0)+1);
         }
         return sendJson(res,200,{ok:true,folder:folder||worker.mockupFolder?.path||'',room,chosen:chosen?.name||'',
+          arranged:Object.keys(await loadPhotoOrders()),
           worker:{online:worker.online,folder:worker.mockupFolder?.path||'',fromConfig:worker.mockupFolder?.fromConfig===true,
             count:worker.mockupFolder?.count??null,error:worker.mockupFolder?.error||''},
           folders:[...seen].sort((a,b)=>b[1]-a[1]).slice(0,12).map(([path,count])=>({path,count})),
           outside:ready.filter(t=>t.source==='pc').length-presets.reduce((sum,item)=>sum+item.templates.length,0),
           presets:presets.map(item=>({name:item.name,templates:item.templates.map(t=>({id:t.id,name:t.name,localPath:t.localPath,
             orientation:t.orientation||'unclassified',squareCompatible:t.squareCompatible===true}))}))});
+      }
+      if(req.method==='GET'&&action==='/photo-order'){
+        const layout=String(url.searchParams.get('layout')||'');
+        if(!LAYOUT_NAMES[layout])return sendJson(res,400,{ok:false,error:'Unknown shape.'});
+        const plan=await presetPhotoPlan(String(url.searchParams.get('preset')||''),layout);
+        return sendJson(res,200,{ok:true,preset:plan.preset.name,layout,tiles:plan.tiles,order:plan.order,saved:Boolean(plan.saved),
+          limit:ETSY_PHOTO_LIMIT,video:plan.video?{label:'Preset video',src:await signedArtworkUrl(plan.video.key,3600).catch(()=>null)}:null});
       }
       const previewRoute=action.match(/^\/template-preview\/([A-Za-z0-9_-]{1,80})$/);
       if(req.method==='GET'&&previewRoute){
@@ -4985,6 +5029,18 @@ const server = http.createServer(async (req, res) => {
       }
       if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'Method not allowed.'});
       const body=await readJsonBody(req);
+      if(action==='/photo-order'){
+        const layout=String(body.layout||'');
+        if(!LAYOUT_NAMES[layout])return sendJson(res,400,{ok:false,error:'Unknown shape.'});
+        const plan=await presetPhotoPlan(String(body.preset||''),layout);
+        const known=new Set(plan.tiles.map(t=>t.id));
+        const order=(Array.isArray(body.order)?body.order:[]).map(String).filter(id=>known.has(id));
+        const orders=await loadPhotoOrders(),key=photoOrderKey(plan.preset.name,layout);
+        // An empty order goes back to the usual one.
+        if(order.length)orders[key]={order,savedAt:new Date().toISOString()};else delete orders[key];
+        await putJsonObject(BATCH_PHOTO_ORDERS_KEY,orders);
+        return sendJson(res,200,{ok:true,saved:Boolean(order.length)});
+      }
       if(action==='/presets'){
         const name=String(body.name||'').slice(0,120);
         if(!mockupPresets(await listMockupTemplates()).some(item=>presetKey(item.name)===presetKey(name)))

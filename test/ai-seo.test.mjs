@@ -36,7 +36,7 @@ test('ChatGPT gets the artwork, the instructions and the choices, and its answer
   const body = calls[0].body;
   assert.equal(body.model, 'gpt-5-mini');
   assert.equal(body.instructions, 'Write SEO.');
-  assert.deepEqual(body.reasoning, { effort: 'low' });
+  assert.deepEqual(body.reasoning, { effort: 'medium' });
   assert.equal(body.text.format.type, 'json_schema');
   assert.equal(body.text.format.strict, true);
   assert.deepEqual(body.text.format.schema.properties.shop_section.enum, ['Abstract Art', 'Coastal Art', 'None']);

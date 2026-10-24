@@ -181,6 +181,11 @@ async function processItem(deps, item, mine) {
       await deps.attachMockups(item.artworkId, item.mockupJobId, mockups.completedIds);
       item.mockupsAttached = true;
     }
+    // The photo order saved for the preset and this shape, used by the draft.
+    if (!item.orderSaved && deps.savePhotoOrder) {
+      await deps.savePhotoOrder(item, mockups.completedIds);
+      item.orderSaved = true;
+    }
     if (stopped()) return;
     // A draft whose setup was cut short (a restart) is set up again; Etsy keeps the one draft.
     for (let attempt = 1; ; attempt++) {
@@ -329,3 +334,15 @@ export function mockupPresets(templates) {
 // orientation, or a square artwork in a template marked square-compatible.
 export const templateSuits = (template, layout) => String(template?.orientation || '') === layout ||
   (layout === 'square' && template?.squareCompatible === true);
+
+// The Etsy photo order chosen for a preset and shape (Daily Listings → Arrange
+// photos): tile ids as in the Product Creator's organizer
+// (src/etsy-photo-organizer.mjs). An artwork's own order keeps those of its
+// photos that it has, in that order; any others follow.
+export const photoOrderKey = (preset, layout) => presetKey(preset) + '|' + String(layout || '');
+export function orderForArtwork(saved = [], { templateIds = [], presetKeys = [] } = {}) {
+  const have = new Set([...templateIds.map(id => 'generated:' + id), ...presetKeys.map(key => 'key:' + key)]);
+  const order = [], seen = new Set();
+  for (const id of [...saved, ...have]) if (have.has(id) && !seen.has(id)) { seen.add(id); order.push(id); }
+  return order;
+}
