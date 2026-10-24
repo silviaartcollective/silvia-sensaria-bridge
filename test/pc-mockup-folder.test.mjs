@@ -139,3 +139,18 @@ test('the panel lists every PSD that produced no JPG, with why: layer to choose,
  // The folder rule applies whenever templates are read, without waiting for the worker.
  assert.match(read('src/mockup-generator.mjs'),/return withFolderOrientation\(value,await getPcMockupFolder\(\)\);/);
 });
+
+test('files and folders listed as links (OneDrive placeholders) are read like ordinary ones',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'pc-mockups-link-')),cloud=fs.mkdtempSync(path.join(os.tmpdir(),'pc-cloud-'));
+ try{
+  fs.mkdirSync(path.join(cloud,'Preset 1','Vertical'),{recursive:true});
+  fs.writeFileSync(path.join(cloud,'Preset 1','Vertical','Black.psd'),Buffer.alloc(600));
+  fs.writeFileSync(path.join(cloud,'mockup 2.psd'),Buffer.alloc(700));
+  fs.symlinkSync(path.join(cloud,'Preset 1'),path.join(root,'Preset 1'),'dir');
+  fs.symlinkSync(path.join(cloud,'mockup 2.psd'),path.join(root,'mockup 2.psd'));
+  fs.symlinkSync(path.join(cloud,'missing.psd'),path.join(root,'broken.psd'));
+  const files=await scanMockupFolder(root);
+  assert.deepEqual(files.map(f=>f.path),['mockup 2.psd','Preset 1/Vertical/Black.psd']);
+  assert.equal(files[1].size,600);
+ }finally{fs.rmSync(root,{recursive:true,force:true});fs.rmSync(cloud,{recursive:true,force:true})}
+});

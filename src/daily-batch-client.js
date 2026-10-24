@@ -65,7 +65,12 @@ async function loadPresets(){
   notice('mp-status',!data.worker?.online
    ?'No preset folders found, and the PC worker is offline, so the app cannot see the mockup folder as it is now. Start the PC worker, wait a minute, then click Check again.'
    :!data.folder?'No mockup folder on the PC is set for this shop, so the worker does not read your PSDs for it. In the Product Creator, under PSD mockups, enter the folder in "Mockup folder on the PC" (for example D:\\Mockups\\My Mockups) and click Save folder. The worker reads it within a minute; then click Check again.'
+   :data.worker.fromConfig&&data.worker.folder&&data.worker.folder!==data.folder
+    ?'The PC worker reads '+data.worker.folder+', set in its own settings on the PC (config.local.json), not the folder saved in the Product Creator. Remove mockupFolder there, or move your preset folders into it.'
    :data.worker.error?'The PC worker cannot read the mockup folder: '+data.worker.error
+   :data.worker.count===0?'The PC worker finds no PSD files in '+(data.worker.folder||data.folder)+'. Check that this is the folder that holds your Preset folders (or the folders they are in). '+
+    '(A folder kept in OneDrive needs PC worker v4.7.8 or later.)'
+   :!(data.folders||[]).length?'The PC worker found '+data.worker.count+' PSD'+(data.worker.count===1?'':'s')+' and sends them to the app within a minute; then click Check again.'
    :'No preset folders found yet. Inside the PC mockup folder'+where+', make folders named Preset 1, Preset 2… and put PSDs in them (subfolders such as Vertical are fine). '+
     'The worker reports changes within a minute; then click Check again.'+(seen?'\nFolders the app sees now: '+seen+'.':''),'warn');
  }
