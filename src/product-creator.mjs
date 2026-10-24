@@ -145,9 +145,9 @@ input:focus,textarea:focus,select:focus{outline:2px solid #cfd9cf;border-color:#
           <label>Paste SEO Generator Output <span class="hint">optional — fills the three SEO fields below</span>
             <textarea id="seo_generator_output" placeholder="Paste the complete SEO output here..."></textarea>
           </label>
-          <button class="btn secondary" id="apply-seo-btn" type="button">Apply SEO Output</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="apply-seo-btn" type="button">Apply SEO Output</button><button class="btn secondary" id="ai-seo-btn" type="button">Write SEO with ChatGPT</button></div>
           <div class="status" id="seo-paste-status" role="status" style="display:none"></div>
-          <div class="uploadmeta">Paste the title, description (or ABOUT THIS ARTWORK), shop section (MORE ART FROM … with its link), Style and tags. Headings can be written any common way (Tags, SEO Tags (13), **Etsy Tags:** …), and tags can be separated by commas, lines, bullets or hashtags. Anything missing is listed after you apply.</div>
+          <div class="uploadmeta">Paste the title, description (or ABOUT THIS ARTWORK), shop section (MORE ART FROM … with its link), Style and tags. Headings can be written any common way (Tags, SEO Tags (13), **Etsy Tags:** …), and tags can be separated by commas, lines, bullets or hashtags. Anything missing is listed after you apply. Write SEO with ChatGPT looks at the master artwork and fills the same fields (its instructions are in <a href="/daily-listings#chatgpt">Daily Listings → ChatGPT SEO</a>).</div>
         </div>
         <label>Etsy title<input id="title" maxlength="140" required placeholder="Enter the SEO title for this artwork"></label>
         <label>Short SEO Description <span class="hint">placed below ABOUT THIS ARTWORK</span><textarea id="seo_description" required placeholder="Paste the Short SEO Description from your SEO generator..."></textarea></label>
@@ -386,6 +386,42 @@ function applySeoOutput(){
     (seo.notes.length?' '+seo.notes.join(' '):'');
 }
 applySeoButton.addEventListener('click',applySeoOutput);
+// A small JPEG of the master, made here, is all ChatGPT needs to see.
+async function seoPreviewImage(file){
+  const bitmap=await createImageBitmap(file);
+  const scale=Math.min(1,1024/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+  const context=canvas.getContext('2d');
+  context.fillStyle='#ffffff';context.fillRect(0,0,canvas.width,canvas.height);
+  context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+  if(bitmap.close)bitmap.close();
+  return canvas.toDataURL('image/jpeg',0.85);
+}
+async function writeSeoWithChatGpt(){
+  const button=document.getElementById('ai-seo-btn'),report=document.getElementById('seo-paste-status');
+  const file=masterFileInput.files?.[0],artworkId=document.getElementById('artwork_id').value.trim();
+  report.style.display='block';
+  if(!file&&!artworkId){report.className='status warn';report.textContent='Choose the master artwork first.';return;}
+  button.disabled=true;
+  report.className='status';report.textContent='ChatGPT is looking at the artwork and writing the SEO…';
+  try{
+    let image='';
+    if(file){try{image=await seoPreviewImage(file)}catch{}}
+    if(!image&&!artworkId)throw Error('This browser cannot read the master file (for example a TIFF). Choose a JPG or PNG copy to write the SEO.');
+    const orientation=document.getElementById('orientation').value;
+    const response=await fetch('/api/ai-seo/generate',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({image,artworkId:image?'':artworkId,orientation:orientation==='auto'?'':orientation})});
+    const data=await readJsonResponse(response,'ChatGPT SEO');
+    if(!response.ok||!data.ok)throw Error(data.error||'ChatGPT could not write the SEO.');
+    seoGeneratorOutput.value=data.pasteText;
+    applySeoOutput();
+    report.textContent='Written by ChatGPT. '+report.textContent;
+  }catch(error){
+    report.className='status warn';report.textContent=String(error.message||error);
+  }finally{button.disabled=false}
+}
+document.getElementById('ai-seo-btn').addEventListener('click',()=>void writeSeoWithChatGpt());
 section.addEventListener('change',warnOnShopSectionChange);
 document.getElementById('listing_style').addEventListener('change',event=>{
   const status=document.getElementById('style-status');

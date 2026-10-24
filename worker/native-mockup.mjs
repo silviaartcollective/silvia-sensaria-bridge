@@ -668,6 +668,16 @@ async function readPrepared(location) {
   } catch {}
   return null;
 }
+// A small JPEG of a prepared template's scene (Photoshop's composite), so the
+// shop's pages can show what this PSD looks like. Null until it is prepared.
+export async function preparedPreviewJpeg({ psdPath, mapping = null, psdSize = 0, psdVersion = '' }, size = 480) {
+  const location = await preparedLocation(psdPath, mapping, psdSize, psdVersion);
+  if (!(await readPrepared(location))) return null;
+  try {
+    return await sharp(path.join(location.folder, 'composite.jpg'), { limitInputPixels: false })
+      .resize(size, size, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer();
+  } catch { return null; } // e.g. a PSD whose artwork layer still has to be chosen
+}
 // Lets the worker run at most one (memory-heavy) first-time preparation at once.
 export async function isTemplatePrepared({ psdPath, mapping = null, psdSize = 0, psdVersion = '' }) {
   return !!(await readPrepared(await preparedLocation(psdPath, mapping, psdSize, psdVersion)));

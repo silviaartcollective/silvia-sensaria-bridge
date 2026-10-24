@@ -24,7 +24,7 @@ import {
 } from './crop.mjs';
 import {renderMockupOnPC} from './mockup-processor.mjs';
 import {RENDER_THREADS,prepareInPool} from './render-pool.mjs';
-import {isTemplatePrepared,preparedArtworkShape} from './native-mockup.mjs';
+import {isTemplatePrepared,preparedArtworkShape,preparedPreviewJpeg} from './native-mockup.mjs';
 import {scanMockupFolder,mockupFolderFile,localPsdVersion,orientationFromShape} from './local-templates.mjs';
 import {startLocalIntake} from './local-intake.mjs';
 import {patchAgPsd} from './patch-ag-psd.mjs';
@@ -590,10 +590,13 @@ async function warmUpLane(){
         const ext=path.extname(template.name).toLowerCase()==='.psb'?'.psb':'.psd';
         const meta={shop:app.appUrl,id:template.id,key:template.key,size:template.size,ext};
         try{
-          if(await isTemplatePrepared({psdPath:cachedFilePath(meta),mapping,psdSize:template.size}))continue;
-          const psdPath=(await downloadCached(template.url,meta)).path;
-          await prepareInPool({psdPath,mapping,psdSize:template.size});
-          prepared++;
+          const ref={psdPath:cachedFilePath(meta),mapping,psdSize:template.size};
+          if(!await isTemplatePrepared(ref)){
+            const psdPath=(await downloadCached(template.url,meta)).path;
+            await prepareInPool({psdPath,mapping,psdSize:template.size});
+            prepared++;
+          }
+          await sendTemplatePreview(app,template,ref,'r2:'+template.key);
         }catch(error){if(!error.warmUpStopped)console.error('['+app.name+'] Could not prepare '+template.name+' in advance:',error.message)}
       }
       if(prepared)console.log('['+app.name+'] Prepared '+prepared+' PSD template(s) in advance.');
@@ -644,6 +647,23 @@ async function localTemplateFile(app,template){
   if(!stat)throw Error('"'+template.localPath+'" is no longer in the mockup folder ('+app.mockupFolder+').');
   return {path:file,size:stat.size,version:localPsdVersion(template.localPath,stat.mtimeMs)};
 }
+// Each template's preview (its scene, 480 px) is sent to the shop once per
+// version of the PSD, so the shop's pages show what every mockup looks like.
+const previewsSent=new Map(); // appUrl|templateId -> version
+async function sendTemplatePreview(app,template,ref,version){
+  const sent=app.appUrl+'|'+template.id;
+  if(template.previewVersion===version||previewsSent.get(sent)===version)return;
+  try{
+    const jpeg=await preparedPreviewJpeg(ref);
+    if(!jpeg)return;
+    await clientFor(app).templatePreview(template.id,jpeg,version);
+    previewsSent.set(sent,version);
+  }catch(error){
+    // An older shop without previews, or a dropped connection: tried again when the worker restarts.
+    previewsSent.set(sent,version);
+    console.error('['+app.name+'] Preview of '+template.name+' not sent: '+error.message);
+  }
+}
 // Prepares one PC folder template if needed, and tells the shop its orientation
 // from the artwork layer's shape unless a folder name or the app set it.
 async function prepareLocalTemplate(app,template){
@@ -651,6 +671,7 @@ async function prepareLocalTemplate(app,template){
   const ref={psdPath:local.path,mapping,psdSize:local.size,psdVersion:local.version};
   let prepared=false;
   if(!await isTemplatePrepared(ref)){await prepareInPool(ref);prepared=true}
+  await sendTemplatePreview(app,template,ref,local.version);
   if(!['user','folder'].includes(template.orientationSource||'')){
     const shape=await preparedArtworkShape(ref);
     const orientation=shape?orientationFromShape(shape):'unclassified';

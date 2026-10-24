@@ -7,7 +7,7 @@ import { loadArtworkManifest } from './artwork-storage.mjs';
 
 const ETSY='https://api.etsy.com/v3/application';
 const DAY=86400;
-const MAX_IMAGES=10;
+const MAX_IMAGES=20; // Etsy's photo limit
 const LOCKS=new Set();
 export const listingId = value => {
   const s=String(value||'').trim();
@@ -144,7 +144,8 @@ export function assertSameInventory(original,cloned) {
   return true;
 }
 
-export function validateSeo(input) {
+// automatic: Renew listings (listing-renewer.mjs) has no renewal count to confirm.
+export function validateSeo(input,{automatic=false}={}) {
   const title=safe(input?.title,200);
   const description=safe(input?.description,40000);
   const tags=Array.isArray(input?.tags)?input.tags.map(s=>safe(s,30)).filter(Boolean):[];
@@ -152,7 +153,7 @@ export function validateSeo(input) {
   if(!description||description.length>13000)throw new Error('Description must contain 1–13000 characters.');
   if(tags.length>13 || tags.some(t=>t.length>20))throw new Error('Etsy permits up to 13 tags, each at most 20 characters.');
   if(new Set(tags.map(s=>s.toLowerCase())).size!==tags.length)throw new Error('Remove duplicate Etsy tags.');
-  if(![2,3].includes(Number(input?.confirmedRenewals)))
+  if(!automatic&&![2,3].includes(Number(input?.confirmedRenewals)))
     throw new Error('Confirm 2 or 3 renewals from Etsy Shop Manager before reposting.');
   if(!['keep','replace'].includes(input?.mockupMode))throw new Error('Select keep or replace mockups.');
   if(!['keep','replace'].includes(input?.artworkMode||'keep'))throw new Error('Select keep or replace artwork.');
@@ -204,7 +205,7 @@ function forListing(shop,id,objectKey){
 }
 export async function reserveMockups(session,id,files) {
   listingId(id);
-  if(!Array.isArray(files)||!files.length||files.length>MAX_IMAGES)throw new Error('Select 1–10 JPEG mockups.');
+  if(!Array.isArray(files)||!files.length||files.length>MAX_IMAGES)throw new Error('Select 1–'+MAX_IMAGES+' JPEG mockups.');
   const result=[];
   for(const file of files){
     if(!/image\/jpeg/.test(String(file.type)))throw new Error('Upload JPEG mockups only.');
@@ -215,15 +216,17 @@ export async function reserveMockups(session,id,files) {
   }
   return result;
 }
-export async function prepareReplacement(session,sourceId,input) {
+// automatic: any active listing without sales (Renew listings picks the oldest).
+export async function prepareReplacement(session,sourceId,input,{automatic=false}={}) {
   const id=listingId(sourceId),shop=session.shop.shop_id,lock=shop+':'+id;
   if(LOCKS.has(lock))throw new Error('Reposting is already processing for this listing.');
   LOCKS.add(lock);
   try {
-    const seo=validateSeo(input), listing=await getListing(session,id);
+    const seo=validateSeo(input,{automatic}), listing=await getListing(session,id);
     if(listing.state!=='active')throw new Error('Only currently active listings can be replaced.');
-    const assessment=scanCandidate(listing,await listingSalesCount(session,id));
-    if(assessment.status!=='review_renewals')throw new Error('Listing is not an eligible zero-sales 2–3-cycle candidate.');
+    const sales=await listingSalesCount(session,id);
+    if(automatic?sales!==0:scanCandidate(listing,sales).status!=='review_renewals')
+      throw new Error(automatic?'This listing has sales, so it is not renewed.':'Listing is not an eligible zero-sales 2–3-cycle candidate.');
     const [inventory,properties,originalImages,originalVideos,variationImages]=await Promise.all([
       getListingInventory({listingId:id,...args(session)}),
       getListingProperties({listingId:id,...args(session)}),
@@ -242,7 +245,7 @@ export async function prepareReplacement(session,sourceId,input) {
     }
     const images=seo.mockupMode==='keep'?originalImages:
       (Array.isArray(input.mockups)?input.mockups:[]);
-    if(!images.length||images.length>MAX_IMAGES)throw new Error('A replacement requires 1–10 mockups.');
+    if(!images.length||images.length>MAX_IMAGES)throw new Error('A replacement requires 1–'+MAX_IMAGES+' mockups.');
     if(seo.mockupMode==='replace' && variationImages.length)
       throw new Error('This listing has variation-image assignments. Keep its mockups or remap the variants manually before replacing.');
     // Fail closed on source changes: do not replace a draft if it was already prepared with different SEO.
@@ -342,16 +345,30 @@ export async function prepareReplacement(session,sourceId,input) {
     return {record,reused:false};
   } finally {LOCKS.delete(lock);}
 }
-export async function finalizeReplacement(session,sourceId,confirmation) {
+const isNotFound=error=>/Etsy API 404\b/.test(String(error?.message||error));
+// deleteOld (Renew listings): the old listing is deleted once the new one is
+// verified active, instead of being deactivated.
+export async function finalizeReplacement(session,sourceId,confirmation,{deleteOld=false}={}) {
   const id=listingId(sourceId),shop=session.shop.shop_id,lock=shop+':'+id;
-  if(confirmation!=='PUBLISH AND DEACTIVATE')throw new Error('Explicit PUBLISH AND DEACTIVATE confirmation required.');
+  const expected=deleteOld?'PUBLISH AND DELETE OLD':'PUBLISH AND DEACTIVATE';
+  if(confirmation!==expected)throw new Error('Explicit '+expected+' confirmation required.');
   if(LOCKS.has(lock))throw new Error('Listing replacement already processing.');
   LOCKS.add(lock);
   try{
     const record=await getJsonObject(key(shop,id));
     if(!record || !['prepared','published','completed'].includes(record.status))throw new Error('Finish preparing and verifying a replacement draft first.');
     if(record.status==='completed')return {record,alreadyComplete:true};
-    const original=await getListing(session,id);
+    // A renewal stopped after deleting the old listing only has its checks left.
+    let original;
+    try{original=await getListing(session,id);}
+    catch(error){if(!(deleteOld&&record.status==='published'&&isNotFound(error)))throw error;original=null;}
+    if(!original){
+      const newAfter=await getListing(session,record.draftId);
+      if(newAfter.state!=='active')throw new Error('The new listing is not active. Check it on Etsy.');
+      record.status='completed';record.oldDeleted=true;record.finishedAt=now();
+      await putJsonObject(key(shop,id),record);
+      return {record,alreadyComplete:false};
+    }
     if(original.state!=='active' && record.status!=='published')
       throw new Error('Original listing is no longer active. Review manually.');
     if(await listingSalesCount(session,id)!==0)throw new Error('Original listing has sales since preparation. Stop and review.');
@@ -396,12 +413,22 @@ export async function finalizeReplacement(session,sourceId,confirmation) {
       record.artworkActivatedAt=record.artworkActivatedAt||now();
       await putJsonObject(key(shop,id),record);
     }
-    if(original.state==='active'){
-      await updateListing({...args(session),listingId:id,listing:{state:'inactive'}});
+    if(deleteOld){
+      await etsy(session,'/listings/'+id,{method:'DELETE'});
+      let oldAfter=null;
+      try{oldAfter=await getListing(session,id);}catch(error){if(!isNotFound(error))throw error;}
+      const newAfter=await getListing(session,record.draftId);
+      if(newAfter.state!=='active'||(oldAfter&&!['removed','deleted'].includes(String(oldAfter.state))))
+        throw new Error('Renewal check incomplete: check both Etsy listings.');
+      record.oldDeleted=true;
+    }else{
+      if(original.state==='active'){
+        await updateListing({...args(session),listingId:id,listing:{state:'inactive'}});
+      }
+      const oldAfter=await getListing(session,id),newAfter=await getListing(session,record.draftId);
+      if(newAfter.state!=='active'||oldAfter.state!=='inactive')
+        throw new Error('Replacement verification incomplete: check both Etsy listings before continuing.');
     }
-    const oldAfter=await getListing(session,id),newAfter=await getListing(session,record.draftId);
-    if(newAfter.state!=='active'||oldAfter.state!=='inactive')
-      throw new Error('Replacement verification incomplete: check both Etsy listings before continuing.');
     record.status='completed';record.finishedAt=now();
     await putJsonObject(key(shop,id),record);
     return {record,alreadyComplete:false};

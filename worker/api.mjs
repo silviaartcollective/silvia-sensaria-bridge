@@ -1,5 +1,5 @@
 import { WORKER_ID } from './config.mjs';
-export const WORKER_VERSION = '4.7.6';
+export const WORKER_VERSION = '4.7.7';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -119,6 +119,15 @@ export function apiFor(app) {
     // The PSDs in this PC's mockup folder for the shop.
     localTemplates(files) {
       return request(app, '/api/mockups/worker/local-templates', { method: 'POST', body: { files }, attempts: 2 });
+    },
+    // A small preview of a template's scene, sent once per version of the PSD.
+    async templatePreview(templateId, jpeg, version) {
+      const id = encodeURIComponent(templateId);
+      const { key, uploadUrl } = await request(app, '/api/mockups/templates/' + id + '/preview', { method: 'POST', body: {} });
+      const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: jpeg,
+        signal: AbortSignal.timeout(60000) });
+      if (!put.ok) throw new Error('Template preview upload failed (HTTP ' + put.status + ').');
+      return request(app, '/api/mockups/templates/' + id + '/preview-confirm', { method: 'POST', body: { key, version }, attempts: 2 });
     },
     templateOrientation(templateId, orientation, squareCompatible = false) {
       return request(app, '/api/mockups/worker/templates/' + encodeURIComponent(templateId) + '/orientation', {

@@ -552,3 +552,18 @@ test('the close-up placement follows which sides are real edges; ordinary mockup
  const ordinary=frameScene().psd,prepared=native.prepareFromPsd(readBack(ordinary));
  assert.equal(native.artworkPlacement({...prepared,coverage:prepared.coverage}),null);
 });
+
+test('a prepared template gives a small preview of its scene for the shop pages',needsReader,async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'native-psd-'));
+ try{
+  const psdPath=path.join(dir,'preview.psd');
+  await fs.writeFile(psdPath,agPsd.writePsdBuffer(frameScene().psd));
+  assert.equal(await native.preparedPreviewJpeg({psdPath}),null); // not prepared yet
+  const prepared=await native.prepareNativePsd({psdPath});
+  const jpeg=await native.preparedPreviewJpeg({psdPath});
+  const info=await sharp(jpeg).metadata();
+  assert.equal(info.format,'jpeg');
+  assert.ok(Math.max(info.width,info.height)<=480);
+  assert.ok(Math.abs(info.width/info.height-prepared.width/prepared.height)<0.02);
+ }finally{await fs.rm(dir,{recursive:true,force:true})}
+});

@@ -82,6 +82,30 @@ const openBatch=j=>!!j&&j.artworkUploaded&&!j.deleted&&
  !!j.templates?.some(t=>t.status==='queued'||t.status==='processing');
 // Workers waiting in a claim (long poll) are answered the moment a batch is queued.
 const claimWaiters=new Set();
+// Queues mockups from the already-uploaded R2 master instead of uploading it
+// twice (the Product Creator and the batch poster).
+export async function mockupJobFromArtwork({artworkId,templateIds,fitMode='cover'}){
+ artworkId=String(artworkId||'');
+ if(!/^[A-Z]{2,5}[0-9]{1,12}$/.test(artworkId))throw Error('Valid artwork ID required.');
+ const manifest=await loadArtworkManifest(artworkId);
+ if(!manifest||manifest.status!=='ready'||!manifest.master?.key)
+  throw Error('Upload and confirm the master artwork before generating mockups.');
+ const master=manifest.master;
+ const info=await artworkObjectInfo(master.key);
+ const job=await createMockupJob({
+   filename:master.originalFilename||artworkId+'.jpg',
+   size:info.size,templateIds,
+    artworkOrientation:mockupOrientationOf(manifest),fitMode:fitMode||'cover'
+ });
+ job.artworkId=artworkId;job.sourceMasterKey=master.key;
+ await putMockupJob(job);
+ await copyArtworkObject(master.key,job.artworkKey);
+ const confirmed=await markMockupArtworkUploaded(job.id);markBatchActive(job.id);
+ // Persist the linkage for refresh/restart recovery and progress UI.
+ manifest.mockupJobIds=[...new Set([...(manifest.mockupJobIds||[]),job.id])].slice(-30);
+ await saveArtworkManifest(manifest);
+ return confirmed;
+}
 function markBatchActive(id){
  activeBatches.ids?.add(id);
  for(const wake of claimWaiters)wake();
@@ -224,8 +248,8 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
      const known=knownMockupArtworkTarget(t.name);
      const mapping=t.mapping?.path?t.mapping:known?{path:known}:null;
      if(t.source==='pc')return {id:t.id,name:t.name,source:'pc',localPath:t.localPath,size:t.size,mtimeMs:t.mtimeMs,
-      orientation:t.orientation,orientationSource:t.orientationSource||'',mapping};
-     return {id:t.id,name:t.name,key:t.key,size:t.size,mapping,url:await signedArtworkUrl(t.key,3600)};
+      orientation:t.orientation,orientationSource:t.orientationSource||'',mapping,previewVersion:t.previewVersion||''};
+     return {id:t.id,name:t.name,key:t.key,size:t.size,mapping,url:await signedArtworkUrl(t.key,3600),previewVersion:t.previewVersion||''};
     }));
     return send(200,{templates}),true;
    }
@@ -300,7 +324,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     if(data.body.length>3*1024*1024)throw Error('Preview must be under 3MB.');
     const info=await sharp(data.body).metadata();
     if(info.format!=='jpeg'||info.width>1800||info.height>1800)throw Error('Invalid template preview.');
-    return send(200,{template:await registerMockupTemplatePreview(id,key)}),true;
+    return send(200,{template:await registerMockupTemplatePreview(id,key,str(body.version))}),true;
    }
    if(req.method==='DELETE'&&parts.length===2)return send(200,await deleteMockupTemplate(id)),true;
   }
@@ -308,26 +332,8 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
    if(req.method==='GET'&&parts.length===1)return send(200,{jobs:await listMockupJobs(40)}),true;
    // Queue from the already-uploaded R2 master instead of uploading it twice.
    if(req.method==='POST'&&parts.length===2&&parts[1]==='from-artwork'){
-    const body=await readJson(req),artworkId=String(body.artworkId||'');
-    if(!/^[A-Z]{2,5}[0-9]{1,12}$/.test(artworkId))throw Error('Valid artwork ID required.');
-    const manifest=await loadArtworkManifest(artworkId);
-    if(!manifest||manifest.status!=='ready'||!manifest.master?.key)
-     throw Error('Upload and confirm the master artwork before generating mockups.');
-    const master=manifest.master;
-    const info=await artworkObjectInfo(master.key);
-    const job=await createMockupJob({
-      filename:master.originalFilename||artworkId+'.jpg',
-      size:info.size,templateIds:body.templateIds,
-       artworkOrientation:mockupOrientationOf(manifest),fitMode:body.fitMode||'cover'
-    });
-    job.artworkId=artworkId;job.sourceMasterKey=master.key;
-    await putMockupJob(job);
-    await copyArtworkObject(master.key,job.artworkKey);
-    const confirmed=await markMockupArtworkUploaded(job.id);markBatchActive(job.id);
-    // Persist the linkage for refresh/restart recovery and progress UI.
-    manifest.mockupJobIds=[...new Set([...(manifest.mockupJobIds||[]),job.id])].slice(-30);
-    await saveArtworkManifest(manifest);
-    return send(201,{job:confirmed}),true;
+    const body=await readJson(req);
+    return send(201,{job:await mockupJobFromArtwork({artworkId:body.artworkId,templateIds:body.templateIds,fitMode:body.fitMode||'cover'})}),true;
    }
    if(req.method==='POST'&&parts.length===1){
     const job=await createMockupJob(await readJson(req));
