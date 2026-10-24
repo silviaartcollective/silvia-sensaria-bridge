@@ -7,11 +7,13 @@ import { renderDashboard } from './dashboard.mjs';
 import {workerUpdateBundle,latestWorkerVersion,heartbeatUpdate,workerUpdateText,compareWorkerVersions} from './worker-update.mjs';
 import { renderReadinessPage } from './readiness-page.mjs';
 import { renderListingReposterPage } from './listing-reposter-page.mjs';
+import { renderDailyListingsPage } from './daily-listings-page.mjs';
 import {
   cropOutputKeyForJob, isStagedRevisionJob, isStagedConverterCropJob, reserveArtworkRevision,
   startArtworkRevisionCrop, getArtworkRevisionStatus, artworkIdFromInventory
 } from './artwork-revision.mjs';
-import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement } from './listing-reposter.mjs';
+import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement, listingSalesCount } from './listing-reposter.mjs';
+import { startRenewal, stopRenewal, renewalRunning, MAX_RENEWALS } from './listing-renewer.mjs';
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
@@ -31,6 +33,7 @@ import {mockupObjectKey} from './production.mjs';
 import { handleMockupAPI } from './mockup-api.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
+import { generateEtsySeo, loadAiSeoSettings, saveAiSeoSettings, aiSeoConfigured, seoImage, seoPasteText, sectionUrl, DEFAULT_AI_SEO_INSTRUCTIONS, DEFAULT_AI_SEO_MODEL } from './ai-seo.mjs';
 import {starterDraftMedia} from './draft-starter-media.mjs';
 import { renderTestOrderPage } from './test-order-page.mjs';
 import { renderPricingPage } from './pricing-page.mjs';
@@ -869,6 +872,59 @@ async function placeConverterFramePhoto(listingId){
   return placePhotoAtSlot(photoReplacerDeps(),{listingId,slot:CONVERTER_FRAME_SLOT,
     photo:{buffer:object.body,filename:'Choose Frame.jpg',contentType:object.contentType||'image/jpeg'}});
 }
+// Renew listings (listing-renewer.mjs): the job is kept in R2.
+const RENEWER_JOB_KEY='settings/listing-renewer/job.json';
+async function loadRenewalJob(){try{return await getJsonObject(RENEWER_JOB_KEY)}catch(error){if(isMissingR2Object(error))return null;throw error}}
+async function allActiveListings(session){
+  const shopArgs={shopId:session.shop.shop_id,keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+  const listings=[];
+  for(let offset=0;offset<10000;offset+=100){
+    const page=await getShopListings({...shopArgs,state:'active',limit:100,offset});
+    const items=page?.results||[];
+    listings.push(...items);
+    if(items.length<100)break;
+  }
+  return [...new Map(listings.map(item=>[Number(item.listing_id),item])).values()];
+}
+// New SEO for a listing being renewed, from its first photo. The listing keeps
+// its shop section; an app-made listing gets its orientation's description
+// template with the new SEO description, any other keeps its description.
+async function renewalSeo(listingId){
+  const session=await getEtsySession();
+  const args={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+  const listing=await getListing({listingId,...args});
+  const [first]=await getEtsyListingImages({listingId,...args});
+  if(!first)throw Error('This listing has no photos for ChatGPT to look at.');
+  let manifest=null;
+  try{manifest=await loadArtworkManifest(artworkIdFromInventory(await getListingInventory({listingId,...args})))}catch{}
+  const layout=manifest?listingLayoutForManifest(manifest):'';
+  const context=await seoShopContext(session);
+  const seo=await generateEtsySeo({image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
+    orientation:layout,previous:{title:listing.title,tags:listing.tags||[]},...context});
+  if(!manifest)return {title:seo.title,tags:seo.tags,description:String(listing.description||''),descriptionKept:true};
+  const current=context.sections.find(item=>String(item.shop_section_id)===String(listing.shop_section_id||''));
+  const template=(await loadListingTemplates().catch(()=>null))?.orientations?.[layout];
+  return {title:seo.title,tags:seo.tags,description:listingDescription(template,listingDefaults.descriptionTemplate,{
+    seoDescription:seo.description,
+    shopSectionName:current?current.title:seo.sectionName,
+    shopSectionUrl:current?sectionUrl(context.shopName,current.shop_section_id):seo.sectionUrl})};
+}
+function renewalDeps(){
+  return {
+    newId:()=>crypto.randomUUID(),
+    saveJob:job=>putJsonObject(RENEWER_JOB_KEY,job),
+    listActive:async()=>allActiveListings(await getEtsySession()),
+    salesCount:async id=>listingSalesCount(await getEtsySession(),id),
+    record:async id=>{
+      const session=await getEtsySession();
+      try{return await getJsonObject('reposter/'+session.shop.shop_id+'/'+id+'/replacement.json')}
+      catch(error){if(isMissingR2Object(error))return null;throw error}
+    },
+    newSeo:renewalSeo,
+    prepare:async(id,input)=>prepareReplacement(await getEtsySession(),id,input,{automatic:true}),
+    finalize:async id=>finalizeReplacement(await getEtsySession(),id,'PUBLISH AND DELETE OLD',{deleteOld:true})
+  };
+}
 function photoReplacerDeps(){
   let prepared=null,preparedKey='';
   const loadJob=async()=>{try{return await getJsonObject(PHOTO_REPLACER_JOB_KEY)}catch(error){if(isMissingR2Object(error))return null;throw error}};
@@ -1140,6 +1196,16 @@ async function presetVideoId(shopId,key){
   try{const ids=await getJsonObject(PRESET_VIDEO_IDS_KEY);const row=ids?.[String(shopId)];return row?.key===key?row.videoId:null}
   catch{return null}
 }
+// The shop's sections and name, for ChatGPT to choose a section (cached 10 minutes).
+let seoShopCache={at:0,shopId:'',value:null};
+async function seoShopContext(session){
+  const shopId=String(session.shop.shop_id);
+  if(seoShopCache.value&&seoShopCache.shopId===shopId&&Date.now()-seoShopCache.at<10*60*1000)return seoShopCache.value;
+  const sections=await getShopSections({shopId,keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+  const value={sections:sections.results||sections||[],shopName:session.shop.shop_name||''};
+  seoShopCache={at:Date.now(),shopId,value};
+  return value;
+}
 // A replaced or removed preset video must be uploaded to Etsy again.
 async function forgetPresetVideoIds(){await putJsonObject(PRESET_VIDEO_IDS_KEY,{})}
 async function savePresetVideoId(shopId,key,videoId){
@@ -1299,7 +1365,9 @@ async function prepareMediaPlan({ session, manifest }) {
 
   const customImages = customMedia.filter(item =>
     String(item?.contentType||'').startsWith('image/')
-  ).slice(0,17); // Etsy supports 20 photo slots, with 3 reserved for preset images.
+  // Etsy's 20 photos, less the preset photos installed (the Product Creator lets
+  // the same number of mockups be picked).
+  ).slice(0,ETSY_PHOTO_LIMIT-installedPresets.filter(item=>item.role!=='video').length);
   const starterOnly=customImages.length===0;
   // The locked reference is only an ordering hint. No active listing is needed.
   const reference=starterOnly?null:currentMockupReference(session);
@@ -4380,6 +4448,54 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Repost only after verifying a separate draft; retain the source until publish succeeds.
+  if(req.method==='GET'&&url.pathname==='/daily-listings'){
+    if(!requireAdminPage(req,res,'/daily-listings'))return;
+    return sendHtml(res,200,renderDailyListingsPage());
+  }
+  if(req.method==='GET'&&url.pathname==='/daily-listings-client.js'){
+    if(!requireAdminApi(req,res))return;
+    const js=readFileSync(new URL('./daily-listings-client.js',import.meta.url),'utf8');
+    res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
+      'cache-control':'private, no-store','x-content-type-options':'nosniff'});
+    return res.end(js);
+  }
+  // Daily Listings → Renew listings.
+  if(url.pathname==='/api/renewer'||url.pathname.startsWith('/api/renewer/')){
+    if(!requireAdminApi(req,res))return;
+    if(req.method==='POST'){
+      const origin=String(req.headers.origin||''),host=String(req.headers.host||'');
+      if(!host||(origin&&origin!==String(req.headers['x-forwarded-proto']||'https')+'://'+host)||
+         req.headers['sec-fetch-site']==='cross-site')
+        return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    }
+    try{
+      const action=url.pathname.slice('/api/renewer'.length);
+      if(req.method==='GET'&&action===''){
+        const job=await loadRenewalJob();
+        if(job&&!renewalRunning()&&['finding','renewing'].includes(job.status))job.status='stopped';
+        let scopes=new Set();
+        try{scopes=new Set(String((await getEtsySession()).scope||'').split(/\s+/))}catch{}
+        return sendJson(res,200,{ok:true,job,running:renewalRunning(),max:MAX_RENEWALS,
+          chatGpt:aiSeoConfigured(),canDelete:scopes.has('listings_d')});
+      }
+      if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'Method not allowed.'});
+      if(action==='/stop')return sendJson(res,200,{ok:true,stopping:stopRenewal()});
+      if(action!=='/start')return sendJson(res,404,{ok:false,error:'Unknown renewal action.'});
+      const body=await readJsonBody(req);
+      if(body.confirm!=='RENEW LISTINGS ON ETSY')
+        return sendJson(res,400,{ok:false,error:'Explicit confirmation is required: this publishes new listings and deletes the old ones.'});
+      if(!aiSeoConfigured())return sendJson(res,400,{ok:false,error:'ChatGPT is not connected: add OPENAI_API_KEY in Render first.'});
+      const session=await getEtsySession();
+      const scopes=new Set(String(session.scope||'').split(/\s+/));
+      const lacking=['listings_r','listings_w','listings_d','transactions_r'].filter(scope=>!scopes.has(scope));
+      if(lacking.length)return sendJson(res,403,{ok:false,needsReauthorization:true,
+        error:'Reconnect Etsy first (the Reconnect Etsy link on this page): renewing needs permission to '+
+          (lacking.includes('listings_d')?'delete the old listings':'read and edit listings and sales')+'.'});
+      const job=await startRenewal(renewalDeps(),{count:body.count});
+      return sendJson(res,200,{ok:true,job,running:true});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
+  }
+
   if (req.method === 'GET' && url.pathname === '/listing-reposter') {
     if (!requireAdminPage(req,res,'/listing-reposter')) return;
     return sendHtml(res,200,renderListingReposterPage('Silvia Art Collective'));
@@ -5081,6 +5197,37 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ChatGPT SEO: its settings, and SEO for one artwork picture.
+  if (url.pathname === '/api/ai-seo/settings' && (req.method === 'GET' || req.method === 'POST')) {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const settings = req.method === 'POST' ? await saveAiSeoSettings(await readJsonBody(req)) : await loadAiSeoSettings();
+      return sendJson(res, 200, { ok: true, configured: aiSeoConfigured(), settings,
+        defaults: { instructions: DEFAULT_AI_SEO_INSTRUCTIONS, model: DEFAULT_AI_SEO_MODEL } });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error?.message || String(error) });
+    }
+  }
+  if (req.method === 'POST' && url.pathname === '/api/ai-seo/generate') {
+    if (!requireAdminApi(req, res)) return;
+    try {
+      const body = JSON.parse((await readRawBody(req, 6 * 1024 * 1024)).toString('utf8') || '{}');
+      let picture = Buffer.from(String(body.image || '').replace(/^data:[^,]*,/, ''), 'base64');
+      // No picture from the browser (e.g. a TIFF): use the master already in R2.
+      if (picture.length < 100 && /^SAC\d+$/.test(String(body.artworkId || ''))) {
+        const manifest = await loadArtworkManifest(String(body.artworkId));
+        if (manifest?.master?.key) picture = (await getArtworkObject(manifest.master.key)).body;
+      }
+      if (picture.length < 100) return sendJson(res, 400, { ok: false, error: 'Choose the master artwork first.' });
+      const session = await getEtsySession();
+      const seo = await generateEtsySeo({ image: await seoImage(picture), orientation: String(body.orientation || ''),
+        ...(await seoShopContext(session)) });
+      return sendJson(res, 200, { ok: true, seo, pasteText: seoPasteText(seo) });
+    } catch (error) {
+      return sendJson(res, 502, { ok: false, error: error?.message || String(error) });
+    }
+  }
+
   const regularMockupRoute=url.pathname.match(/^\/api\/artworks\/(SAC\d+)\/regular-mockups(?:\/(reserve|confirm|sync|status))?$/i);
   if(regularMockupRoute){
    if(!requireAdminApi(req,res))return;
@@ -5720,7 +5867,7 @@ const server = http.createServer(async (req, res) => {
       redirectUri: callbackUrl(),
       codeChallenge,
       state,
-      scopes: ['transactions_r', 'transactions_w', 'listings_r', 'listings_w', 'shops_r', 'shops_w']
+      scopes: ['transactions_r', 'transactions_w', 'listings_r', 'listings_w', 'listings_d', 'shops_r', 'shops_w']
     });
 
     res.writeHead(302, {

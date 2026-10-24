@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
-test('Etsy photo plan supports all 20 photo slots, three preset plus 17 original mockups',()=>{
+test('Etsy photo plan supports all 20 photo slots: the preset photos plus as many mockups as fit',()=>{
  const source=read('src/server.mjs'),client=read('src/mockup-generator-client.js'),ui=read('src/mockup-generator-ui.mjs');
- assert.match(source,/\.slice\(0,17\)/);
+ assert.match(source,/\.slice\(0,ETSY_PHOTO_LIMIT-installedPresets\.filter\(item=>item\.role!=='video'\)\.length\)/);
  // Etsy shows 20 photos; the installed preset photos (and regular mockups)
  // take some of them, and only the rest can be picked as mockups.
  assert.match(client,/const ETSY_PHOTOS=20;/);
