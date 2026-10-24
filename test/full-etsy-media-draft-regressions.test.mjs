@@ -27,7 +27,7 @@ test('Gelato converter updates canvas thickness but preserves existing Etsy SEO 
 test('Etsy draft responds before media uploads; uses existing artwork manifest and verified R2 master',()=>{
  const source=read('src/server.mjs'),ui=read('src/product-creator.mjs');
  assert.match(source,/const inflightDraftSetups = new Set\(\)/);
- assert.match(source,/return sendJson\(res,201,\{ok:true,processing:true/);
+ assert.match(source,/return draftReply\(201,\{ok:true,processing:true/);
  assert.match(source,/manifest\.etsyDraftSetup=\{\.\.\.summary,status:'completed'/);
  assert.match(source,/setup:stored\?\{\.\.\.stored,status\}/);
  assert.match(source,/artworkObjectExists\(manifest\.master\.key\)/);

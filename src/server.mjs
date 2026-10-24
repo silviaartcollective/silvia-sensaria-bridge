@@ -26,11 +26,12 @@ import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates, reviseCanvasThickness } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
-import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey} from './mockup-generator.mjs';
+import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey,listMockupTemplates} from './mockup-generator.mjs';
 import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verification.mjs';
 import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
 import {mockupObjectKey} from './production.mjs';
-import { handleMockupAPI } from './mockup-api.mjs';
+import { handleMockupAPI, mockupJobFromArtwork } from './mockup-api.mjs';
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, batchDraftBody, MAX_BATCH } from './batch-poster.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
 import { generateEtsySeo, loadAiSeoSettings, saveAiSeoSettings, aiSeoConfigured, seoImage, seoPasteText, sectionUrl, DEFAULT_AI_SEO_INSTRUCTIONS, DEFAULT_AI_SEO_MODEL } from './ai-seo.mjs';
@@ -871,6 +872,98 @@ async function placeConverterFramePhoto(listingId){
   const object=await etsyReadyImage(preset.key);
   return placePhotoAtSlot(photoReplacerDeps(),{listingId,slot:CONVERTER_FRAME_SLOT,
     photo:{buffer:object.body,filename:'Choose Frame.jpg',contentType:object.contentType||'image/jpeg'}});
+}
+// A POST from another site (Daily Listings changes Etsy, so only its own page may).
+function crossSitePost(req){
+  const origin=String(req.headers.origin||''),host=String(req.headers.host||'');
+  const scheme=String(req.headers['x-forwarded-proto']||(req.socket?.encrypted?'https':'http')).split(',')[0].trim();
+  return !host||(origin&&origin!==scheme+'://'+host)||req.headers['sec-fetch-site']==='cross-site';
+}
+// Daily Listings → New listings (batch-poster.mjs): the batch and the mockup
+// set chosen for each orientation are kept in R2.
+const BATCH_JOB_KEY='settings/batch-poster/job.json';
+const BATCH_MOCKUP_SETS_KEY='settings/batch-poster/mockup-sets.json';
+const BATCH_LAYOUTS=['portrait','landscape','square','panoramic'];
+const LAYOUT_NAMES={portrait:'Vertical',landscape:'Horizontal',square:'Square',panoramic:'Panoramic'};
+async function loadBatchMockupSets(){
+  try{return (await getJsonObject(BATCH_MOCKUP_SETS_KEY))||{}}catch(error){if(isMissingR2Object(error))return {};throw error}
+}
+// A template suits an orientation like in the Product Creator: the same
+// orientation, or a square artwork in a template marked square-compatible.
+const templateSuits=(template,layout)=>String(template?.orientation||'')===layout||
+  (layout==='square'&&template?.squareCompatible===true);
+async function batchShopDefaults(session){
+  const shopArgs={shopId:session.shop.shop_id,keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+  const [shipping,listings,templates]=await Promise.all([getShopShippingProfiles(shopArgs),
+    getShopListings({...shopArgs,state:'active',limit:100}),loadListingTemplates().catch(()=>({orientations:{}}))]);
+  return {preset:detectedListingPreset(shipping.results||shipping||[],listings.results||listings||[]),templates:templates.orientations||{}};
+}
+let batchDefaultsCache={at:0,value:null};
+function batchDeps(){
+  return {
+    newId:()=>crypto.randomUUID(),
+    loadJob:async()=>{try{return await getJsonObject(BATCH_JOB_KEY)}catch(error){if(isMissingR2Object(error))return null;throw error}},
+    saveJob:job=>putJsonObject(BATCH_JOB_KEY,job),
+    pause:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
+    reserveArtwork:async item=>{
+      const reservation=await reserveArtworkUpload({title:'',orientation:'auto',
+        master:{filename:item.filename,contentType:item.contentType,size:item.size},mockups:[],stagedMaster:{stageId:item.stageId}});
+      const manifest=await completeArtworkUpload(reservation.artworkId);
+      return {artworkId:reservation.artworkId,orientation:listingLayoutForManifest(manifest)};
+    },
+    startMockups:async(artworkId,layout)=>{
+      const [sets,templates,presets]=await Promise.all([loadBatchMockupSets(),listMockupTemplates(),presetMediaStatus()]);
+      const ready=new Map(templates.filter(t=>t.status==='ready'&&templateSuits(t,layout)).map(t=>[t.id,t]));
+      const room=ETSY_PHOTO_LIMIT-presets.items.filter(item=>item.exists&&item.role!=='video').length;
+      const ids=(sets[layout]||[]).filter(id=>ready.has(id)).slice(0,room);
+      if(!ids.length)throw Error('Choose the mockups for '+LAYOUT_NAMES[layout]+' artworks first (Mockup sets on this page).');
+      const job=await mockupJobFromArtwork({artworkId,templateIds:ids});
+      return {jobId:job.id,total:job.templates.length};
+    },
+    mockupStatus:async jobId=>{
+      const job=await getMockupJob(jobId);
+      const count=status=>job.templates.filter(t=>t.status===status).length;
+      return {total:job.templates.length,done:count('completed'),failed:count('failed')+count('needs_mapping'),
+        finished:!job.templates.some(t=>['queued','processing'].includes(t.status)),
+        completedIds:job.templates.filter(t=>t.status==='completed').map(t=>t.id)};
+    },
+    writeSeo:async item=>{
+      let picture=null;
+      if(item.previewKey)picture=(await getArtworkObject(item.previewKey).catch(()=>null))?.body||null;
+      if(!picture){
+        // No preview from the page (e.g. a TIFF): the master in R2.
+        const manifest=await loadArtworkManifest(item.artworkId);
+        picture=(await getArtworkObject(manifest.master.key)).body;
+      }
+      return generateEtsySeo({image:await seoImage(picture),orientation:item.orientation,...(await seoShopContext(await getEtsySession()))});
+    },
+    attachMockups:(artworkId,jobId,templateIds)=>syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds}),
+    createDraft:async item=>{
+      if(!batchDefaultsCache.value||Date.now()-batchDefaultsCache.at>10*60*1000)
+        batchDefaultsCache={at:Date.now(),value:await batchShopDefaults(await getEtsySession())};
+      const {preset,templates}=batchDefaultsCache.value;
+      const body=batchDraftBody({artworkId:item.artworkId,layout:item.orientation,seo:item.seo,
+        preset,template:templates[item.orientation]||{}});
+      if(!body.shipping_profile_id||!body.readiness_state_id)
+        throw Error('Choose the shipping and processing profiles in Listings → Templates → '+LAYOUT_NAMES[item.orientation]+
+          ' (the shop has no listing to take them from), then try again.');
+      const reply=await createEtsyDraft(body);
+      if(reply.status>=400)throw Error(reply.payload?.error||'The Etsy draft could not be created.');
+      return Number(reply.payload.listingId);
+    },
+    draftSetup:async artworkId=>{
+      const stored=(await loadArtworkManifest(artworkId))?.etsyDraftSetup||{};
+      const status=stored.status==='running'&&!inflightDraftSetups.has(artworkId)?'interrupted':(stored.status||'not_started');
+      return {status,error:stored.error||''};
+    },
+    publish:async listingId=>{
+      const session=await getEtsySession();
+      const args={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+      await withEtsyListingRetry(()=>updateListing({...args,shopId:session.shop.shop_id,listingId,listing:{state:'active'}}));
+      const listing=await getListing({listingId,...args});
+      if(listing.state!=='active')throw Error('Etsy kept the listing as '+listing.state+'.');
+    }
+  };
 }
 // Renew listings (listing-renewer.mjs): the job is kept in R2.
 const RENEWER_JOB_KEY='settings/listing-renewer/job.json';
@@ -2673,6 +2766,356 @@ async function organizerThumb(key){
   return pending;
 }
 
+// The shop's usual listing settings: the managed shipping profile, and the most
+// common values of recent active listings (the Product Creator's starting point).
+function detectedListingPreset(shippingProfiles, sourceListings) {
+  const managedShippingProfile = shippingProfiles.find((profile) =>
+    String(profile?.title || '').trim() === String(shippingProfileDefaults.title || '').trim()
+  ) || null;
+
+  return {
+    shipping_profile_id: managedShippingProfile?.shipping_profile_id || mostCommonValue(sourceListings, (x) => x.shipping_profile_id),
+    readiness_state_id: mostCommonValue(sourceListings, (x) => x.readiness_state_id),
+    return_policy_id: mostCommonValue(sourceListings, (x) => x.return_policy_id),
+    shop_section_id: mostCommonValue(sourceListings, (x) => x.shop_section_id),
+    who_made: mostCommonValue(sourceListings, (x) => x.who_made),
+    when_made: mostCommonValue(sourceListings, (x) => x.when_made),
+    is_supply: mostCommonValue(sourceListings, (x) => x.is_supply),
+    should_auto_renew: mostCommonValue(sourceListings, (x) => x.should_auto_renew),
+    production_partner_id: mostCommonValue(
+      sourceListings,
+      (x) => Array.isArray(x.production_partner_ids) && x.production_partner_ids.length
+        ? x.production_partner_ids[0]
+        : null
+    )
+  };
+}
+// Creates the Etsy draft for an uploaded artwork and returns at once; its setup
+// (photos, video, variants, attributes) goes on in the background and is
+// recorded in the artwork manifest (etsyDraftSetup). Used by the Product
+// Creator (POST /etsy/drafts) and the batch poster.
+async function createEtsyDraft(body) {
+    const draftReply=(status,payload)=>({status,payload});
+    const startedAt = Date.now();
+    try {
+      const session = await getEtsySession();
+      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
+      if (!scopes.has('listings_w')) {
+        return draftReply( 403, {
+          ok: false,
+          needsReauthorization: true,
+          error: 'Reconnect Etsy to grant listings_w.'
+        });
+      }
+
+      // SEO section links are authoritative; never silently keep a default shop section.
+      try{assertSeoShopSection(body.seo_section_url,body.shop_section_id)}
+      catch(error){return draftReply(400,{ok:false,error:error?.message||String(error)})}
+      // Fail before creating any Etsy draft rather than silently applying Art deco.
+      if(canonicalWallArtStyle(body.listing_style)===null){
+        return draftReply(400,{ok:false,error:'Select a valid Etsy Style before creating this draft.'});
+      }
+      const seoDescription = String(body.seo_description || '').trim();
+      const shopSectionName = String(body.seo_section_name || '').trim();
+      const shopSectionUrl = String(body.seo_section_url || '').trim();
+      const descriptionParts = { seoDescription, shopSectionName, shopSectionUrl };
+      body.description = listingDescription(null, listingDefaults.descriptionTemplate, descriptionParts);
+      body.taxonomy_id = listingDefaults.taxonomyId;
+      // The Product Creator's Auto renew choice (filled from the listing template).
+      body.should_auto_renew = typeof body.should_auto_renew === 'boolean' ? body.should_auto_renew : listingDefaults.autoRenew;
+
+      const required = ['artwork_id','title','description','taxonomy_id','shipping_profile_id','readiness_state_id'];
+      const missing = required.filter((key) => body[key] === undefined || body[key] === null || body[key] === '');
+      if (missing.length) return draftReply( 400, { ok:false, error:`Missing: ${missing.join(', ')}` });
+
+      const manifest = await loadArtworkManifest(body.artwork_id);
+      if (!manifest || manifest.status !== 'ready') {
+        return draftReply( 400, {
+          ok: false,
+          error: 'The artwork upload is not complete in R2. Re-upload the master artwork and listing media before creating the Etsy draft.'
+        });
+      }
+      // An R2 "folder" is an object prefix. Verify the real master, not just its JSON manifest.
+      if(!manifest.master?.key||!(await artworkObjectExists(manifest.master.key)))
+        return draftReply(409,{ok:false,error:'The master image is missing from Cloudflare R2. No Etsy draft was created.'});
+      // The description from the listing template for this artwork's orientation
+      // (Listings → Templates), if it has one.
+      const listingTemplate = (await loadListingTemplates().catch(() => null))?.orientations?.[listingLayoutForManifest(manifest)];
+      if (listingTemplate?.description_template)
+        body.description = listingDescription(listingTemplate, listingDefaults.descriptionTemplate, descriptionParts);
+      if(manifest.etsyDraftListingId&&manifest.etsyDraftSetup?.status==='completed'){
+        return draftReply(200,{ok:true,...manifest.etsyDraftSetup,processing:false});
+      }
+      if(manifest.etsyDraftListingId&&inflightDraftSetups.has(body.artwork_id)){
+        return draftReply(202,{ok:true,processing:true,status:'running',
+          listingId:manifest.etsyDraftListingId,message:'Draft setup is already running.'});
+      }
+      // Repair/ensure the production crop queue independently of Etsy draft creation.
+      // A crop failure must never block creation of the Etsy draft.
+      let cropQueue = null;
+      let cropQueueWarning = '';
+      if (!manifest.fulfillmentRatiosReady || fulfillmentRatiosForOrientation(manifest.orientation, manifest.master).some(
+        ratio => !manifest.fulfillmentRatios?.[ratio]?.productionReady
+      )) {
+        try {
+          const created = await createCropJob({
+            artworkId: body.artwork_id,
+            masterKey: manifest.master.key,
+            orientation: manifest.orientation,
+            width: manifest.master.width,
+            height: manifest.master.height
+          });
+          manifest.cropWorkerJobId = created.job.id;
+          manifest.cropWorkerQueuedAt = manifest.cropWorkerQueuedAt || new Date().toISOString();
+          await persistDraftManifestFields(manifest,['cropWorkerJobId','cropWorkerQueuedAt']);
+          await writeFulfillmentStatus(body.artwork_id, {
+            status: created.job.status || 'pending',
+            jobId: created.job.id,
+            progress: created.job.progress || 0,
+            completedRatios: created.job.completedRatios || [],
+            message: created.job.message || 'Waiting for shared crop workstation'
+          }).catch(() => {});
+          cropQueue = {
+            jobId: created.job.id,
+            status: created.job.status || 'pending',
+            reused: Boolean(created.reused),
+            worker: cropWorkerStatus()
+          };
+        } catch (error) {
+          cropQueueWarning = error?.message || String(error);
+        }
+      }
+
+      const variantInventory = buildOwnSilviaInventory({
+        artworkId: body.artwork_id,
+        catalog: products,
+        readinessStateId: body.readiness_state_id,
+        defaultQuantity: 999,
+        orientation: listingLayoutForManifest(manifest)
+      });
+      body.price = variantInventory.minimumPrice;
+      body.quantity = 999;
+
+      const taxonomyPromise = getCachedTaxonomyProperties(session, body.taxonomy_id);
+      let mediaPrepStartedAt = 0;
+      // Start image sorting/download/optimization immediately and let it run while
+      // Etsy creates/configures the draft. This removes media-prep time from the
+      // critical path without performing concurrent Etsy writes.
+      let mediaPrepMs = 0;
+      let mediaPlanPromise = null;
+      // start media preparation only once the draft has been created
+      // and the configuration task is running, not during draft creation.
+      const startMediaPlan=()=>{
+        mediaPrepStartedAt=Date.now();
+        mediaPlanPromise=prepareMediaPlan({session,manifest}).then(
+          plan=>({ok:true,plan,ms:Date.now()-mediaPrepStartedAt}),
+          error=>({ok:false,error,ms:Date.now()-mediaPrepStartedAt})
+        );
+      };
+
+      let draft;
+      const draftStartedAt = Date.now();
+      if (manifest.etsyDraftListingId) {
+        draft = {
+          listing_id: Number(manifest.etsyDraftListingId),
+          state: 'draft',
+          title: body.title,
+          resumed: true
+        };
+      } else {
+        draft = await createDraftListing({
+          shopId: session.shop.shop_id,
+          keystring: session.keystring,
+          sharedSecret: session.sharedSecret,
+          accessToken: session.accessToken,
+          listing: body
+        });
+        manifest.etsyDraftListingId = draft.listing_id;
+        manifest.etsyDraftCreatedAt = new Date().toISOString();
+        await persistDraftManifestFields(manifest,['etsyDraftListingId','etsyDraftCreatedAt']);
+      }
+      const draftMs = Date.now() - draftStartedAt;
+
+      // Return the Etsy draft ID immediately. Inventory, photos, video and
+      // attributes continue in the server worker, not in the browser request.
+      // A retry reuses manifest.etsyDraftListingId instead of duplicating Etsy listings.
+      manifest.etsyDraftSetup={status:'running',listingId:draft.listing_id,
+        startedAt:new Date().toISOString(),message:'Applying variants, attributes and listing media'};
+      await persistDraftManifestFields(manifest,['etsyDraftSetup']);
+      const setupId=body.artwork_id;
+      inflightDraftSetups.add(setupId);
+      void (async()=>{
+        try{
+          startMediaPlan();
+      // Photos first, as soon as the draft exists: the preset photos, then the
+      // selected PSD mockups in the organizer's order, then the video (its place
+      // on Etsy does not depend on when it is added). Inventory and attributes
+      // follow. A photo or video problem is reported once those are done, so it
+      // never leaves the draft without its variants.
+      let mediaError = null, mediaPlan = null, media = null;
+      try {
+        const mediaPrepared = await mediaPlanPromise;
+        mediaPrepMs = mediaPrepared.ms;
+        if (!mediaPrepared.ok) throw mediaPrepared.error;
+        mediaPlan = mediaPrepared.plan;
+        media = await uploadPreparedMediaToEtsy({
+          session,
+          listingId: draft.listing_id,
+          manifest,
+          plan: mediaPlan
+        });
+      } catch (error) {
+        mediaError = error;
+      }
+      await reconcileCompletedMockupsForArtwork(setupId, { inSetup: true }).catch(
+        error => console.error('Selected PSD mockups could not be added during draft setup:', error)
+      );
+      if (mediaPlan) {
+        try {
+          const videoUploaded = await uploadPreparedVideoToEtsy({ session, listingId: draft.listing_id, manifest, plan: mediaPlan });
+          if (media) media.videoUploaded = videoUploaded;
+        } catch (error) {
+          mediaError ||= error;
+        }
+      }
+
+      // Taxonomy/media preparation above can stay parallel because it does not
+      // mutate Etsy. Etsy listing writes themselves must be serialized: Etsy
+      // returns HTTP 409 when two processes edit the same listing at once.
+      const inventoryStartedAt = Date.now();
+      await withEtsyListingRetry(() => updateListingInventory({
+        listingId: draft.listing_id,
+        inventory: variantInventory,
+        keystring: session.keystring,
+        sharedSecret: session.sharedSecret,
+        accessToken: session.accessToken
+      }));
+      const inventoryMs = Date.now() - inventoryStartedAt;
+
+      if (body.return_policy_id || body.production_partner_id || body.shop_section_id) {
+        await withEtsyListingRetry(() => updateListing({
+          shopId: session.shop.shop_id,
+          listingId: draft.listing_id,
+          listing: {
+            return_policy_id: body.return_policy_id || undefined,
+            production_partner_ids: body.production_partner_id
+              ? [Number(body.production_partner_id)]
+              : undefined,
+            shop_section_id: body.shop_section_id || undefined
+          },
+          keystring: session.keystring,
+          sharedSecret: session.sharedSecret,
+          accessToken: session.accessToken
+        }));
+      }
+
+      const properties = await taxonomyPromise;
+      const attributesStartedAt = Date.now();
+      const attributes = await applyAllListingAttributes({
+        session,
+        listingId: draft.listing_id,
+        body,
+        properties
+      });
+      const attributesMs = Date.now() - attributesStartedAt;
+
+      if (mediaError) throw mediaError;
+
+      manifest.etsyConfiguredAt = new Date().toISOString();
+      manifest.etsyConfiguration = {
+        listingId: draft.listing_id,
+        variants: variantInventory.products.length,
+        materials: listingDefaults.fixedAttributes?.Materials || [],
+        tags: body.tags || [],
+        media,
+        attributes: attributes.results
+      };
+      await persistDraftManifestFields(manifest,['etsyConfiguredAt','etsyConfiguration']);
+
+      const summary = {
+        ok: true,
+        listingId: draft.listing_id,
+        state: draft.state || 'draft',
+        title: draft.title || body.title,
+        resumed: Boolean(draft.resumed),
+        url: draft.url || null,
+        attributeWarnings: [
+          ...attributes.warnings,
+          ...(cropQueueWarning ? ['Production crop queue: ' + cropQueueWarning] : [])
+        ],
+        cropQueue,
+        media,
+        mockupSort: media.mockupSort,
+        presetMedia: {
+          imageCount:mediaPlan.installedPresetRoles.filter(role=>role!=='video').length,
+          videoCount:mediaPlan.installedPresetRoles.includes('video')?1:0,
+          missingRoles:mediaPlan.missingPresetRoles
+        },
+        timing: {
+          totalMs: Date.now() - startedAt,
+          draftMs,
+          inventoryMs,
+          attributesMs,
+          mediaPrepMs,
+          mediaUploadMs: media.uploadMs || 0
+        },
+        aiGenerator: {
+          applied: false,
+          reason: 'Etsy Open API does not currently expose the listing-editor AI generator checkbox.'
+        },
+        variants: {
+          count: variantInventory.products.length,
+          enabledCount: variantInventory.enabledCount,
+          disabledCount: variantInventory.disabledCount,
+          minimumPrice: variantInventory.minimumPrice,
+          maximumPrice: variantInventory.maximumPrice,
+          variation1: 'Size',
+          variation2: 'Product - Style',
+          pricing: variantInventory.pricing
+        }
+      };
+
+
+          manifest.etsyDraftSetup={...summary,status:'completed',
+            completedAt:new Date().toISOString(),r2Prefix:'artworks/'+setupId+'/'};
+          await persistDraftManifestFields(manifest,['etsyDraftSetup']);
+        }catch(error){
+          console.error('Etsy draft setup failed for '+setupId+':',error);
+          try{
+            await updateArtworkManifest(setupId,updated=>{
+              updated.etsyDraftSetup={status:'failed',listingId:draft.listing_id,
+                error:String(error?.message||error).slice(0,650),
+                failedAt:new Date().toISOString()};
+            });
+          }catch(saveError){console.error('Could not record draft setup failure:',saveError);}
+        }finally{
+          inflightDraftSetups.delete(setupId);
+          // Regular JPGs are independent of the draft's other setup steps:
+          // an inventory/video problem must not strand them in Cloudflare R2.
+          void queueRegularMockupEtsySync(setupId).catch(
+            error=>console.error('Regular mockup catch-up after draft setup failed:',error)
+          );
+          // Selected PSD mockups (and the organizer's order) are added even when
+          // another setup step (e.g. the video) failed: the draft exists.
+          void reconcileCompletedMockupsForArtwork(setupId).catch(
+            error=>console.error('PSD catch-up after Etsy draft setup failed:',error)
+          );
+        }
+      })();
+      return draftReply(201,{ok:true,processing:true,
+        status:'running',listingId:draft.listing_id,state:'draft',
+        title:body.title,resumed:Boolean(draft.resumed),
+        r2Prefix:'artworks/'+setupId+'/',
+        message:'Etsy draft created. Media, inventory and attributes are configuring in the background.'});
+    } catch (error) {
+      return draftReply( 500, {
+        ok:false,
+        error:error?.message || String(error),
+        timing: { totalMs: Date.now() - startedAt }
+      });
+    }
+}
+
 const server = http.createServer(async (req, res) => {
   // PSD mockup batch endpoints are private and separate from Etsy fulfillment.
   const mockupUrl=new URL(req.url||'/', 'https://'+String(req.headers.host||'localhost'));
@@ -4452,22 +4895,81 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/daily-listings'))return;
     return sendHtml(res,200,renderDailyListingsPage());
   }
-  if(req.method==='GET'&&url.pathname==='/daily-listings-client.js'){
+  if(req.method==='GET'&&(url.pathname==='/daily-listings-client.js'||url.pathname==='/daily-batch-client.js')){
     if(!requireAdminApi(req,res))return;
-    const js=readFileSync(new URL('./daily-listings-client.js',import.meta.url),'utf8');
+    const js=readFileSync(new URL('.'+url.pathname,import.meta.url),'utf8');
     res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
       'cache-control':'private, no-store','x-content-type-options':'nosniff'});
     return res.end(js);
   }
+  // Daily Listings → New listings (a batch of artworks).
+  if(url.pathname==='/api/batch'||url.pathname.startsWith('/api/batch/')){
+    if(!requireAdminApi(req,res))return;
+    if(req.method==='POST'&&crossSitePost(req))return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    try{
+      const deps=batchDeps(),action=url.pathname.slice('/api/batch'.length);
+      if(req.method==='GET'&&action===''){
+        const job=await batchStatus(deps);
+        // Each artwork's small preview, straight from R2.
+        if(job)await Promise.all(job.items.map(async item=>{
+          item.previewUrl=item.previewKey?await signedArtworkUrl(item.previewKey,3600).catch(()=>''):'';
+        }));
+        return sendJson(res,200,{ok:true,job,running:batchRunning(),max:MAX_BATCH,chatGpt:aiSeoConfigured()});
+      }
+      if(req.method==='GET'&&action==='/mockup-sets'){
+        const [sets,templates,presets]=await Promise.all([loadBatchMockupSets(),listMockupTemplates(),presetMediaStatus()]);
+        return sendJson(res,200,{ok:true,sets,room:ETSY_PHOTO_LIMIT-presets.items.filter(item=>item.exists&&item.role!=='video').length,
+          templates:templates.filter(t=>t.status==='ready').map(t=>({id:t.id,name:t.name,orientation:t.orientation||'unclassified',
+            squareCompatible:t.squareCompatible===true,preview:Boolean(t.previewKey)}))});
+      }
+      if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'Method not allowed.'});
+      const body=await readJsonBody(req);
+      if(action==='/mockup-sets'){
+        const layout=String(body.orientation||'');
+        if(!BATCH_LAYOUTS.includes(layout))return sendJson(res,400,{ok:false,error:'Unknown orientation.'});
+        const ids=[...new Set((Array.isArray(body.templateIds)?body.templateIds:[]).map(String))].slice(0,ETSY_PHOTO_LIMIT);
+        const sets=await loadBatchMockupSets();
+        sets[layout]=ids;
+        await putJsonObject(BATCH_MOCKUP_SETS_KEY,sets);
+        return sendJson(res,200,{ok:true,sets});
+      }
+      if(action==='/preview-url'){
+        const key='batch-poster/previews/'+crypto.randomUUID()+'.jpg';
+        return sendJson(res,200,{ok:true,key,uploadUrl:await signedArtworkUploadUrl(key,'image/jpeg')});
+      }
+      if(action==='/add'){
+        if(!aiSeoConfigured())return sendJson(res,400,{ok:false,error:'ChatGPT is not connected: add OPENAI_API_KEY in Render first.'});
+        const previewKey=/^batch-poster\/previews\/[0-9a-f-]{36}\.jpg$/.test(String(body.previewKey||''))?String(body.previewKey):'';
+        await addToBatch(deps,{stageId:body.stageId,filename:body.filename,contentType:body.contentType,size:body.size,previewKey});
+        return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
+      }
+      if(action==='/resume'){
+        await resumeBatch(deps,{retryFailed:body.retryFailed===true});
+        return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
+      }
+      if(action==='/stop')return sendJson(res,200,{ok:true,stopping:stopBatch()});
+      if(action==='/tick'){
+        await setPublish(deps,{n:body.n,publish:body.publish});
+        return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
+      }
+      if(action==='/publish'){
+        if(body.confirm!=='PUBLISH NEW LISTINGS ON ETSY')
+          return sendJson(res,400,{ok:false,error:'Explicit confirmation is required: this publishes listings on Etsy.'});
+        await publishBatch(deps);
+        return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:true});
+      }
+      if(action==='/new'){
+        await closeBatch(deps);
+        return sendJson(res,200,{ok:true,job:null,running:false});
+      }
+      return sendJson(res,404,{ok:false,error:'Unknown batch action.'});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
+  }
+
   // Daily Listings → Renew listings.
   if(url.pathname==='/api/renewer'||url.pathname.startsWith('/api/renewer/')){
     if(!requireAdminApi(req,res))return;
-    if(req.method==='POST'){
-      const origin=String(req.headers.origin||''),host=String(req.headers.host||'');
-      if(!host||(origin&&origin!==String(req.headers['x-forwarded-proto']||'https')+'://'+host)||
-         req.headers['sec-fetch-site']==='cross-site')
-        return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
-    }
+    if(req.method==='POST'&&crossSitePost(req))return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
     try{
       const action=url.pathname.slice('/api/renewer'.length);
       if(req.method==='GET'&&action===''){
@@ -5423,26 +5925,7 @@ const server = http.createServer(async (req, res) => {
           : []
       }));
 
-      const managedShippingProfile = (shipping.results || shipping || []).find((profile) =>
-        String(profile?.title || '').trim() === String(shippingProfileDefaults.title || '').trim()
-      ) || null;
-
-      const detectedPreset = {
-        shipping_profile_id: managedShippingProfile?.shipping_profile_id || mostCommonValue(sourceListings, (x) => x.shipping_profile_id),
-        readiness_state_id: mostCommonValue(sourceListings, (x) => x.readiness_state_id),
-        return_policy_id: mostCommonValue(sourceListings, (x) => x.return_policy_id),
-        shop_section_id: mostCommonValue(sourceListings, (x) => x.shop_section_id),
-        who_made: mostCommonValue(sourceListings, (x) => x.who_made),
-        when_made: mostCommonValue(sourceListings, (x) => x.when_made),
-        is_supply: mostCommonValue(sourceListings, (x) => x.is_supply),
-        should_auto_renew: mostCommonValue(sourceListings, (x) => x.should_auto_renew),
-        production_partner_id: mostCommonValue(
-          sourceListings,
-          (x) => Array.isArray(x.production_partner_ids) && x.production_partner_ids.length
-            ? x.production_partner_ids[0]
-            : null
-        )
-      };
+      const detectedPreset = detectedListingPreset(shipping.results || shipping || [], sourceListings);
 
       const mockupReference = await cacheRecentMockupReference(session, sourceListings);
 
@@ -5507,325 +5990,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/etsy/drafts') {
     if (!requireAdminApi(req, res)) return;
-    const startedAt = Date.now();
-    try {
-      const session = await getEtsySession();
-      const scopes = new Set(String(session.scope || '').split(/\s+/).filter(Boolean));
-      if (!scopes.has('listings_w')) {
-        return sendJson(res, 403, {
-          ok: false,
-          needsReauthorization: true,
-          error: 'Reconnect Etsy to grant listings_w.'
-        });
-      }
-
-      const body = await readJsonBody(req);
-      // SEO section links are authoritative; never silently keep a default shop section.
-      try{assertSeoShopSection(body.seo_section_url,body.shop_section_id)}
-      catch(error){return sendJson(res,400,{ok:false,error:error?.message||String(error)})}
-      // Fail before creating any Etsy draft rather than silently applying Art deco.
-      if(canonicalWallArtStyle(body.listing_style)===null){
-        return sendJson(res,400,{ok:false,error:'Select a valid Etsy Style before creating this draft.'});
-      }
-      const seoDescription = String(body.seo_description || '').trim();
-      const shopSectionName = String(body.seo_section_name || '').trim();
-      const shopSectionUrl = String(body.seo_section_url || '').trim();
-      const descriptionParts = { seoDescription, shopSectionName, shopSectionUrl };
-      body.description = listingDescription(null, listingDefaults.descriptionTemplate, descriptionParts);
-      body.taxonomy_id = listingDefaults.taxonomyId;
-      // The Product Creator's Auto renew choice (filled from the listing template).
-      body.should_auto_renew = typeof body.should_auto_renew === 'boolean' ? body.should_auto_renew : listingDefaults.autoRenew;
-
-      const required = ['artwork_id','title','description','taxonomy_id','shipping_profile_id','readiness_state_id'];
-      const missing = required.filter((key) => body[key] === undefined || body[key] === null || body[key] === '');
-      if (missing.length) return sendJson(res, 400, { ok:false, error:`Missing: ${missing.join(', ')}` });
-
-      const manifest = await loadArtworkManifest(body.artwork_id);
-      if (!manifest || manifest.status !== 'ready') {
-        return sendJson(res, 400, {
-          ok: false,
-          error: 'The artwork upload is not complete in R2. Re-upload the master artwork and listing media before creating the Etsy draft.'
-        });
-      }
-      // An R2 "folder" is an object prefix. Verify the real master, not just its JSON manifest.
-      if(!manifest.master?.key||!(await artworkObjectExists(manifest.master.key)))
-        return sendJson(res,409,{ok:false,error:'The master image is missing from Cloudflare R2. No Etsy draft was created.'});
-      // The description from the listing template for this artwork's orientation
-      // (Listings → Templates), if it has one.
-      const listingTemplate = (await loadListingTemplates().catch(() => null))?.orientations?.[listingLayoutForManifest(manifest)];
-      if (listingTemplate?.description_template)
-        body.description = listingDescription(listingTemplate, listingDefaults.descriptionTemplate, descriptionParts);
-      if(manifest.etsyDraftListingId&&manifest.etsyDraftSetup?.status==='completed'){
-        return sendJson(res,200,{ok:true,...manifest.etsyDraftSetup,processing:false});
-      }
-      if(manifest.etsyDraftListingId&&inflightDraftSetups.has(body.artwork_id)){
-        return sendJson(res,202,{ok:true,processing:true,status:'running',
-          listingId:manifest.etsyDraftListingId,message:'Draft setup is already running.'});
-      }
-      // Repair/ensure the production crop queue independently of Etsy draft creation.
-      // A crop failure must never block creation of the Etsy draft.
-      let cropQueue = null;
-      let cropQueueWarning = '';
-      if (!manifest.fulfillmentRatiosReady || fulfillmentRatiosForOrientation(manifest.orientation, manifest.master).some(
-        ratio => !manifest.fulfillmentRatios?.[ratio]?.productionReady
-      )) {
-        try {
-          const created = await createCropJob({
-            artworkId: body.artwork_id,
-            masterKey: manifest.master.key,
-            orientation: manifest.orientation,
-            width: manifest.master.width,
-            height: manifest.master.height
-          });
-          manifest.cropWorkerJobId = created.job.id;
-          manifest.cropWorkerQueuedAt = manifest.cropWorkerQueuedAt || new Date().toISOString();
-          await persistDraftManifestFields(manifest,['cropWorkerJobId','cropWorkerQueuedAt']);
-          await writeFulfillmentStatus(body.artwork_id, {
-            status: created.job.status || 'pending',
-            jobId: created.job.id,
-            progress: created.job.progress || 0,
-            completedRatios: created.job.completedRatios || [],
-            message: created.job.message || 'Waiting for shared crop workstation'
-          }).catch(() => {});
-          cropQueue = {
-            jobId: created.job.id,
-            status: created.job.status || 'pending',
-            reused: Boolean(created.reused),
-            worker: cropWorkerStatus()
-          };
-        } catch (error) {
-          cropQueueWarning = error?.message || String(error);
-        }
-      }
-
-      const variantInventory = buildOwnSilviaInventory({
-        artworkId: body.artwork_id,
-        catalog: products,
-        readinessStateId: body.readiness_state_id,
-        defaultQuantity: 999,
-        orientation: listingLayoutForManifest(manifest)
-      });
-      body.price = variantInventory.minimumPrice;
-      body.quantity = 999;
-
-      const taxonomyPromise = getCachedTaxonomyProperties(session, body.taxonomy_id);
-      let mediaPrepStartedAt = 0;
-      // Start image sorting/download/optimization immediately and let it run while
-      // Etsy creates/configures the draft. This removes media-prep time from the
-      // critical path without performing concurrent Etsy writes.
-      let mediaPrepMs = 0;
-      let mediaPlanPromise = null;
-      // start media preparation only once the draft has been created
-      // and the configuration task is running, not during draft creation.
-      const startMediaPlan=()=>{
-        mediaPrepStartedAt=Date.now();
-        mediaPlanPromise=prepareMediaPlan({session,manifest}).then(
-          plan=>({ok:true,plan,ms:Date.now()-mediaPrepStartedAt}),
-          error=>({ok:false,error,ms:Date.now()-mediaPrepStartedAt})
-        );
-      };
-
-      let draft;
-      const draftStartedAt = Date.now();
-      if (manifest.etsyDraftListingId) {
-        draft = {
-          listing_id: Number(manifest.etsyDraftListingId),
-          state: 'draft',
-          title: body.title,
-          resumed: true
-        };
-      } else {
-        draft = await createDraftListing({
-          shopId: session.shop.shop_id,
-          keystring: session.keystring,
-          sharedSecret: session.sharedSecret,
-          accessToken: session.accessToken,
-          listing: body
-        });
-        manifest.etsyDraftListingId = draft.listing_id;
-        manifest.etsyDraftCreatedAt = new Date().toISOString();
-        await persistDraftManifestFields(manifest,['etsyDraftListingId','etsyDraftCreatedAt']);
-      }
-      const draftMs = Date.now() - draftStartedAt;
-
-      // Return the Etsy draft ID immediately. Inventory, photos, video and
-      // attributes continue in the server worker, not in the browser request.
-      // A retry reuses manifest.etsyDraftListingId instead of duplicating Etsy listings.
-      manifest.etsyDraftSetup={status:'running',listingId:draft.listing_id,
-        startedAt:new Date().toISOString(),message:'Applying variants, attributes and listing media'};
-      await persistDraftManifestFields(manifest,['etsyDraftSetup']);
-      const setupId=body.artwork_id;
-      inflightDraftSetups.add(setupId);
-      void (async()=>{
-        try{
-          startMediaPlan();
-      // Photos first, as soon as the draft exists: the preset photos, then the
-      // selected PSD mockups in the organizer's order, then the video (its place
-      // on Etsy does not depend on when it is added). Inventory and attributes
-      // follow. A photo or video problem is reported once those are done, so it
-      // never leaves the draft without its variants.
-      let mediaError = null, mediaPlan = null, media = null;
-      try {
-        const mediaPrepared = await mediaPlanPromise;
-        mediaPrepMs = mediaPrepared.ms;
-        if (!mediaPrepared.ok) throw mediaPrepared.error;
-        mediaPlan = mediaPrepared.plan;
-        media = await uploadPreparedMediaToEtsy({
-          session,
-          listingId: draft.listing_id,
-          manifest,
-          plan: mediaPlan
-        });
-      } catch (error) {
-        mediaError = error;
-      }
-      await reconcileCompletedMockupsForArtwork(setupId, { inSetup: true }).catch(
-        error => console.error('Selected PSD mockups could not be added during draft setup:', error)
-      );
-      if (mediaPlan) {
-        try {
-          const videoUploaded = await uploadPreparedVideoToEtsy({ session, listingId: draft.listing_id, manifest, plan: mediaPlan });
-          if (media) media.videoUploaded = videoUploaded;
-        } catch (error) {
-          mediaError ||= error;
-        }
-      }
-
-      // Taxonomy/media preparation above can stay parallel because it does not
-      // mutate Etsy. Etsy listing writes themselves must be serialized: Etsy
-      // returns HTTP 409 when two processes edit the same listing at once.
-      const inventoryStartedAt = Date.now();
-      await withEtsyListingRetry(() => updateListingInventory({
-        listingId: draft.listing_id,
-        inventory: variantInventory,
-        keystring: session.keystring,
-        sharedSecret: session.sharedSecret,
-        accessToken: session.accessToken
-      }));
-      const inventoryMs = Date.now() - inventoryStartedAt;
-
-      if (body.return_policy_id || body.production_partner_id || body.shop_section_id) {
-        await withEtsyListingRetry(() => updateListing({
-          shopId: session.shop.shop_id,
-          listingId: draft.listing_id,
-          listing: {
-            return_policy_id: body.return_policy_id || undefined,
-            production_partner_ids: body.production_partner_id
-              ? [Number(body.production_partner_id)]
-              : undefined,
-            shop_section_id: body.shop_section_id || undefined
-          },
-          keystring: session.keystring,
-          sharedSecret: session.sharedSecret,
-          accessToken: session.accessToken
-        }));
-      }
-
-      const properties = await taxonomyPromise;
-      const attributesStartedAt = Date.now();
-      const attributes = await applyAllListingAttributes({
-        session,
-        listingId: draft.listing_id,
-        body,
-        properties
-      });
-      const attributesMs = Date.now() - attributesStartedAt;
-
-      if (mediaError) throw mediaError;
-
-      manifest.etsyConfiguredAt = new Date().toISOString();
-      manifest.etsyConfiguration = {
-        listingId: draft.listing_id,
-        variants: variantInventory.products.length,
-        materials: listingDefaults.fixedAttributes?.Materials || [],
-        tags: body.tags || [],
-        media,
-        attributes: attributes.results
-      };
-      await persistDraftManifestFields(manifest,['etsyConfiguredAt','etsyConfiguration']);
-
-      const summary = {
-        ok: true,
-        listingId: draft.listing_id,
-        state: draft.state || 'draft',
-        title: draft.title || body.title,
-        resumed: Boolean(draft.resumed),
-        url: draft.url || null,
-        attributeWarnings: [
-          ...attributes.warnings,
-          ...(cropQueueWarning ? ['Production crop queue: ' + cropQueueWarning] : [])
-        ],
-        cropQueue,
-        media,
-        mockupSort: media.mockupSort,
-        presetMedia: {
-          imageCount:mediaPlan.installedPresetRoles.filter(role=>role!=='video').length,
-          videoCount:mediaPlan.installedPresetRoles.includes('video')?1:0,
-          missingRoles:mediaPlan.missingPresetRoles
-        },
-        timing: {
-          totalMs: Date.now() - startedAt,
-          draftMs,
-          inventoryMs,
-          attributesMs,
-          mediaPrepMs,
-          mediaUploadMs: media.uploadMs || 0
-        },
-        aiGenerator: {
-          applied: false,
-          reason: 'Etsy Open API does not currently expose the listing-editor AI generator checkbox.'
-        },
-        variants: {
-          count: variantInventory.products.length,
-          enabledCount: variantInventory.enabledCount,
-          disabledCount: variantInventory.disabledCount,
-          minimumPrice: variantInventory.minimumPrice,
-          maximumPrice: variantInventory.maximumPrice,
-          variation1: 'Size',
-          variation2: 'Product - Style',
-          pricing: variantInventory.pricing
-        }
-      };
-
-
-          manifest.etsyDraftSetup={...summary,status:'completed',
-            completedAt:new Date().toISOString(),r2Prefix:'artworks/'+setupId+'/'};
-          await persistDraftManifestFields(manifest,['etsyDraftSetup']);
-        }catch(error){
-          console.error('Etsy draft setup failed for '+setupId+':',error);
-          try{
-            await updateArtworkManifest(setupId,updated=>{
-              updated.etsyDraftSetup={status:'failed',listingId:draft.listing_id,
-                error:String(error?.message||error).slice(0,650),
-                failedAt:new Date().toISOString()};
-            });
-          }catch(saveError){console.error('Could not record draft setup failure:',saveError);}
-        }finally{
-          inflightDraftSetups.delete(setupId);
-          // Regular JPGs are independent of the draft's other setup steps:
-          // an inventory/video problem must not strand them in Cloudflare R2.
-          void queueRegularMockupEtsySync(setupId).catch(
-            error=>console.error('Regular mockup catch-up after draft setup failed:',error)
-          );
-          // Selected PSD mockups (and the organizer's order) are added even when
-          // another setup step (e.g. the video) failed: the draft exists.
-          void reconcileCompletedMockupsForArtwork(setupId).catch(
-            error=>console.error('PSD catch-up after Etsy draft setup failed:',error)
-          );
-        }
-      })();
-      return sendJson(res,201,{ok:true,processing:true,
-        status:'running',listingId:draft.listing_id,state:'draft',
-        title:body.title,resumed:Boolean(draft.resumed),
-        r2Prefix:'artworks/'+setupId+'/',
-        message:'Etsy draft created. Media, inventory and attributes are configuring in the background.'});
-    } catch (error) {
-      return sendJson(res, 500, {
-        ok:false,
-        error:error?.message || String(error),
-        timing: { totalMs: Date.now() - startedAt }
-      });
-    }
+    let body;
+    try { body = await readJsonBody(req); }
+    catch { return sendJson(res, 400, { ok: false, error: 'The request could not be read.' }); }
+    const reply = await createEtsyDraft(body);
+    return sendJson(res, reply.status, reply.payload);
   }
 
   if (req.method === 'GET' && url.pathname === '/etsy/status') {
