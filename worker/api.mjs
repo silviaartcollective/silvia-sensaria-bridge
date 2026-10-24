@@ -1,5 +1,5 @@
 import { WORKER_ID } from './config.mjs';
-export const WORKER_VERSION = '4.7.5';
+export const WORKER_VERSION = '4.7.6';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -151,9 +151,10 @@ export function apiFor(app) {
       return request(app,'/api/mockups/worker/'+encodeURIComponent(jobId)+
        '/templates/'+encodeURIComponent(templateId)+'/full',{method:'POST',body:{outputKey,action},attempts:2});
     },
-    mockupFail(jobId,owner,templateId,error,needsMapping=false) {
+    // retry: a temporary problem; the shop queues the PSD again (up to 3 tries).
+    mockupFail(jobId,owner,templateId,error,needsMapping=false,{retry=false}={}) {
       return request(app,'/api/mockups/jobs/'+encodeURIComponent(jobId)+'/fail',{
-       method:'POST',body:{owner,templateId,error:String(error?.message||error).slice(0,450),needsMapping}
+       method:'POST',body:{owner,templateId,error:String(error?.message||error).slice(0,450),needsMapping,retry}
       });
     },
     mockupPause(jobId,owner) {

@@ -129,6 +129,9 @@ function notGenerated(){
   reason:t.status==='needs_mapping'?'Choose its artwork layer: it has more than one possible one.':
    t.status==='failed'?(t.error||'Failed on the PC.')+' Fix the PSD or use Retry failed.':
    t.status==='processing'?'Rendering on the PC now'+(t.progress?' · '+t.progress:'')+'. A large PSD takes a while the first time.':
+   job.paused?'The batch is paused. Click Resume to continue.':
+   /^Trying again/.test(t.progress||'')?t.progress:
+   lastWorker&&lastWorker.online===false?'Waiting for the PC worker: it is offline. Start it on the PC.':
    'Waiting for the PC worker.'}));
  const inBatch=new Set(job.templates.map(t=>t.id));
  const art=job.artworkOrientation&&job.artworkOrientation!=='unclassified'?job.artworkOrientation:detectedArtworkOrientation;
@@ -835,7 +838,7 @@ async function showJob(id,{quiet=false}={}){
  if(!currentBatch()){
   message('Viewing saved batch for '+job.filename+'. These JPGs cannot attach to the current artwork.');
   $('mg-generate').disabled=preparing;
-  $('mg-pause').disabled=job.status==='completed'||job.paused;
+  pauseButton();
   if(!quiet)await mappingPrompt();
   return job;
  }
@@ -849,7 +852,7 @@ async function showJob(id,{quiet=false}={}){
     (stalled?' · Inspection is taking too long. Check the PC worker log if no error appears.':''),stalled);
  }
  else if(job.status==='completed')message('All '+count+' mockups generated on the PC. Select your Etsy images.');
- else if(job.paused)message('Paused after current PSD · '+count+'/'+job.templates.length+' ready');
+ else if(job.paused)message('Paused · '+count+'/'+job.templates.length+' ready. Click Resume to continue.');
  else if(failed.length){
   // Show why, not just how many, so the reason is visible without expanding the list.
   const first=failed[0];
@@ -864,7 +867,7 @@ async function showJob(id,{quiet=false}={}){
    :'Waiting for shared PC worker')+' · '+count+'/'+job.templates.length+' ready');
  }
  $('mg-generate').disabled=preparing;
- $('mg-pause').disabled=!job||job.status==='completed'||job.paused;
+ pauseButton();
  if(!quiet||failed.some(t=>t.status==='needs_mapping'))await mappingPrompt();
  // Keep finished JPGs visible for review; only the Apply button attaches them.
  return job;
@@ -949,6 +952,12 @@ async function createJobNow({artworkId='',automatic=false}={}){
   job=freshJob;activeJobId=job.id;activeMasterSignature=signature;
   await showJob(job.id);await loadJobs();await workerStatus();
  }finally{preparing=false;$('mg-generate').disabled=false}
+}
+// One button: "Pause after current PSD" while running, "Resume" when paused.
+function pauseButton(){
+ const button=$('mg-pause');
+ button.textContent=job?.paused?'Resume':'Pause after current PSD';
+ button.disabled=!job||job.status==='completed';
 }
 async function resume(){
  if(!job)throw Error('Select a saved batch.');
@@ -1082,7 +1091,7 @@ document.addEventListener('keydown',event=>{
 });
 $('mg-org-save').addEventListener('click',()=>act(saveOrganizer));
 for(const [id,method] of [
- ['mg-generate',()=>createJob()],['mg-refresh-jobs',loadJobs],['mg-pause',pause],
+ ['mg-generate',()=>createJob()],['mg-refresh-jobs',loadJobs],['mg-pause',()=>job?.paused?resume():pause()],
  ['mg-retry',retry],['mg-regenerate',regenerate],['mg-save-map',saveMapping]
 ])$(id).addEventListener('click',()=>act(method));
 // Template readiness controls auto-queue; a failed worker-status request must not

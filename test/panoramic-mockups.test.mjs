@@ -64,7 +64,7 @@ test('the PC worker tells a panoramic template from its artwork layer, with the 
  assert.equal(local.orientationFromShape({width:1800,height:1000}),'landscape');
  assert.equal(local.orientationFromShape({width:1000,height:3000}),'portrait');
  assert.equal(local.orientationFromShape({width:1000,height:1020}),'square');
- assert.match(read('worker/api.mjs'),/WORKER_VERSION = '4\.7\.5'/);
+ assert.match(read('worker/api.mjs'),/WORKER_VERSION = '4\.7\.6'/);
 });
 
 test('the Product Creator detects panoramic artwork and offers the Panoramic orientation',()=>{
