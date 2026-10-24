@@ -3,6 +3,7 @@ export const ADMIN_LINKS = Object.freeze([
   { href:'/', label:'Dashboard' },
   { href:'/readiness', label:'System Readiness' },
   { href:'/product-creator', label:'Product Creator' },
+  { href:'/daily-listings', label:'Daily Listings' },
   { href:'/listing-reposter', label:'Listing Reposter' },
   { href:'/listings', label:'Listings' },
   { href:'/shipping-profile', label:'Shipping Profile' },
