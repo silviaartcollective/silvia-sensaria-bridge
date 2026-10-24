@@ -140,7 +140,9 @@ function seoSchema(sectionNames) {
 function openAiError(status, data) {
   const error = data?.error || {};
   const text = String(error.message || '').slice(0, 300);
-  if (status === 401) return 'The OpenAI API key in Render was not accepted. Check OPENAI_API_KEY.';
+  // OpenAI's own words say which (wrong key, deleted key, missing permission); it masks the key.
+  if (status === 401 || status === 403) return 'The OpenAI API key in Render was not accepted. Check OPENAI_API_KEY.' +
+    (text ? ' OpenAI says: ' + text : '');
   if (error.code === 'insufficient_quota') return 'Your OpenAI account has no API credit left. Add credit at platform.openai.com → Billing.';
   if (status === 429) return 'ChatGPT is busy or the account limit was reached; try again in a minute. (' + text + ')';
   if (error.code === 'model_not_found' || /model/i.test(error.param || ''))
