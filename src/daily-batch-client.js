@@ -114,8 +114,7 @@ function show(){
  const rows=el('bt-rows');rows.replaceChildren();
  for(const item of items){
   const row=make('div','row item');
-  let picture;
-  if(item.previewUrl){picture=make('img');picture.src=item.previewUrl;picture.alt='';picture.loading='lazy';}else picture=make('div','ph');
+  const picture=previewOf(item);
   const text=make('div');
   text.append(make('div','t',item.seo?.title||item.filename));
   text.append(make('div','muted',[item.filename,item.artworkId,NAMES[item.orientation]].filter(Boolean).join(' · ')));
@@ -169,6 +168,19 @@ function put(url,file,type,onProgress,upload){
   xhr.send(file);
  });
 }
+// Each artwork's picture is made once and kept, so the list refreshing every
+// few seconds never loads it again (the server's links change every time).
+// An artwork uploaded from this page shows the preview made here at once.
+const pictures=new Map(),localPreviews=new Map(); // stageId -> <img>, object URL
+function previewOf(item){
+ const known=pictures.get(item.stageId);
+ if(known)return known;
+ const src=localPreviews.get(item.stageId)||item.previewUrl;
+ if(!src)return make('div','ph');
+ const img=make('img');img.src=src;img.alt='';img.decoding='async';
+ pictures.set(item.stageId,img);
+ return img;
+}
 async function preview(file){
  try{
   const bitmap=await createImageBitmap(file);
@@ -210,6 +222,7 @@ async function uploadOne(upload){
    const target=await request('/api/batch/preview-url',{});
    await put(target.uploadUrl,small.blob,'image/jpeg',()=>{});
    previewKey=target.key;
+   localPreviews.set(staged.stageId,URL.createObjectURL(small.blob));
   }
   cancelled();
   const data=await request('/api/batch/add',{stageId:staged.stageId,filename:file.name,contentType:staged.contentType,size:file.size,previewKey,preset:preset.name,
