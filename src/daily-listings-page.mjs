@@ -1,3 +1,4 @@
+import {PHOTO_ORGANIZER_CSS,renderPhotoOrganizer} from './mockup-generator-ui.mjs';
 // Daily Listings: new listings in a batch, mockup sets, Renew listings and the
 // ChatGPT SEO settings (daily-listings-client.js, daily-batch-client.js).
 export function renderDailyListingsPage() {
@@ -34,25 +35,8 @@ textarea{min-height:300px;resize:vertical;font-size:13px}label{font-size:12px;fo
 .tpl.unused{opacity:.45}.group-title{font-weight:650;margin:14px 0 2px}.group-title .muted{font-weight:400}
 #mp-tabs button.primary{background:var(--green);color:#fff}
 .group-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.group-title button{padding:5px 10px;font-size:12px}
-.po-modal{position:fixed;inset:0;z-index:1000;background:rgba(34,34,34,.55);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:4vh 16px}
-.po-modal[hidden]{display:none}body.po-open{overflow:hidden}
-.po-dialog{width:min(920px,100%);background:#f8f7f4;border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.3);padding:24px 28px 20px}
-.po-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.po-top h2{font-size:21px;margin:0 0 4px}.po-top p{margin:0;font-size:13px;color:var(--muted)}
-.po-close{border:0;background:transparent;font-size:26px;width:40px;height:40px;border-radius:50%;padding:0}
-.po-list{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-top:18px;user-select:none}
-.po-tile{position:relative;aspect-ratio:1;border:1px solid #d6d4cf;border-radius:12px;overflow:hidden;background:#fff;cursor:grab;outline:none}
-.po-tile:focus-visible{box-shadow:0 0 0 3px #222}.po-tile.dragging{opacity:.35}.po-tile.target{box-shadow:0 0 0 3px #546f59}
-.po-tile img,.po-tile video{display:block;width:100%;height:100%;object-fit:contain;background:#ebe8e1;pointer-events:none}
-.po-tile .blank{display:flex;align-items:center;justify-content:center;height:100%;padding:8px;text-align:center;font-size:11px;color:var(--muted);background:#f0efeb}
-.po-badge{position:absolute;top:7px;right:7px;background:#fff;font-size:11px;font-weight:600;padding:4px 8px;border-radius:999px;box-shadow:0 1px 4px rgba(0,0,0,.28)}
-.po-num{position:absolute;top:7px;left:7px;background:rgba(255,255,255,.92);font-size:11px;font-weight:600;padding:3px 7px;border-radius:999px}
-.po-caption{position:absolute;left:0;right:0;bottom:0;padding:14px 7px 5px;font-size:11px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.62));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.po-tile.video{cursor:default;background:#3a3631}.po-tile.over{opacity:.45}
-.po-limit{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:12px;font-weight:600;color:#8a4b2a}
-.po-limit::before,.po-limit::after{content:'';flex:1;border-top:2px dashed #d9a07f}
-.po-foot{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid #e1ded7;flex-wrap:wrap}.po-foot .muted{flex:1}
-@media(max-width:760px){.po-list{grid-template-columns:repeat(3,minmax(0,1fr))}.po-dialog{padding:18px 14px}}
 @media(max-width:800px){.shell{grid-template-columns:1fr}aside{display:none}main{padding:22px 16px}h1{font-size:30px}.row{grid-template-columns:1fr}.row.item{grid-template-columns:56px minmax(0,1fr)}.row.item .side{grid-column:1/-1;justify-items:start}}
+${PHOTO_ORGANIZER_CSS}
 </style></head><body><div class="shell"><aside><nav><a class="nav active" href="/daily-listings">Daily Listings</a></nav></aside>
 <main><h1>Daily Listings</h1><p class="sub">Post a batch of new artworks and renew your oldest unsold listings, with SEO written by ChatGPT.</p>
 
@@ -92,11 +76,7 @@ textarea{min-height:300px;resize:vertical;font-size:13px}label{font-size:12px;fo
 <div class="flex"><button type="button" id="ai-default">Use the built-in instructions</button><button class="primary" type="button" id="ai-save">Save ChatGPT settings</button></div>
 <div id="ai-status" class="notice hidden" role="status"></div>
 </section>
-<div class="po-modal" id="po-modal" hidden><div class="po-dialog" role="dialog" aria-modal="true" aria-labelledby="po-title">
-<div class="po-top"><div><h2 id="po-title">Photo order</h2><p>The order shoppers see on Etsy for every new listing with this preset and shape. The first photo is the Featured photo.</p></div><button class="po-close" type="button" id="po-close" aria-label="Close">&times;</button></div>
-<div id="po-list" class="po-list" role="list"></div>
-<p class="muted" style="margin:12px 0 0">Drag a photo to move it, or select it and use the arrow keys. Photos below the line are not added (Etsy shows 20); the preset video stays second, where Etsy shows it.</p>
-<div class="po-foot"><span class="muted" id="po-status"></span><button type="button" id="po-usual">Use the usual order</button><button class="primary" type="button" id="po-save">Save order</button></div>
-</div></div>
-</main></div><script src="/daily-listings-client.js" defer></script><script src="/daily-batch-client.js" defer></script></body></html>`;
+</main></div>
+${renderPhotoOrganizer({back:'Cancel'})}
+<script src="/assets/photo-organizer-client.js" defer></script><script src="/daily-listings-client.js" defer></script><script src="/daily-batch-client.js" defer></script></body></html>`;
 }

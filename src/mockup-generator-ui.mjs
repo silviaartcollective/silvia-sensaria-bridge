@@ -89,48 +89,7 @@ return `
 .mg-not-generated-item span{color:#6b4a32}
 .mg-not-generated-item .btn{justify-self:start;font-size:12px;padding:6px 10px;margin-top:4px}
 .mg-not-generated-note{color:#6b4a32}
-.mg-org-modal{position:fixed;inset:0;z-index:1000;contain:layout style;background:rgba(34,34,34,.55);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:4vh 16px}
-.mg-org-modal[hidden]{display:none}
-body.mg-org-open{overflow:hidden}
-body.mg-org-dragging,body.mg-org-dragging .mg-org-tile{cursor:grabbing}
-body.mg-org-dragging .mg-org-caption{opacity:0;transition:none}
-/* Laid out like Etsy's "Photo and video" listing editor. */
-.mg-org-dialog{width:min(920px,100%);background:#f8f7f4;color:#222;border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.3);padding:26px 30px 22px}
-.mg-org-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
-.mg-org-top h2{font-size:21px;font-weight:600;margin:0 0 4px}
-.mg-org-top p{margin:0;font-size:13px;color:#595959;line-height:1.45}
-.mg-org-close{flex:none;width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:#222;font-size:26px;line-height:1;cursor:pointer}
-.mg-org-close:hover{background:rgba(0,0,0,.06)}
-.mg-org-head{display:grid;gap:4px;margin:22px 0 12px}
-.mg-org-head strong{font-size:15px}
-.mg-org-head span{font-size:13px;color:#595959}
-.mg-org-list{position:relative;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;user-select:none;-webkit-user-select:none}
-.mg-org-tile{position:relative;aspect-ratio:1/1;border:1px solid #d6d4cf;border-radius:12px;overflow:hidden;background:#fff;cursor:grab;touch-action:none;outline:none;will-change:transform}
-.mg-org-tile:focus-visible{box-shadow:0 0 0 3px #222}
-.mg-org-tile img,.mg-org-tile video{display:block;width:100%;height:100%;object-fit:cover;pointer-events:none}
-.mg-org-blank{display:flex;align-items:center;justify-content:center;height:100%;padding:8px;text-align:center;font-size:11px;color:#74776f;background:#f0efeb}
-.mg-org-badge{position:absolute;top:7px;right:7px;background:#fff;color:#222;font-size:11px;font-weight:600;line-height:1;padding:5px 8px;border-radius:999px;box-shadow:0 1px 4px rgba(0,0,0,.28)}
-/* Kept in the layout so moving the Featured badge never re-lays out the grid. */
-.mg-org-badge[hidden]{display:block;visibility:hidden}
-.mg-org-caption{position:absolute;left:0;right:0;bottom:0;padding:18px 8px 6px;font-size:11px;line-height:1.25;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.62));opacity:0;transition:opacity .15s;overflow-wrap:anywhere}
-.mg-org-tile:hover .mg-org-caption,.mg-org-tile:focus-visible .mg-org-caption{opacity:1}
-.mg-org-video{cursor:default;background:#3a3631}
-.mg-org-play{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.35)}
-.mg-org-play::after{content:'';position:absolute;left:13px;top:10px;border-style:solid;border-width:7px 0 7px 11px;border-color:transparent transparent transparent #222}
-.mg-org-list.sorting .mg-org-tile{transition:transform .12s cubic-bezier(.2,0,0,1)}
-.mg-org-list.sorting .mg-org-tile.dragging{z-index:5;transition:none;box-shadow:0 10px 28px rgba(0,0,0,.3)}
-.mg-org-tile.over{opacity:.4}
-.mg-org-limit{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:12px;font-weight:600;color:#8a4b2a}
-.mg-org-limit::before,.mg-org-limit::after{content:'';flex:1;border-top:2px dashed #d9a07f}
-.mg-org-slot{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;border:1px dashed #b9b6ae;border-radius:12px;padding:8px;text-align:center;font-size:12px;color:#595959}
-.mg-org-help{margin:14px 0 0;font-size:12px;color:#595959;line-height:1.45}
-.mg-org-foot{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid #e1ded7}
-.mg-org-status{flex:1;font-size:12px;color:#595959;line-height:1.45}
-.mg-org-btn{border:2px solid #222;border-radius:999px;background:#222;color:#fff;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer}
-.mg-org-btn.secondary{background:transparent;color:#222}
-.mg-org-btn:disabled{opacity:.5;cursor:progress}
-.mg-org-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-@media(max-width:760px){.mg-org-dialog{padding:20px 16px}.mg-org-list{grid-template-columns:repeat(3,minmax(0,1fr))}.mg-org-foot{flex-wrap:wrap}.mg-org-status{flex-basis:100%}}
+${PHOTO_ORGANIZER_CSS}
 .mg-preview #mg-apply-selected{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0;z-index:5;box-shadow:0 -10px 18px #fffdfa}
 /* Pinned over the mockups: solid even while disabled. */
 .mg-preview #mg-apply-selected:disabled{opacity:1;background:#a3a69f}
@@ -175,11 +134,62 @@ return `
   <div id="mg-selection-status" class="uploadmeta">Pick up to 20 mockups. Etsy shows 20 photos: with the preset photos, the organizer shows which ones make it (photos below its line are not added). The master artwork is never an Etsy photo. Older batches remain in troubleshooting.</div>
   <button class="btn" type="button" id="mg-apply-selected" disabled>Apply selected to listing</button>
  </aside>
- <div class="mg-org-modal" id="mg-org-modal" hidden>
+${renderPhotoOrganizer()}`;
+}
+
+// The Etsy photo organizer (photo-organizer-client.js): the Product Creator's
+// "Apply selected to listing" and Daily Listings' "Arrange photos" use it.
+export const PHOTO_ORGANIZER_CSS=`.mg-org-modal{position:fixed;inset:0;z-index:1000;contain:layout style;background:rgba(34,34,34,.55);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:4vh 16px}
+/* The same on every page: the page's own text and button styles stay out. */
+.mg-org-modal{font:16px/normal Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+:where(.mg-org-modal) button{all:revert}
+.mg-org-modal[hidden]{display:none}
+body.mg-org-open{overflow:hidden}
+body.mg-org-dragging,body.mg-org-dragging .mg-org-tile{cursor:grabbing}
+body.mg-org-dragging .mg-org-caption{opacity:0;transition:none}
+/* Laid out like Etsy's "Photo and video" listing editor. */
+.mg-org-dialog{width:min(920px,100%);background:#f8f7f4;color:#222;border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.3);padding:26px 30px 22px}
+.mg-org-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.mg-org-top h2{font-size:21px;font-weight:600;margin:0 0 4px}
+.mg-org-top p{margin:0;font-size:13px;color:#595959;line-height:1.45}
+.mg-org-close{flex:none;width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:#222;font-size:26px;line-height:1;cursor:pointer}
+.mg-org-close:hover{background:rgba(0,0,0,.06)}
+.mg-org-head{display:grid;gap:4px;margin:22px 0 12px}
+.mg-org-head strong{font-size:15px}
+.mg-org-head span{font-size:13px;color:#595959}
+.mg-org-list{position:relative;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;user-select:none;-webkit-user-select:none}
+.mg-org-tile{position:relative;aspect-ratio:1/1;border:1px solid #d6d4cf;border-radius:12px;overflow:hidden;background:#fff;cursor:grab;touch-action:none;outline:none;will-change:transform}
+.mg-org-tile:focus-visible{box-shadow:0 0 0 3px #222}
+.mg-org-tile img,.mg-org-tile video{display:block;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.mg-org-blank{display:flex;align-items:center;justify-content:center;height:100%;padding:8px;text-align:center;font-size:11px;color:#74776f;background:#f0efeb}
+.mg-org-badge{position:absolute;top:7px;right:7px;background:#fff;color:#222;font-size:11px;font-weight:600;line-height:1;padding:5px 8px;border-radius:999px;box-shadow:0 1px 4px rgba(0,0,0,.28)}
+/* Kept in the layout so moving the Featured badge never re-lays out the grid. */
+.mg-org-badge[hidden]{display:block;visibility:hidden}
+.mg-org-caption{position:absolute;left:0;right:0;bottom:0;padding:18px 8px 6px;font-size:11px;line-height:1.25;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.62));opacity:0;transition:opacity .15s;overflow-wrap:anywhere}
+.mg-org-tile:hover .mg-org-caption,.mg-org-tile:focus-visible .mg-org-caption{opacity:1}
+.mg-org-video{cursor:default;background:#3a3631}
+.mg-org-play{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.35)}
+.mg-org-play::after{content:'';position:absolute;left:13px;top:10px;border-style:solid;border-width:7px 0 7px 11px;border-color:transparent transparent transparent #222}
+.mg-org-list.sorting .mg-org-tile{transition:transform .12s cubic-bezier(.2,0,0,1)}
+.mg-org-list.sorting .mg-org-tile.dragging{z-index:5;transition:none;box-shadow:0 10px 28px rgba(0,0,0,.3)}
+.mg-org-tile.over{opacity:.4}
+.mg-org-limit{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:12px;font-weight:600;color:#8a4b2a}
+.mg-org-limit::before,.mg-org-limit::after{content:'';flex:1;border-top:2px dashed #d9a07f}
+.mg-org-slot{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;border:1px dashed #b9b6ae;border-radius:12px;padding:8px;text-align:center;font-size:12px;color:#595959}
+.mg-org-help{margin:14px 0 0;font-size:12px;color:#595959;line-height:1.45}
+.mg-org-foot{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid #e1ded7}
+.mg-org-status{flex:1;font-size:12px;color:#595959;line-height:1.45}
+.mg-org-btn{border:2px solid #222;border-radius:999px;background:#222;color:#fff;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer}
+.mg-org-btn.secondary{background:transparent;color:#222}
+.mg-org-btn:disabled{opacity:.5;cursor:progress}
+.mg-org-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media(max-width:760px){.mg-org-dialog{padding:20px 16px}.mg-org-list{grid-template-columns:repeat(3,minmax(0,1fr))}.mg-org-foot{flex-wrap:wrap}.mg-org-status{flex-basis:100%}}`;
+export function renderPhotoOrganizer({back='Back to selection'}={}){
+return ` <div class="mg-org-modal" id="mg-org-modal" hidden>
   <div class="mg-org-dialog" role="dialog" aria-modal="true" aria-labelledby="mg-org-title">
    <div class="mg-org-top">
     <div><h2 id="mg-org-title">Photo and video</h2><p>The order shoppers will see on Etsy. The first photo is the listing's Featured photo.</p></div>
-    <button class="mg-org-close" type="button" id="mg-org-close" aria-label="Back to selection">&times;</button>
+    <button class="mg-org-close" type="button" id="mg-org-close" aria-label="${back}">&times;</button>
    </div>
    <div class="mg-org-head"><strong id="mg-org-count">Etsy photos</strong><span>Drag to reorder.</span></div>
    <div id="mg-org-list" class="mg-org-list" role="list" aria-describedby="mg-org-help"></div>
@@ -187,11 +197,10 @@ return `
    <div id="mg-org-live" class="mg-org-sr" aria-live="assertive"></div>
    <div class="mg-org-foot">
     <div id="mg-org-status" class="mg-org-status"></div>
-    <button class="mg-org-btn secondary" type="button" id="mg-org-back">Back to selection</button>
+    <button class="mg-org-btn secondary" type="button" id="mg-org-back">${back}</button>
     <button class="mg-org-btn" type="button" id="mg-org-save">Save order</button>
    </div>
   </div>
  </div>
 `;
 }
-

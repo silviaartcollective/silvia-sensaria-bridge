@@ -71,7 +71,7 @@ test('Apply selected opens the organizer; saving re-ranks Etsy photos or keeps t
 });
 
 test('the organizer looks like Etsy\'s photo editor: rows of six, drag to reorder, the preset video fixed second',()=>{
- const client=readFileSync(new URL('../src/mockup-generator-client.js',import.meta.url),'utf8');
+ const client=readFileSync(new URL('../src/photo-organizer-client.js',import.meta.url),'utf8');
  const ui=readFileSync(new URL('../src/mockup-generator-ui.mjs',import.meta.url),'utf8');
  const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
  assert.match(ui,/id="mg-org-modal" hidden/);
@@ -89,7 +89,7 @@ test('the organizer looks like Etsy\'s photo editor: rows of six, drag to reorde
 });
 
 test('a photo lifts the moment it is pressed and lands the moment it is let go; moving touches layers only',()=>{
- const client=readFileSync(new URL('../src/mockup-generator-client.js',import.meta.url),'utf8');
+ const client=readFileSync(new URL('../src/photo-organizer-client.js',import.meta.url),'utf8');
  const ui=readFileSync(new URL('../src/mockup-generator-ui.mjs',import.meta.url),'utf8');
  const press=client.slice(client.indexOf('function pressTile('),client.indexOf('function dragMove('));
  // Picked up on press: no movement threshold, no copy of the photo to load.
@@ -106,4 +106,23 @@ test('a photo lifts the moment it is pressed and lands the moment it is let go; 
  assert.match(ui,/\.mg-org-tile\{[^}]*will-change:transform\}/);
  assert.match(ui,/\.mg-org-list\.sorting \.mg-org-tile\{transition:transform \.12s/);
  assert.doesNotMatch(ui,/body\.mg-org-dragging \*/);
+});
+
+test('Daily Listings arranges a preset\'s photos in the Product Creator\'s organizer, opened at once',()=>{
+ const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
+ const creator=read('src/mockup-generator-client.js'),batch=read('src/daily-batch-client.js'),server=read('src/server.mjs');
+ const ui=read('src/mockup-generator-ui.mjs'),daily=read('src/daily-listings-page.mjs'),page=read('src/product-creator.mjs');
+ // One organizer: both pages load it and hold the same dialog and styles.
+ assert.match(page,/<script src="\/assets\/photo-organizer-client\.js" defer><\/script>\n<script type="module" src="\/assets\/mockup-generator-client\.js">/);
+ assert.match(daily,/\$\{PHOTO_ORGANIZER_CSS\}/);
+ assert.match(daily,/\$\{renderPhotoOrganizer\(\{back:'Cancel'\}\)\}\n<script src="\/assets\/photo-organizer-client\.js" defer>/);
+ assert.match(ui,/\$\{PHOTO_ORGANIZER_CSS\}/);
+ assert.match(ui,/\$\{renderPhotoOrganizer\(\)\}/);
+ assert.match(creator,/photoOrganizer\.open\(\{tiles:data\.tiles,order:data\.order/);
+ assert.match(batch,/photoOrganizer\.open\(\{tiles:preset\.tiles,order:plan\.order/);
+ assert.doesNotMatch(batch,/po-modal|draggable|dragstart/);
+ // No request when Arrange photos is clicked: the preset list brings the tiles and orders.
+ assert.doesNotMatch(batch.slice(batch.indexOf('async function openArrange('),batch.indexOf('async function saveArranged(')),/request\(/);
+ assert.match(server,/tiles:presetPhotoTiles\(item,presetImages\)/);
+ assert.match(server,/return \[layout,\{order:plan\.order,saved:Boolean\(plan\.saved\)\}\];/);
 });

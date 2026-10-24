@@ -1297,6 +1297,7 @@ form.addEventListener('submit',async(e)=>{
 });
 </script>
 <script>${SEO_PASTE_SCRIPT}</script>
+<script src="/assets/photo-organizer-client.js" defer></script>
 <script type="module" src="/assets/mockup-generator-client.js"></script>
 </body></html>`;
 }
