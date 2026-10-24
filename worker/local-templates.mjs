@@ -23,10 +23,12 @@ export async function scanMockupFolder(folder){
       // Hidden files and Photoshop's temporary "~" copies are skipped.
       if(entry.name.startsWith('.')||entry.name.startsWith('~'))continue;
       const full=path.join(dir,entry.name);
-      if(entry.isDirectory()){if(depth<MAX_DEPTH)await walk(full,depth+1);continue}
-      if(!entry.isFile()||!PSD.test(entry.name))continue;
-      const stat=await fs.stat(full).catch(()=>null);
-      if(!stat||stat.size<100)continue;
+      // OneDrive keeps files and folders as cloud placeholders, which Windows
+      // lists as links: what they really are comes from stat.
+      const linked=!entry.isDirectory()&&!entry.isFile();
+      const stat=linked||PSD.test(entry.name)?await fs.stat(full).catch(()=>null):null;
+      if(entry.isDirectory()||(linked&&stat?.isDirectory())){if(depth<MAX_DEPTH)await walk(full,depth+1);continue}
+      if(!PSD.test(entry.name)||!stat?.isFile()||stat.size<100)continue;
       files.push({path:path.relative(root,full).split(path.sep).join('/'),size:stat.size,mtimeMs:Math.round(stat.mtimeMs)});
     }
   }

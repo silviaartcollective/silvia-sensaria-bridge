@@ -95,4 +95,6 @@ From **v4.6.0** the worker updates itself. Every heartbeat reply from the Silvia
 
 **Template previews (v4.7.7):** once a PSD is prepared, the worker sends the shop a small (480 px) picture of its scene, once per version of the file, so Daily Listings can show what each mockup and preset looks like.
 
-The dashboards should show **Crop + Mockup Worker v4.7.7**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+**OneDrive folders (v4.7.8):** a mockup folder kept in OneDrive is read too: its files and folders are cloud placeholders, which Windows lists as links, so the worker checks what each one really is.
+
+The dashboards should show **Crop + Mockup Worker v4.7.8**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
