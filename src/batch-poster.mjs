@@ -1,6 +1,6 @@
 // Batch listings: up to 20 artworks become Etsy drafts in one go. For each one
 // (its master already uploaded to R2 staging by the page): it gets its artwork
-// ID, the saved mockup set for its orientation renders on the PC while ChatGPT
+// ID, the chosen mockup preset's PSDs for its orientation render on the PC while ChatGPT
 // writes the SEO, and the draft is created the way the Product Creator does it
 // (preset photos, mockups, variants, the orientation's template). The drafts
 // then wait for one "Publish all". The job is kept in R2, so the page can be
@@ -54,7 +54,7 @@ export function addToBatch(deps, artwork) {
   adding = added;
   return added;
 }
-async function addNow(deps, { stageId, filename, contentType, size, previewKey = '' }) {
+async function addNow(deps, { stageId, filename, contentType, size, previewKey = '', preset = '' }) {
   if (!/^[0-9a-f-]{36}$/i.test(String(stageId || ''))) throw Error('Upload the artwork first.');
   let batch = await current(deps);
   if (!batch || batch.closed) {
@@ -64,6 +64,7 @@ async function addNow(deps, { stageId, filename, contentType, size, previewKey =
   if (batch.items.some(item => item.stageId === stageId)) return batch;
   batch.items.push({ n: batch.items.length + 1, filename: String(filename || 'artwork').slice(0, 120), stageId,
     contentType: String(contentType || ''), size: Number(size) || 0, previewKey: String(previewKey || ''),
+    preset: String(preset || '').slice(0, 120),
     status: 'waiting', step: 'Waiting', artworkId: '', orientation: '', mockupJobId: '', mockups: null,
     seo: null, mockupsAttached: false, listingId: null, publish: true, error: '' });
   await save(deps);
@@ -118,7 +119,7 @@ async function processItem(deps, item, mine) {
     }
     if (!item.mockupJobId) {
       await step('Starting the mockups');
-      const started = await deps.startMockups(item.artworkId, item.orientation);
+      const started = await deps.startMockups(item.artworkId, item.orientation, item.preset);
       item.mockupJobId = started.jobId;
       item.mockups = { total: started.total, done: 0, failed: 0 };
       await save(deps);
@@ -248,3 +249,28 @@ export function batchDraftBody({ artworkId, layout, seo, preset = {}, template =
     should_auto_renew: String(pick('should_auto_renew')) !== 'false'
   };
 }
+
+// Mockup presets are the folders named "Preset …" in the PC mockup folder, at
+// any depth ("Preset 1/Vertical/mockup 1.psd" or "Vertical/Preset 1/…"): a
+// preset is every PSD inside its folders, in name order. PSDs outside such a
+// folder belong to no preset.
+const PRESET_FOLDER = /\bpreset/i;
+const naturalOrder = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+export const presetKey = name => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+export function mockupPresets(templates) {
+  const presets = new Map();
+  for (const template of templates) {
+    if (template.status && template.status !== 'ready') continue;
+    const folder = String(template.localPath || '').split('/').slice(0, -1).find(name => PRESET_FOLDER.test(name));
+    if (!folder) continue;
+    const key = presetKey(folder);
+    if (!presets.has(key)) presets.set(key, { name: folder.trim().replace(/\s+/g, ' '), templates: [] });
+    presets.get(key).templates.push(template);
+  }
+  return [...presets.values()].sort((a, b) => naturalOrder(a.name, b.name))
+    .map(preset => ({ ...preset, templates: preset.templates.sort((a, b) => naturalOrder(a.localPath, b.localPath)) }));
+}
+// A template suits an artwork like in the Product Creator: the same
+// orientation, or a square artwork in a template marked square-compatible.
+export const templateSuits = (template, layout) => String(template?.orientation || '') === layout ||
+  (layout === 'square' && template?.squareCompatible === true);

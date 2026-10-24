@@ -1,4 +1,4 @@
-// Daily Listings → New listings and Mockup sets. The page uploads each master
+// Daily Listings → New listings and Mockup presets. The page uploads each master
 // to R2 (with a small preview for ChatGPT) and hands it to the batch; the
 // server does the rest (batch-poster.mjs), so the page only shows the batch.
 (()=>{'use strict';
@@ -16,52 +16,60 @@ const NAMES={portrait:'Vertical',landscape:'Horizontal',square:'Square',panorami
 // The same rule as the server: 1.85:1 or wider is panoramic.
 const layoutOf=(width,height)=>width===height?'square':height>width?'portrait':width/height>=1.85?'panoramic':'landscape';
 
-// ---------------------------------------------------------------- mockup sets
-let sets={},templates=[],room=20,layout='portrait',chosen=new Set(),setsLoaded=null;
-const suits=(template,orientation)=>template.orientation===orientation||(orientation==='square'&&template.squareCompatible);
-function showSet(){
- for(const button of el('ms-tabs').querySelectorAll('button'))button.className=button.dataset.layout===layout?'primary':'';
- el('ms-save').textContent='Save '+NAMES[layout]+' set';
- el('ms-room').textContent='Up to '+room+' mockups fit next to your preset photos.';
- const grid=el('ms-grid');grid.replaceChildren();
- const fitting=templates.filter(t=>suits(t,layout));
- if(!fitting.length)grid.append(make('div','muted','No saved PSD templates for '+NAMES[layout]+' artworks yet. Add them in the Product Creator (PSD mockups) and set their orientation.'));
- for(const template of fitting){
-  const card=make('label','tpl'+(chosen.has(template.id)?' on':''));
-  const top=make('div','top'),box=make('input');box.type='checkbox';box.checked=chosen.has(template.id);
-  box.addEventListener('change',()=>{
-   if(box.checked&&chosen.size>=room){box.checked=false;notice('ms-status','Up to '+room+' mockups fit. Untick one first.','warn');return;}
-   if(box.checked)chosen.add(template.id);else chosen.delete(template.id);
-   card.classList.toggle('on',box.checked);count();
-  });
-  top.append(box,make('span','name',template.name));
-  let picture;
-  if(template.preview){picture=make('img');picture.src='/api/mockups/file/preview/'+template.id;picture.alt='';picture.loading='lazy';}
-  else picture=make('div','ph');
-  card.append(picture,top);grid.append(card);
+// ---------------------------------------------------------------- mockup presets
+// The presets are folders on the PC; the page shows them and remembers which
+// one new artworks use.
+let presets=[],chosen='',room=20,presetsLoaded=null;
+const ORDER=['portrait','landscape','square','panoramic','unclassified'];
+const presetByName=name=>presets.find(p=>p.name===name)||null;
+const countsOf=preset=>Object.keys(NAMES).map(key=>[key,preset.templates.filter(t=>t.orientation===key).length]).filter(([,n])=>n);
+function card(template,unused){
+ const box=make('div','tpl'+(unused?' unused':''));box.title=template.localPath+(unused?' (not used: only '+room+' fit)':'');
+ const pic=make('div','pic'),img=make('img');
+ img.alt='';img.loading='lazy';img.decoding='async';img.src='/api/batch/template-preview/'+encodeURIComponent(template.id);
+ img.addEventListener('error',()=>pic.replaceChildren(make('span','none','Preview appears once the PC worker has opened this PSD')));
+ pic.append(img);box.append(pic,make('div','name',template.name));
+ return box;
+}
+function showPresets(){
+ const tabs=el('mp-tabs');tabs.replaceChildren();
+ for(const preset of presets){
+  const button=make('button',preset.name===chosen?'primary':'',preset.name+' · '+preset.templates.length);
+  button.type='button';button.addEventListener('click',()=>void choose(preset.name));tabs.append(button);
  }
- count();
+ el('mp-room').textContent='Up to '+room+' mockups fit next to your preset photos.';
+ const groups=el('mp-groups');groups.replaceChildren();
+ const preset=presetByName(chosen);
+ if(!preset){checks();return;}
+ for(const key of ORDER){
+  const list=preset.templates.filter(t=>(key==='unclassified'?!NAMES[t.orientation]:t.orientation===key));
+  if(!list.length)continue;
+  const title=make('div','group-title',key==='unclassified'?'Shape not known yet ':NAMES[key]+' artworks ');
+  title.append(make('span','muted',key==='unclassified'
+   ?'('+list.length+'): the PC worker finds it when it opens these PSDs, or set it in the Product Creator.'
+   :'('+list.length+(list.length>room?', the first '+room+' are used':'')+')'));
+  const grid=make('div','tpl-grid');
+  list.forEach((template,index)=>grid.append(card(template,key!=='unclassified'&&index>=room)));
+  groups.append(title,grid);
+ }
+ checks();
 }
-function count(){el('ms-count').textContent=chosen.size+' chosen';}
-function pickLayout(next){layout=next;chosen=new Set(sets[layout]||[]);showSet();}
-async function loadSets(){
- const data=await request('/api/batch/mockup-sets');
- sets=data.sets||{};templates=data.templates||[];room=data.room;
- pickLayout(layout);checks();
+async function loadPresets(){
+ const data=await request('/api/batch/presets');
+ presets=data.presets||[];room=data.room;chosen=data.chosen||'';
+ const where=data.folder?' ('+data.folder+')':'';
+ el('mp-about').textContent='Your presets are the folders named Preset 1, Preset 2… in the PC mockup folder'+where+
+  '. Each new listing gets the PSDs from the chosen preset that suit its artwork\'s shape. Add, remove or move PSDs on the PC; the worker picks the change up within a minute.';
+ if(!presets.length)notice('mp-status','No preset folders found yet. Inside the PC mockup folder'+where+', make folders named Preset 1, Preset 2… and put PSDs in them (subfolders such as Vertical are fine).','warn');
+ else if(data.outside>0)notice('mp-status',data.outside+' PSD'+(data.outside===1?' is':'s are')+' not in a preset folder, so new listings do not use '+(data.outside===1?'it':'them')+'.');
+ else el('mp-status').classList.add('hidden');
+ showPresets();
 }
-el('ms-tabs').addEventListener('click',event=>{const b=event.target.closest('button');if(b)pickLayout(b.dataset.layout);});
-el('ms-first').addEventListener('click',()=>{chosen=new Set(templates.filter(t=>suits(t,layout)).slice(0,room).map(t=>t.id));showSet();});
-el('ms-none').addEventListener('click',()=>{chosen=new Set();showSet();});
-el('ms-save').addEventListener('click',async()=>{
- el('ms-save').disabled=true;
- try{
-  // Saved in the order the templates are shown.
-  const ids=templates.filter(t=>chosen.has(t.id)).map(t=>t.id);
-  sets=(await request('/api/batch/mockup-sets',{orientation:layout,templateIds:ids})).sets;
-  notice('ms-status','Saved: '+NAMES[layout]+' artworks get '+ids.length+' mockup'+(ids.length===1?'':'s')+'.');checks();
- }catch(error){notice('ms-status',String(error.message||error),'error');}
- finally{el('ms-save').disabled=false;}
-});
+async function choose(name){
+ const previous=chosen;chosen=name;showPresets();
+ try{await request('/api/batch/presets',{name});}
+ catch(error){chosen=previous;showPresets();notice('mp-status',String(error.message||error),'error');}
+}
 
 // ---------------------------------------------------------------- the batch
 let state={job:null,running:false,chatGpt:false,max:20},timer=0;
@@ -70,8 +78,9 @@ function checks(){
  const box=el('bt-checks');box.replaceChildren();
  const line=(ok,text)=>{const row=make('div','check');row.append(make('b','',ok?'✓':'✕'),make('span','',text));box.append(row);};
  line(state.chatGpt,state.chatGpt?'ChatGPT is connected.':'ChatGPT is not connected: add OPENAI_API_KEY in Render.');
- const ready=Object.keys(NAMES).filter(key=>(sets[key]||[]).length);
- line(ready.length>0,ready.length?'Mockup sets: '+Object.keys(NAMES).map(key=>NAMES[key]+' '+(sets[key]||[]).length).join(' · '):'No mockup set chosen yet (see Mockup sets below).');
+ const preset=presetByName(chosen);
+ line(Boolean(preset),preset?'Mockup preset: '+preset.name+' ('+countsOf(preset).map(([key,n])=>n+' '+NAMES[key]).join(' · ')+')':
+  'No mockup preset yet (see Mockup presets below).');
 }
 const badge={waiting:'Waiting',working:'Working',ready:'Draft ready',published:'Published',failed:'Failed'};
 function show(){
@@ -167,10 +176,13 @@ function showUploads(){
 async function uploadOne(upload){
  const file=upload.file;
  try{
+  const preset=presetByName(chosen);
+  if(!preset)throw Error('Choose a mockup preset first (Mockup presets below).');
   const small=await preview(file);
   if(small){
    const shape=layoutOf(small.width,small.height);
-   if(!(sets[shape]||[]).length)upload.note='No '+NAMES[shape]+' mockup set yet: choose one below before this artwork reaches its mockups.';
+   if(!preset.templates.some(t=>t.orientation===shape||(shape==='square'&&t.squareCompatible)))
+    upload.note=preset.name+' has no '+NAMES[shape]+' mockups yet: add some to its folder before this artwork reaches its mockups.';
   }
   const staged=await request('/api/artworks/stage',{filename:file.name,contentType:file.type||'application/octet-stream',size:file.size});
   await put(staged.uploadUrl,file,staged.contentType,fraction=>{upload.progress=fraction*0.95;showUploads();});
@@ -180,7 +192,7 @@ async function uploadOne(upload){
    await put(target.uploadUrl,small.blob,'image/jpeg',()=>{});
    previewKey=target.key;
   }
-  const data=await request('/api/batch/add',{stageId:staged.stageId,filename:file.name,contentType:staged.contentType,size:file.size,previewKey});
+  const data=await request('/api/batch/add',{stageId:staged.stageId,filename:file.name,contentType:staged.contentType,size:file.size,previewKey,preset:preset.name});
   state={...state,...data};upload.active=false;upload.progress=1;
  }catch(error){upload.active=false;upload.error=String(error.message||error);}
  showUploads();show();
@@ -190,7 +202,7 @@ el('bt-files').addEventListener('change',async()=>{
  if(!files.length)return;
  const room=state.max-((state.job&&!state.job.closed)?state.job.items.length:0);
  if(files.length>room){notice('bt-status','This batch has room for '+room+' more artwork'+(room===1?'':'s')+'. Choose fewer, or publish and start a new batch.','warn');return;}
- await setsLoaded;
+ await presetsLoaded;
  const added=files.map(file=>({file,active:true,progress:0,error:'',note:''}));
  uploads.push(...added);showUploads();show();
  clearTimeout(timer);timer=setTimeout(refresh,4000);
@@ -214,6 +226,6 @@ action('bt-publish','/api/batch/publish',()=>({confirm:'PUBLISH NEW LISTINGS ON 
  const n=(state.job?.items||[]).filter(item=>item.status==='ready'&&item.publish!==false).length;
  return 'Publish '+n+' listing'+(n===1?'':'s')+' on Etsy?\n\nEach new listing costs Etsy\'s $0.20 listing fee.';
 });
-setsLoaded=loadSets().catch(error=>notice('ms-status',String(error.message||error),'error'));
+presetsLoaded=loadPresets().catch(error=>notice('mp-status',String(error.message||error),'error'));
 void refresh();
 })();

@@ -236,8 +236,13 @@ export async function setDetectedTemplateOrientation(id,orientation,squareCompat
  record.squareCompatible=record.squareCompatible||squareCompatible===true;
  record.updatedAt=iso();await putJsonObject(templateKey(id),record);return record;
 }
-export async function registerMockupTemplatePreview(id,key){
- const r=await getMockupTemplate(id);r.previewKey=key;r.updatedAt=iso();await putJsonObject(templateKey(id),r);return r;
+// version: which version of the PSD the preview shows (the worker sends one per version).
+export async function registerMockupTemplatePreview(id,key,version=''){
+ const r=await getMockupTemplate(id),previous=r.previewKey;
+ r.previewKey=key;r.previewVersion=String(version||'').slice(0,300);r.updatedAt=iso();
+ await putJsonObject(templateKey(id),r);
+ if(previous&&previous!==key)await deleteArtworkObject(previous).catch(()=>{});
+ return r;
 }
 export async function listMockupJobs(limit=1000){
  const records=await listJSON(ROOT+'/jobs/',/\/meta\.json$/,limit);

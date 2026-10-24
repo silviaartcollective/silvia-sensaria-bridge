@@ -25,17 +25,20 @@ textarea{min-height:300px;resize:vertical;font-size:13px}label{font-size:12px;fo
 .row .tags{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.row .side{display:grid;gap:6px;justify-items:end}
 .row .side label{display:flex;gap:6px;align-items:center;margin:0;font-weight:600}.row .side input{width:auto}
 .mini{height:4px;border-radius:99px;background:#ebe8e1;overflow:hidden;margin-top:6px;max-width:260px}.mini>div{height:100%;background:#546f59}
-.tpl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:12px}
-.tpl{display:grid;gap:6px;padding:8px;border:1px solid var(--line);border-radius:10px;background:#fff;margin:0;font-weight:500;cursor:pointer}
-.tpl.on{border-color:#546f59;box-shadow:0 0 0 2px #546f59}.tpl img,.tpl .ph{width:100%;aspect-ratio:1;object-fit:cover;border-radius:7px;background:#ebe8e1}
-.tpl .top{display:flex;gap:6px;align-items:center}.tpl input{width:auto}.tpl .name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#ms-tabs button.primary{background:var(--green);color:#fff}
+.tpl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:8px 0 16px}
+.tpl{display:grid;gap:6px;padding:7px;border:1px solid var(--line);border-radius:10px;background:#fff;min-width:0}
+.tpl .pic{aspect-ratio:1;border-radius:7px;background:#ebe8e1;overflow:hidden;display:grid;place-items:center}
+.tpl .pic img{width:100%;height:100%;object-fit:contain;display:block}
+.tpl .pic .none{font-size:11px;color:var(--muted);padding:10px;text-align:center;line-height:1.35}
+.tpl .name{font-size:12px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tpl.unused{opacity:.45}.group-title{font-weight:650;margin:14px 0 2px}.group-title .muted{font-weight:400}
+#mp-tabs button.primary{background:var(--green);color:#fff}
 @media(max-width:800px){.shell{grid-template-columns:1fr}aside{display:none}main{padding:22px 16px}h1{font-size:30px}.row{grid-template-columns:1fr}.row.item{grid-template-columns:56px minmax(0,1fr)}.row.item .side{grid-column:1/-1;justify-items:start}}
 </style></head><body><div class="shell"><aside><nav><a class="nav active" href="/daily-listings">Daily Listings</a></nav></aside>
 <main><h1>Daily Listings</h1><p class="sub">Post a batch of new artworks and renew your oldest unsold listings, with SEO written by ChatGPT.</p>
 
 <section class="card" id="batch"><div class="flex"><h2>New listings</h2><span class="muted" id="bt-updated"></span></div>
-<p class="muted">Choose up to 20 artworks. Each one gets its artwork ID, the mockups from its orientation's set (made on the PC worker), SEO from ChatGPT and an Etsy draft set up like the Product Creator does it (preset photos, variants and the orientation's template). The drafts wait here until you press Publish all. Keep this page open while the artworks upload; after that it can be closed.</p>
+<p class="muted">Choose up to 20 artworks. Each one gets its artwork ID, the mockups from the chosen preset that suit its shape (made on the PC worker), SEO from ChatGPT and an Etsy draft set up like the Product Creator does it (preset photos, variants and the orientation's template). The drafts wait here until you press Publish all. Keep this page open while the artworks upload; after that it can be closed.</p>
 <div class="checks" id="bt-checks"></div>
 <div class="pair"><label class="button" for="bt-files" style="margin:0">Choose artworks…</label><input type="file" id="bt-files" multiple accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff" class="hidden">
 <span class="muted" id="bt-pick-note">JPG, PNG, WebP or TIFF masters</span></div>
@@ -46,12 +49,11 @@ textarea{min-height:300px;resize:vertical;font-size:13px}label{font-size:12px;fo
 <button class="primary" type="button" id="bt-publish" disabled>Publish 0 listings</button></div>
 </section>
 
-<section class="card" id="mockup-sets"><div class="flex"><h2>Mockup sets</h2><span class="muted" id="ms-room"></span></div>
-<p class="muted">The mockups each new listing gets, chosen once for each orientation. They are made from your saved PSD templates (Product Creator → PSD mockups) in the order shown.</p>
-<div class="pair" role="tablist" aria-label="Orientation" id="ms-tabs"><button type="button" data-layout="portrait" class="primary">Vertical</button><button type="button" data-layout="landscape">Horizontal</button><button type="button" data-layout="square">Square</button><button type="button" data-layout="panoramic">Panoramic</button></div>
-<div class="tpl-grid" id="ms-grid"></div>
-<div class="flex" style="margin-top:12px"><div class="pair"><button type="button" id="ms-first">Select the first ones that fit</button><button type="button" id="ms-none">Clear</button><span class="muted" id="ms-count"></span></div><button class="primary" type="button" id="ms-save">Save Vertical set</button></div>
-<div id="ms-status" class="notice hidden" role="status"></div>
+<section class="card" id="mockup-presets"><div class="flex"><h2>Mockup presets</h2><span class="muted" id="mp-room"></span></div>
+<p class="muted" id="mp-about">Your presets are the folders named Preset 1, Preset 2… in the PC mockup folder. Each new listing gets the PSDs from the chosen preset that suit its artwork's shape. Add, remove or move PSDs on the PC; the worker picks the change up within a minute.</p>
+<div class="pair" role="tablist" aria-label="Mockup preset" id="mp-tabs"></div>
+<div id="mp-status" class="notice hidden" role="status"></div>
+<div id="mp-groups"></div>
 </section>
 
 <section class="card" id="renew"><div class="flex"><h2>Renew listings</h2><span class="muted" id="rn-updated"></span></div>

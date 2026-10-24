@@ -26,12 +26,12 @@ import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates, reviseCanvasThickness } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
-import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey,listMockupTemplates} from './mockup-generator.mjs';
+import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey,listMockupTemplates,getMockupTemplate} from './mockup-generator.mjs';
 import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verification.mjs';
 import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
 import {mockupObjectKey} from './production.mjs';
 import { handleMockupAPI, mockupJobFromArtwork } from './mockup-api.mjs';
-import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, batchDraftBody, MAX_BATCH } from './batch-poster.mjs';
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits } from './batch-poster.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
 import { generateEtsySeo, loadAiSeoSettings, saveAiSeoSettings, aiSeoConfigured, seoImage, seoPasteText, sectionUrl, DEFAULT_AI_SEO_INSTRUCTIONS, DEFAULT_AI_SEO_MODEL } from './ai-seo.mjs';
@@ -880,18 +880,37 @@ function crossSitePost(req){
   return !host||(origin&&origin!==scheme+'://'+host)||req.headers['sec-fetch-site']==='cross-site';
 }
 // Daily Listings → New listings (batch-poster.mjs): the batch and the mockup
-// set chosen for each orientation are kept in R2.
+// preset last chosen are kept in R2; the presets are folders on the PC.
 const BATCH_JOB_KEY='settings/batch-poster/job.json';
-const BATCH_MOCKUP_SETS_KEY='settings/batch-poster/mockup-sets.json';
-const BATCH_LAYOUTS=['portrait','landscape','square','panoramic'];
+const BATCH_PRESET_KEY='settings/batch-poster/mockup-preset.json';
 const LAYOUT_NAMES={portrait:'Vertical',landscape:'Horizontal',square:'Square',panoramic:'Panoramic'};
-async function loadBatchMockupSets(){
-  try{return (await getJsonObject(BATCH_MOCKUP_SETS_KEY))||{}}catch(error){if(isMissingR2Object(error))return {};throw error}
+const presetPhotoRoom=async()=>ETSY_PHOTO_LIMIT-(await presetMediaStatus()).items.filter(item=>item.exists&&item.role!=='video').length;
+// A small picture of a template for the page: the worker's preview of the PSD,
+// else the last mockup made with it. Kept in memory once made.
+const templatePreviews=new Map();
+let latestRenders={at:0,keys:null};
+async function latestRenderOf(templateId){
+  if(!latestRenders.keys||Date.now()-latestRenders.at>5*60*1000){
+    const keys=new Map();
+    for(const job of await listMockupJobs(150).catch(()=>[]))
+      for(const item of job.templates||[])
+        if(item.status==='completed'&&(item.previewKey||item.outputKey)&&!keys.has(item.id))keys.set(item.id,item.previewKey||item.outputKey);
+    latestRenders={at:Date.now(),keys};
+  }
+  return latestRenders.keys.get(templateId)||'';
 }
-// A template suits an orientation like in the Product Creator: the same
-// orientation, or a square artwork in a template marked square-compatible.
-const templateSuits=(template,layout)=>String(template?.orientation||'')===layout||
-  (layout==='square'&&template?.squareCompatible===true);
+async function templatePreview(templateId){
+  const template=await getMockupTemplate(templateId);
+  const source=template.previewKey||await latestRenderOf(template.id);
+  if(!source)return null;
+  const known=templatePreviews.get(template.id);
+  if(known?.source===source)return known.bytes;
+  const bytes=await sharp((await getArtworkObject(source)).body,{limitInputPixels:false})
+    .rotate().resize(480,480,{fit:'inside',withoutEnlargement:true}).jpeg({quality:78}).toBuffer();
+  templatePreviews.set(template.id,{source,bytes});
+  if(templatePreviews.size>400)templatePreviews.delete(templatePreviews.keys().next().value);
+  return bytes;
+}
 async function batchShopDefaults(session){
   const shopArgs={shopId:session.shop.shop_id,keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
   const [shipping,listings,templates]=await Promise.all([getShopShippingProfiles(shopArgs),
@@ -911,12 +930,13 @@ function batchDeps(){
       const manifest=await completeArtworkUpload(reservation.artworkId);
       return {artworkId:reservation.artworkId,orientation:listingLayoutForManifest(manifest)};
     },
-    startMockups:async(artworkId,layout)=>{
-      const [sets,templates,presets]=await Promise.all([loadBatchMockupSets(),listMockupTemplates(),presetMediaStatus()]);
-      const ready=new Map(templates.filter(t=>t.status==='ready'&&templateSuits(t,layout)).map(t=>[t.id,t]));
-      const room=ETSY_PHOTO_LIMIT-presets.items.filter(item=>item.exists&&item.role!=='video').length;
-      const ids=(sets[layout]||[]).filter(id=>ready.has(id)).slice(0,room);
-      if(!ids.length)throw Error('Choose the mockups for '+LAYOUT_NAMES[layout]+' artworks first (Mockup sets on this page).');
+    startMockups:async(artworkId,layout,presetName)=>{
+      const [templates,room]=await Promise.all([listMockupTemplates(),presetPhotoRoom()]);
+      const preset=mockupPresets(templates).find(item=>presetKey(item.name)===presetKey(presetName));
+      if(!preset)throw Error('The mockup preset "'+(presetName||'(none)')+'" is not a folder in the PC mockup folder any more. Choose a preset, then try again.');
+      const ids=preset.templates.filter(t=>templateSuits(t,layout)).map(t=>t.id).slice(0,room);
+      if(!ids.length)throw Error(preset.name+' has no '+LAYOUT_NAMES[layout]+' mockups. Add some to its folder on the PC '+
+        '(or set their orientation in the Product Creator), then try again.');
       const job=await mockupJobFromArtwork({artworkId,templateIds:ids});
       return {jobId:job.id,total:job.templates.length};
     },
@@ -4916,22 +4936,31 @@ const server = http.createServer(async (req, res) => {
         }));
         return sendJson(res,200,{ok:true,job,running:batchRunning(),max:MAX_BATCH,chatGpt:aiSeoConfigured()});
       }
-      if(req.method==='GET'&&action==='/mockup-sets'){
-        const [sets,templates,presets]=await Promise.all([loadBatchMockupSets(),listMockupTemplates(),presetMediaStatus()]);
-        return sendJson(res,200,{ok:true,sets,room:ETSY_PHOTO_LIMIT-presets.items.filter(item=>item.exists&&item.role!=='video').length,
-          templates:templates.filter(t=>t.status==='ready').map(t=>({id:t.id,name:t.name,orientation:t.orientation||'unclassified',
-            squareCompatible:t.squareCompatible===true,preview:Boolean(t.previewKey)}))});
+      if(req.method==='GET'&&action==='/presets'){
+        const [templates,room,folder,saved]=await Promise.all([listMockupTemplates(),presetPhotoRoom(),getPcMockupFolder(),
+          getJsonObject(BATCH_PRESET_KEY).catch(()=>null)]);
+        const ready=templates.filter(t=>t.status==='ready'),presets=mockupPresets(ready);
+        const chosen=presets.find(item=>presetKey(item.name)===presetKey(saved?.name))||presets[0]||null;
+        return sendJson(res,200,{ok:true,folder:folder?.path||folder||'',room,chosen:chosen?.name||'',
+          outside:ready.filter(t=>t.source==='pc').length-presets.reduce((sum,item)=>sum+item.templates.length,0),
+          presets:presets.map(item=>({name:item.name,templates:item.templates.map(t=>({id:t.id,name:t.name,localPath:t.localPath,
+            orientation:t.orientation||'unclassified',squareCompatible:t.squareCompatible===true}))}))});
+      }
+      const previewRoute=action.match(/^\/template-preview\/([A-Za-z0-9_-]{1,80})$/);
+      if(req.method==='GET'&&previewRoute){
+        const bytes=await templatePreview(previewRoute[1]).catch(()=>null);
+        if(!bytes)return sendJson(res,404,{ok:false,error:'No preview yet.'});
+        res.writeHead(200,{'content-type':'image/jpeg','content-length':bytes.length,'cache-control':'private, max-age=600'});
+        return res.end(bytes);
       }
       if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'Method not allowed.'});
       const body=await readJsonBody(req);
-      if(action==='/mockup-sets'){
-        const layout=String(body.orientation||'');
-        if(!BATCH_LAYOUTS.includes(layout))return sendJson(res,400,{ok:false,error:'Unknown orientation.'});
-        const ids=[...new Set((Array.isArray(body.templateIds)?body.templateIds:[]).map(String))].slice(0,ETSY_PHOTO_LIMIT);
-        const sets=await loadBatchMockupSets();
-        sets[layout]=ids;
-        await putJsonObject(BATCH_MOCKUP_SETS_KEY,sets);
-        return sendJson(res,200,{ok:true,sets});
+      if(action==='/presets'){
+        const name=String(body.name||'').slice(0,120);
+        if(!mockupPresets(await listMockupTemplates()).some(item=>presetKey(item.name)===presetKey(name)))
+          return sendJson(res,400,{ok:false,error:'That preset is not a folder in the PC mockup folder.'});
+        await putJsonObject(BATCH_PRESET_KEY,{name,savedAt:new Date().toISOString()});
+        return sendJson(res,200,{ok:true,chosen:name});
       }
       if(action==='/preview-url'){
         const key='batch-poster/previews/'+crypto.randomUUID()+'.jpg';
@@ -4940,7 +4969,8 @@ const server = http.createServer(async (req, res) => {
       if(action==='/add'){
         if(!aiSeoConfigured())return sendJson(res,400,{ok:false,error:'ChatGPT is not connected: add OPENAI_API_KEY in Render first.'});
         const previewKey=/^batch-poster\/previews\/[0-9a-f-]{36}\.jpg$/.test(String(body.previewKey||''))?String(body.previewKey):'';
-        await addToBatch(deps,{stageId:body.stageId,filename:body.filename,contentType:body.contentType,size:body.size,previewKey});
+        if(!String(body.preset||'').trim())return sendJson(res,400,{ok:false,error:'Choose the mockup preset first.'});
+        await addToBatch(deps,{stageId:body.stageId,filename:body.filename,contentType:body.contentType,size:body.size,previewKey,preset:body.preset});
         return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
       }
       if(action==='/resume'){

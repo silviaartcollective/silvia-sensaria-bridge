@@ -248,8 +248,8 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
      const known=knownMockupArtworkTarget(t.name);
      const mapping=t.mapping?.path?t.mapping:known?{path:known}:null;
      if(t.source==='pc')return {id:t.id,name:t.name,source:'pc',localPath:t.localPath,size:t.size,mtimeMs:t.mtimeMs,
-      orientation:t.orientation,orientationSource:t.orientationSource||'',mapping};
-     return {id:t.id,name:t.name,key:t.key,size:t.size,mapping,url:await signedArtworkUrl(t.key,3600)};
+      orientation:t.orientation,orientationSource:t.orientationSource||'',mapping,previewVersion:t.previewVersion||''};
+     return {id:t.id,name:t.name,key:t.key,size:t.size,mapping,url:await signedArtworkUrl(t.key,3600),previewVersion:t.previewVersion||''};
     }));
     return send(200,{templates}),true;
    }
@@ -324,7 +324,7 @@ export async function handleMockupAPI(req,res,url,{authenticated,workerAuthorize
     if(data.body.length>3*1024*1024)throw Error('Preview must be under 3MB.');
     const info=await sharp(data.body).metadata();
     if(info.format!=='jpeg'||info.width>1800||info.height>1800)throw Error('Invalid template preview.');
-    return send(200,{template:await registerMockupTemplatePreview(id,key)}),true;
+    return send(200,{template:await registerMockupTemplatePreview(id,key,str(body.version))}),true;
    }
    if(req.method==='DELETE'&&parts.length===2)return send(200,await deleteMockupTemplate(id)),true;
   }

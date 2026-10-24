@@ -200,3 +200,36 @@ test('artworks whose uploads finish at the same moment all join the same batch',
   stopBatch();
   await idle();
 });
+
+test('mockup presets are the "Preset …" folders in the PC mockup folder, at any depth', async () => {
+  const { mockupPresets, templateSuits, presetKey } = await import('../src/batch-poster.mjs');
+  const t = (id, localPath, orientation = 'portrait', extra = {}) => ({ id, name: localPath.split('/').pop(), localPath, orientation, status: 'ready', ...extra });
+  const presets = mockupPresets([
+    t('a', 'Preset 2/Vertical/mockup 10.psd'), t('b', 'Preset 2/Vertical/mockup 2.psd'),
+    t('c', 'Preset 1/Horizontal/wide.psd', 'landscape'), t('d', 'Vertical/Preset 1/tall.psd'),
+    t('e', 'preset 1/Square room.psd', 'square'), t('f', 'Loose/mockup 1.psd'), t('g', 'mockup 3.psd'),
+    t('h', 'Preset10/x.psd'), t('i', 'Preset 1/old.psd', 'portrait', { status: 'deleted' }), t('j', 'Preset 3/edge.psd', 'landscape')
+  ]);
+  assert.deepEqual(presets.map(p => p.name), ['Preset 1', 'Preset 2', 'Preset 3', 'Preset10']);
+  // "Vertical/Preset 1" and "preset 1" are the same preset; deleted ones are left out.
+  assert.deepEqual(presets[0].templates.map(x => x.id).sort(), ['c', 'd', 'e']);
+  // Name order counts numbers: mockup 2 before mockup 10.
+  assert.deepEqual(presets[1].templates.map(x => x.id), ['b', 'a']);
+  assert.ok(templateSuits({ orientation: 'portrait' }, 'portrait'));
+  assert.ok(!templateSuits({ orientation: 'landscape' }, 'portrait'));
+  assert.ok(templateSuits({ orientation: 'portrait', squareCompatible: true }, 'square'));
+  assert.equal(presetKey('  Preset   1 '), presetKey('preset 1'));
+});
+
+test('each artwork keeps the preset it was added with', async () => {
+  resetBatchMemory();
+  const shop = fakeShop();
+  const seen = [];
+  const start = shop.deps.startMockups;
+  shop.deps.startMockups = (artworkId, layout, preset) => { seen.push(preset); return start(artworkId, layout); };
+  await addToBatch(shop.deps, { stageId: stage(1), filename: 'one.jpg', preset: 'Preset 2' });
+  await addToBatch(shop.deps, { stageId: stage(2), filename: 'two.jpg', preset: 'Preset 1' });
+  await idle();
+  assert.deepEqual(seen.sort(), ['Preset 1', 'Preset 2']);
+  assert.deepEqual((await batchStatus(shop.deps)).items.map(item => item.preset), ['Preset 2', 'Preset 1']);
+});
