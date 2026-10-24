@@ -108,7 +108,8 @@ function show(){
  const parts=[ready&&ready+' draft'+(ready===1?'':'s')+' ready',published&&published+' published',working&&working+' being made',
   waiting&&waiting+' waiting',failed&&failed+' failed'].filter(Boolean);
  notice('bt-status',items.length+' artwork'+(items.length===1?'':'s')+' in this batch: '+parts.join(', ')+'.'+
-  (!state.running&&(waiting||working)?' Stopped: press Resume to go on.':''),failed?'warn':'');
+  (job.stopping?' Stopping: the artworks being worked on stop after their current step.'
+   :!state.running&&(waiting||working)?' Stopped: press Resume to go on, or Start over.':''),failed?'warn':'');
  el('bt-updated').textContent=job.updatedAt?'Updated '+new Date(job.updatedAt).toLocaleTimeString():'';
  const rows=el('bt-rows');rows.replaceChildren();
  for(const item of items){
@@ -144,10 +145,10 @@ function show(){
  const ticked=items.filter(item=>item.status==='ready'&&item.publish!==false).length;
  el('bt-publish').textContent='Publish '+ticked+' listing'+(ticked===1?'':'s');
  el('bt-publish').disabled=!ticked||state.running;
- el('bt-stop').classList.toggle('hidden',!state.running);
+ el('bt-stop').classList.toggle('hidden',!state.running||job.stopping);
  el('bt-resume').classList.toggle('hidden',state.running||!(waiting||working));
  el('bt-retry').classList.toggle('hidden',state.running||!failed);
- el('bt-new').classList.toggle('hidden',state.running||waiting+working>0);
+ el('bt-start-over').classList.toggle('hidden',!items.length);
 }
 async function refresh(){
  try{state={...state,...await request('/api/batch')};show();}
@@ -157,9 +158,11 @@ async function refresh(){
 }
 
 // Uploads: the master to R2 staging, a 1024 px preview for ChatGPT, then the batch.
-function put(url,file,type,onProgress){
+function put(url,file,type,onProgress,upload){
  return new Promise((resolve,reject)=>{
   const xhr=new XMLHttpRequest();xhr.open('PUT',url);xhr.setRequestHeader('content-type',type);
+  if(upload)upload.xhr=xhr;
+  xhr.onabort=()=>reject(Error('Upload cancelled.'));
   xhr.upload.onprogress=event=>{if(event.lengthComputable)onProgress(event.loaded/event.total);};
   xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(Error('Upload failed (HTTP '+xhr.status+').'));
   xhr.onerror=()=>reject(Error('Upload failed: the connection dropped.'));
@@ -188,8 +191,9 @@ function showUploads(){
  }
 }
 async function uploadOne(upload){
- const file=upload.file;
+ const file=upload.file,cancelled=()=>{if(upload.cancelled)throw Error('Upload cancelled.');};
  try{
+  cancelled();
   const preset=presetByName(chosen);
   if(!preset)throw Error('Choose a mockup preset first (Mockup presets below).');
   const small=await preview(file);
@@ -199,16 +203,19 @@ async function uploadOne(upload){
     upload.note=preset.name+' has no '+NAMES[shape]+' mockups yet: add some to its folder before this artwork reaches its mockups.';
   }
   const staged=await request('/api/artworks/stage',{filename:file.name,contentType:file.type||'application/octet-stream',size:file.size});
-  await put(staged.uploadUrl,file,staged.contentType,fraction=>{upload.progress=fraction*0.95;showUploads();});
+  await put(staged.uploadUrl,file,staged.contentType,fraction=>{upload.progress=fraction*0.95;showUploads();},upload);
+  cancelled();
   let previewKey='';
   if(small?.blob){
    const target=await request('/api/batch/preview-url',{});
    await put(target.uploadUrl,small.blob,'image/jpeg',()=>{});
    previewKey=target.key;
   }
-  const data=await request('/api/batch/add',{stageId:staged.stageId,filename:file.name,contentType:staged.contentType,size:file.size,previewKey,preset:preset.name});
+  cancelled();
+  const data=await request('/api/batch/add',{stageId:staged.stageId,filename:file.name,contentType:staged.contentType,size:file.size,previewKey,preset:preset.name,
+   width:small?.width||0,height:small?.height||0});
   state={...state,...data};upload.active=false;upload.progress=1;
- }catch(error){upload.active=false;upload.error=String(error.message||error);}
+ }catch(error){upload.active=false;if(!upload.cancelled)upload.error=String(error.message||error);}
  showUploads();show();
 }
 el('bt-files').addEventListener('change',async()=>{
@@ -235,7 +242,10 @@ const action=(id,path,body,ask)=>el(id).addEventListener('click',async()=>{
 action('bt-stop','/api/batch/stop',()=>({}));
 action('bt-resume','/api/batch/resume',()=>({}));
 action('bt-retry','/api/batch/resume',()=>({retryFailed:true}));
-action('bt-new','/api/batch/new',()=>({}),()=>'Start a new batch? Drafts in this batch that were not published stay on Etsy as drafts.');
+// Start over also cancels uploads still running on this page.
+el('bt-start-over').addEventListener('click',()=>{for(const upload of uploads)if(upload.active){upload.cancelled=true;upload.xhr?.abort();}},true);
+action('bt-start-over','/api/batch/start-over',()=>({}),()=>'Start over?\n\nThe batch is stopped and emptied, and you choose the artworks again. '+
+ 'Artworks without a draft are removed from temporary storage; drafts already created stay on Etsy as drafts.');
 action('bt-publish','/api/batch/publish',()=>({confirm:'PUBLISH NEW LISTINGS ON ETSY'}),()=>{
  const n=(state.job?.items||[]).filter(item=>item.status==='ready'&&item.publish!==false).length;
  return 'Publish '+n+' listing'+(n===1?'':'s')+' on Etsy?\n\nEach new listing costs Etsy\'s $0.20 listing fee.';

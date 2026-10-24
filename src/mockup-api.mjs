@@ -106,6 +106,15 @@ export async function mockupJobFromArtwork({artworkId,templateIds,fitMode='cover
  await saveArtworkManifest(manifest);
  return confirmed;
 }
+// Queues mockups from a master still waiting in staging (before it has an
+// artwork ID); linkMockupArtwork ties the batch to the artwork later.
+export async function mockupJobFromStaged({stagedKey,filename,templateIds,orientation='unclassified',fitMode='cover'}){
+ const info=await artworkObjectInfo(stagedKey);
+ const job=await createMockupJob({filename,size:info.size,templateIds,artworkOrientation:orientation,fitMode});
+ await copyArtworkObject(stagedKey,job.artworkKey);
+ const confirmed=await markMockupArtworkUploaded(job.id);markBatchActive(job.id);
+ return confirmed;
+}
 function markBatchActive(id){
  activeBatches.ids?.add(id);
  for(const wake of claimWaiters)wake();

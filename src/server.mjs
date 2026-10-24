@@ -26,12 +26,13 @@ import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates, reviseCanvasThickness } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
-import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey,listMockupTemplates,getMockupTemplate} from './mockup-generator.mjs';
+import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey,listMockupTemplates,getMockupTemplate,linkMockupArtwork} from './mockup-generator.mjs';
 import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verification.mjs';
 import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
 import {mockupObjectKey} from './production.mjs';
-import { handleMockupAPI, mockupJobFromArtwork } from './mockup-api.mjs';
-import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits } from './batch-poster.mjs';
+import { handleMockupAPI, mockupJobFromArtwork, mockupJobFromStaged } from './mockup-api.mjs';
+import { mockupOrientationOf } from './mockup-orientation.mjs';
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits } from './batch-poster.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
 import { generateEtsySeo, loadAiSeoSettings, saveAiSeoSettings, aiSeoConfigured, seoImage, seoPasteText, sectionUrl, DEFAULT_AI_SEO_INSTRUCTIONS, DEFAULT_AI_SEO_MODEL } from './ai-seo.mjs';
@@ -102,6 +103,7 @@ import {
 import {
   reserveArtworkUpload,
   stageMasterUpload,
+  stagedMasterObjectKey,
   pruneStagedMasters,
   completeArtworkUpload,
   cancelArtworkUpload,
@@ -930,15 +932,31 @@ function batchDeps(){
       const manifest=await completeArtworkUpload(reservation.artworkId);
       return {artworkId:reservation.artworkId,orientation:listingLayoutForManifest(manifest)};
     },
-    startMockups:async(artworkId,layout,presetName)=>{
-      const [templates,room]=await Promise.all([listMockupTemplates(),presetPhotoRoom()]);
-      const preset=mockupPresets(templates).find(item=>presetKey(item.name)===presetKey(presetName));
-      if(!preset)throw Error('The mockup preset "'+(presetName||'(none)')+'" is not a folder in the PC mockup folder any more. Choose a preset, then try again.');
+    // From the staged master (no artwork ID yet), or from the artwork when it has one.
+    startMockups:async item=>{
+      const layout=item.orientation,[templates,room]=await Promise.all([listMockupTemplates(),presetPhotoRoom()]);
+      const preset=mockupPresets(templates).find(entry=>presetKey(entry.name)===presetKey(item.preset));
+      if(!preset)throw Error('The mockup preset "'+(item.preset||'(none)')+'" is not a folder in the PC mockup folder any more. Choose a preset, then try again.');
       const ids=preset.templates.filter(t=>templateSuits(t,layout)).map(t=>t.id).slice(0,room);
       if(!ids.length)throw Error(preset.name+' has no '+LAYOUT_NAMES[layout]+' mockups. Add some to its folder on the PC '+
         '(or set their orientation in the Product Creator), then try again.');
-      const job=await mockupJobFromArtwork({artworkId,templateIds:ids});
+      const job=item.artworkId?await mockupJobFromArtwork({artworkId:item.artworkId,templateIds:ids}):
+        await mockupJobFromStaged({stagedKey:stagedMasterObjectKey(item.stageId,item.filename),filename:item.filename,
+          templateIds:ids,orientation:layout}).catch(error=>{
+          throw /not found|NoSuchKey|404/i.test(String(error?.message||error))
+            ?Error('The uploaded file is no longer in temporary storage (kept 3 days). Start over and add this artwork again.'):error;
+        });
       return {jobId:job.id,total:job.templates.length};
+    },
+    // Mockups made before the artwork had an ID now belong to it.
+    linkMockups:async item=>{
+      const manifest=await loadArtworkManifest(item.artworkId);
+      await linkMockupArtwork(item.mockupJobId,{artworkId:item.artworkId,masterKey:manifest.master.key,orientation:mockupOrientationOf(manifest)});
+    },
+    // Start over: a master that never got an artwork ID, and its preview, are removed.
+    discardUpload:async item=>{
+      await deleteArtworkObject(stagedMasterObjectKey(item.stageId,item.filename)).catch(()=>{});
+      if(item.previewKey)await deleteArtworkObject(item.previewKey).catch(()=>{});
     },
     mockupStatus:async jobId=>{
       const job=await getMockupJob(jobId);
@@ -4982,14 +5000,22 @@ const server = http.createServer(async (req, res) => {
         if(!aiSeoConfigured())return sendJson(res,400,{ok:false,error:'ChatGPT is not connected: add OPENAI_API_KEY in Render first.'});
         const previewKey=/^batch-poster\/previews\/[0-9a-f-]{36}\.jpg$/.test(String(body.previewKey||''))?String(body.previewKey):'';
         if(!String(body.preset||'').trim())return sendJson(res,400,{ok:false,error:'Choose the mockup preset first.'});
-        await addToBatch(deps,{stageId:body.stageId,filename:body.filename,contentType:body.contentType,size:body.size,previewKey,preset:body.preset});
+        await addToBatch(deps,{stageId:body.stageId,filename:body.filename,contentType:body.contentType,size:body.size,previewKey,preset:body.preset,
+          width:Number(body.width)||0,height:Number(body.height)||0});
         return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
       }
       if(action==='/resume'){
         await resumeBatch(deps,{retryFailed:body.retryFailed===true});
         return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
       }
-      if(action==='/stop')return sendJson(res,200,{ok:true,stopping:stopBatch()});
+      if(action==='/stop'){
+        await stopBatch(deps);
+        return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
+      }
+      if(action==='/start-over'){
+        await startOver(deps);
+        return sendJson(res,200,{ok:true,job:null,running:false});
+      }
       if(action==='/tick'){
         await setPublish(deps,{n:body.n,publish:body.publish});
         return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});

@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch,
-  resetBatchMemory, MAX_BATCH } from '../src/batch-poster.mjs';
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, startOver,
+  layoutOfPixels, resetBatchMemory, MAX_BATCH } from '../src/batch-poster.mjs';
 
 const stage = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 const tick = () => new Promise(resolve => setImmediate(resolve));
+// An artwork as the page adds it: its size comes from the browser's preview.
+const art = (n, filename, extra = {}) => ({ stageId: stage(n), filename, contentType: 'image/jpeg', size: 10,
+  width: filename.includes('wide') ? 1600 : 900, height: filename.includes('wide') ? 900 : 1200, ...extra });
 
 // A fake shop: artwork IDs, a PC that renders one mockup per poll, ChatGPT, Etsy drafts.
 function fakeShop({ failAllMockupsFor = '', interruptOnce = '', holdMockups = false } = {}) {
@@ -17,25 +20,26 @@ function fakeShop({ failAllMockupsFor = '', interruptOnce = '', holdMockups = fa
     pause: () => tick(),
     reserveArtwork: async item => {
       log.push('reserve ' + item.filename);
-      return { artworkId: 'SAC' + nextArtwork++, orientation: item.filename.includes('wide') ? 'landscape' : 'portrait' };
+      return { artworkId: 'SAC' + nextArtwork++, orientation: item.orientation || (item.filename.includes('wide') ? 'landscape' : 'portrait') };
     },
-    startMockups: async (artworkId, orientation) => {
-      log.push('mockups ' + artworkId + ' ' + orientation);
-      renders.set('job-' + artworkId, { artworkId, done: 0, total: 4 });
-      return { jobId: 'job-' + artworkId, total: 4 };
+    startMockups: async item => {
+      log.push('mockups ' + item.filename + ' ' + item.orientation + ' from ' + (item.artworkId || 'the upload'));
+      renders.set('job-' + item.filename, { filename: item.filename, done: 0, total: 4 });
+      return { jobId: 'job-' + item.filename, total: 4 };
     },
     mockupStatus: async jobId => {
       const render = renders.get(jobId);
       if (!holdMockups && render.done < render.total) render.done++;
-      const failed = render.artworkId === failAllMockupsFor;
+      const failed = render.filename === failAllMockupsFor;
       const finished = render.done === render.total;
       return { total: render.total, done: failed ? 0 : render.done, failed: failed ? render.done : 0, finished,
         completedIds: failed ? [] : Array.from({ length: render.done }, (_, i) => 't' + (i + 1)) };
     },
     writeSeo: async item => {
-      log.push('seo ' + item.artworkId + ' while ' + renders.get(item.mockupJobId).done + ' of 4 mockups made');
-      return { title: 'Title ' + item.artworkId, description: 'About it', tags: ['a', 'b'], style: 'Minimalist' };
+      log.push('seo ' + item.filename + ' while ' + renders.get(item.mockupJobId).done + ' of 4 mockups made');
+      return { title: 'Title ' + item.filename, description: 'About it', tags: ['a', 'b'], style: 'Minimalist' };
     },
+    linkMockups: async item => { log.push('link ' + item.filename + ' ' + item.artworkId); },
     attachMockups: async (artworkId, jobId, ids) => { log.push('attach ' + artworkId + ' ' + ids.join(',')); },
     createDraft: async item => {
       log.push('draft ' + item.artworkId + ' "' + item.seo.title + '"');
@@ -51,7 +55,8 @@ function fakeShop({ failAllMockupsFor = '', interruptOnce = '', holdMockups = fa
     publish: async listingId => {
       log.push('publish ' + listingId);
       if (listingId === 5001) throw Error('Etsy: missing shipping profile');
-    }
+    },
+    discardUpload: async item => { log.push('discard ' + item.filename); }
   };
   return { deps, log, saved, renders };
 }
@@ -60,51 +65,106 @@ async function idle() {
   assert.equal(batchRunning(), false);
 }
 
-test('each artwork gets its ID, its orientation\'s mockups, ChatGPT SEO while they render, and a draft', async () => {
+test('mockups and SEO come first; the artwork gets its ID (and R2 folder) only for its draft', async () => {
   resetBatchMemory();
-  const shop = fakeShop({ failAllMockupsFor: 'SAC102' });
-  await addToBatch(shop.deps, { stageId: stage(1), filename: 'sage tall.jpg', contentType: 'image/jpeg', size: 10, previewKey: 'p1' });
-  await addToBatch(shop.deps, { stageId: stage(2), filename: 'sea wide.jpg', contentType: 'image/jpeg', size: 10 });
-  await addToBatch(shop.deps, { stageId: stage(3), filename: 'broken.jpg', contentType: 'image/jpeg', size: 10 });
-  await addToBatch(shop.deps, { stageId: stage(1), filename: 'sage tall.jpg' }); // the same upload twice
+  const shop = fakeShop({ failAllMockupsFor: 'broken.jpg' });
+  await addToBatch(shop.deps, art(1, 'sage tall.jpg', { previewKey: 'p1' }));
+  await addToBatch(shop.deps, art(2, 'sea wide.jpg'));
+  await addToBatch(shop.deps, art(3, 'broken.jpg'));
+  await addToBatch(shop.deps, art(1, 'sage tall.jpg')); // the same upload twice
   await idle();
   const batch = await batchStatus(shop.deps);
   assert.deepEqual(batch.items.map(item => [item.filename, item.status]),
     [['sage tall.jpg', 'ready'], ['sea wide.jpg', 'ready'], ['broken.jpg', 'failed']]);
   assert.match(batch.items[2].error, /No mockup could be made/);
-  assert.ok(shop.log.includes('mockups SAC100 portrait'));
-  assert.ok(shop.log.includes('mockups SAC101 landscape'));
+  // The failed artwork never got an artwork ID.
+  assert.equal(batch.items[2].artworkId, '');
+  assert.ok(!shop.log.includes('reserve broken.jpg'));
+  assert.ok(shop.log.includes('mockups sage tall.jpg portrait from the upload'));
+  assert.ok(shop.log.includes('mockups sea wide.jpg landscape from the upload'));
   // ChatGPT starts before the PC has finished the mockups.
-  assert.ok(shop.log.some(line => /^seo SAC100 while [0-3] of 4/.test(line)), shop.log.join('\n'));
-  assert.ok(shop.log.includes('attach SAC100 t1,t2,t3,t4'));
-  assert.ok(shop.log.includes('draft SAC100 "Title SAC100"'));
-  assert.equal(batch.items[0].listingId, 5000);
+  assert.ok(shop.log.some(line => /^seo sage tall\.jpg while [0-3] of 4/.test(line)), shop.log.join('\n'));
+  const order = name => shop.log.findIndex(line => line.startsWith(name));
+  assert.ok(order('seo sage') < order('reserve sage') && order('reserve sage') < order('link sage tall.jpg SAC') &&
+    order('link sage') < order('attach ' + batch.items[0].artworkId) && order('attach ' + batch.items[0].artworkId) < order('draft ' + batch.items[0].artworkId),
+    shop.log.join('\n'));
+  assert.ok(shop.log.includes('draft ' + batch.items[0].artworkId + ' "Title sage tall.jpg"'));
   assert.deepEqual(batch.items[0].mockups, { total: 4, done: 4, failed: 0 });
   assert.equal(shop.saved.job.items.length, 3);
+});
+
+test('a TIFF the browser cannot read gets its artwork ID first, which tells its shape', async () => {
+  resetBatchMemory();
+  const shop = fakeShop();
+  await addToBatch(shop.deps, art(1, 'master.tif', { width: 0, height: 0 }));
+  await idle();
+  const [item] = (await batchStatus(shop.deps)).items;
+  assert.equal(item.status, 'ready');
+  assert.ok(shop.log.indexOf('reserve master.tif') < shop.log.findIndex(line => line.startsWith('mockups master.tif')));
+  assert.ok(shop.log.includes('mockups master.tif portrait from SAC100'));
+  assert.ok(!shop.log.some(line => line.startsWith('link')));
+});
+
+test('the shape is read like the server does: 1.85:1 or wider is panoramic', () => {
+  assert.equal(layoutOfPixels(900, 1200), 'portrait');
+  assert.equal(layoutOfPixels(1600, 900), 'landscape');
+  assert.equal(layoutOfPixels(1850, 1000), 'panoramic');
+  assert.equal(layoutOfPixels(1000, 1000), 'square');
+  assert.equal(layoutOfPixels(0, 0), '');
 });
 
 test('Publish all publishes the ticked drafts that are ready, and says which could not be published', async () => {
   resetBatchMemory();
   const shop = fakeShop();
-  for (let n = 1; n <= 3; n++) await addToBatch(shop.deps, { stageId: stage(n), filename: 'art ' + n + '.jpg' });
+  for (let n = 1; n <= 3; n++) await addToBatch(shop.deps, art(n, 'art ' + n + '.jpg'));
   await idle();
   await setPublish(shop.deps, { n: 3, publish: false });
   await publishBatch(shop.deps);
   await idle();
   const batch = await batchStatus(shop.deps);
-  assert.deepEqual(shop.log.filter(line => line.startsWith('publish')), ['publish 5000', 'publish 5001']);
-  assert.deepEqual(batch.items.map(item => item.status), ['published', 'ready', 'ready']);
-  assert.match(batch.items[1].error, /missing shipping profile/);
-  await setPublish(shop.deps, { n: 2, publish: false });
+  assert.deepEqual(shop.log.filter(line => line.startsWith('publish')).sort(), ['publish 5000', 'publish 5001']);
+  const failedOne = batch.items.find(item => item.listingId === 5001);
+  assert.equal(failedOne.status, 'ready');
+  assert.match(failedOne.error, /missing shipping profile/);
+  assert.equal(batch.items.find(item => item.listingId === 5000).status, 'published');
+  assert.equal(batch.items[2].status, 'ready');
+  await setPublish(shop.deps, { n: failedOne.n, publish: false });
   await assert.rejects(publishBatch(shop.deps), /No ticked draft is ready/);
+});
+
+test('Stop stops: the steps under way end, and artworks added while stopped wait for Resume', async () => {
+  resetBatchMemory();
+  const shop = fakeShop({ holdMockups: true });
+  await addToBatch(shop.deps, art(1, 'one.jpg'));
+  await addToBatch(shop.deps, art(2, 'two.jpg'));
+  for (let i = 0; i < 50; i++) await tick();
+  await stopBatch(shop.deps);
+  await idle();
+  let batch = await batchStatus(shop.deps);
+  assert.equal(batch.paused, true);
+  assert.deepEqual(batch.items.map(item => [item.status, item.step]), [['waiting', 'Stopped'], ['waiting', 'Stopped']]);
+  // An upload that finishes after Stop joins the batch but does not start it again.
+  await addToBatch(shop.deps, art(3, 'three.jpg'));
+  for (let i = 0; i < 50; i++) await tick();
+  assert.equal(batchRunning(), false);
+  assert.ok(!shop.log.some(line => line.startsWith('mockups three.jpg')));
+  shop.deps.mockupStatus = async () => ({ total: 4, done: 4, failed: 0, finished: true, completedIds: ['t1', 't2'] });
+  await resumeBatch(shop.deps);
+  await idle();
+  batch = await batchStatus(shop.deps);
+  assert.equal(batch.paused, false);
+  assert.deepEqual(batch.items.map(item => item.status), ['ready', 'ready', 'ready']);
+  // Nothing was done twice.
+  assert.equal(shop.log.filter(line => line.startsWith('mockups one.jpg')).length, 1);
+  assert.equal(shop.log.filter(line => line.startsWith('reserve one.jpg')).length, 1);
 });
 
 test('after a restart, resume picks the batch up from R2 and finishes it once', async () => {
   resetBatchMemory();
   const shop = fakeShop({ holdMockups: true });
-  await addToBatch(shop.deps, { stageId: stage(1), filename: 'one.jpg' });
+  await addToBatch(shop.deps, art(1, 'one.jpg'));
   for (let i = 0; i < 50; i++) await tick();
-  stopBatch();
+  await stopBatch(shop.deps);
   await idle();
   resetBatchMemory(); // the server restarted
   shop.deps.mockupStatus = async () => ({ total: 4, done: 4, failed: 0, finished: true, completedIds: ['t1', 't2', 't3', 't4'] });
@@ -118,10 +178,30 @@ test('after a restart, resume picks the batch up from R2 and finishes it once', 
   assert.equal(shop.log.filter(line => line.startsWith('draft')).length, 1);
 });
 
+test('Start over empties the batch, stops what is under way and removes uploads that have no artwork ID', async () => {
+  resetBatchMemory();
+  const shop = fakeShop({ holdMockups: true });
+  await addToBatch(shop.deps, art(1, 'one.jpg'));
+  await addToBatch(shop.deps, art(2, 'two.jpg'));
+  for (let i = 0; i < 50; i++) await tick();
+  assert.equal(batchRunning(), true);
+  await startOver(shop.deps);
+  assert.equal(batchRunning(), false);
+  assert.equal(await batchStatus(shop.deps), null);
+  assert.equal(shop.saved.job, null);
+  assert.deepEqual(shop.log.filter(line => line.startsWith('discard')).sort(), ['discard one.jpg', 'discard two.jpg']);
+  // The next artwork starts a new batch, which runs.
+  shop.deps.mockupStatus = async () => ({ total: 4, done: 4, failed: 0, finished: true, completedIds: ['t1'] });
+  const fresh = await addToBatch(shop.deps, art(3, 'fresh.jpg'));
+  assert.equal(fresh.items.length, 1);
+  await idle();
+  assert.equal((await batchStatus(shop.deps)).items[0].status, 'ready');
+});
+
 test('a draft setup cut short by a restart is set up again on the same draft', async () => {
   resetBatchMemory();
   const shop = fakeShop({ interruptOnce: 'SAC100' });
-  await addToBatch(shop.deps, { stageId: stage(1), filename: 'one.jpg' });
+  await addToBatch(shop.deps, art(1, 'one.jpg'));
   await idle();
   const batch = await batchStatus(shop.deps);
   assert.equal(batch.items[0].status, 'ready');
@@ -131,20 +211,20 @@ test('a draft setup cut short by a restart is set up again on the same draft', a
 
 test('failed artworks can be tried again; a batch holds 20; a closed batch makes way for a new one', async () => {
   resetBatchMemory();
-  const shop = fakeShop({ failAllMockupsFor: 'SAC100' });
-  await addToBatch(shop.deps, { stageId: stage(1), filename: 'one.jpg' });
+  const shop = fakeShop({ failAllMockupsFor: 'one.jpg' });
+  await addToBatch(shop.deps, art(1, 'one.jpg'));
   await idle();
   assert.equal((await batchStatus(shop.deps)).items[0].status, 'failed');
   shop.deps.mockupStatus = async () => ({ total: 4, done: 4, failed: 0, finished: true, completedIds: ['t1'] });
   await resumeBatch(shop.deps, { retryFailed: true });
   await idle();
   assert.equal((await batchStatus(shop.deps)).items[0].status, 'ready');
-  assert.equal(shop.log.filter(line => line.startsWith('reserve')).length, 1);
-  for (let n = 2; n <= MAX_BATCH; n++) await addToBatch(shop.deps, { stageId: stage(n), filename: n + '.jpg' });
-  await assert.rejects(addToBatch(shop.deps, { stageId: stage(99), filename: 'too many.jpg' }), /holds 20 artworks/);
+  assert.equal(shop.log.filter(line => line.startsWith('mockups one.jpg')).length, 1);
+  for (let n = 2; n <= MAX_BATCH; n++) await addToBatch(shop.deps, art(n, n + '.jpg'));
+  await assert.rejects(addToBatch(shop.deps, art(99, 'too many.jpg')), /holds 20 artworks/);
   await idle();
   await closeBatch(shop.deps);
-  const next = await addToBatch(shop.deps, { stageId: stage(99), filename: 'new day.jpg' });
+  const next = await addToBatch(shop.deps, art(99, 'new day.jpg'));
   assert.equal(next.items.length, 1);
   assert.equal(next.id, 'batch-2');
   await idle();
@@ -180,11 +260,11 @@ test('the draft is filled like the Product Creator: shop settings, then the temp
 test('artworks added one by one are worked on three at a time', async () => {
   resetBatchMemory();
   const shop = fakeShop({ holdMockups: true });
-  for (let n = 1; n <= 4; n++) await addToBatch(shop.deps, { stageId: stage(n), filename: n + '.jpg' });
+  for (let n = 1; n <= 4; n++) await addToBatch(shop.deps, art(n, n + '.jpg'));
   for (let i = 0; i < 50; i++) await tick();
   const batch = await batchStatus(shop.deps);
   assert.deepEqual(batch.items.map(item => item.status), ['working', 'working', 'working', 'waiting']);
-  stopBatch();
+  await stopBatch(shop.deps);
   await idle();
 });
 
@@ -193,11 +273,11 @@ test('artworks whose uploads finish at the same moment all join the same batch',
   const shop = fakeShop({ holdMockups: true });
   const slowLoad = shop.deps.loadJob;
   shop.deps.loadJob = async () => { await tick(); await tick(); return slowLoad(); };
-  await Promise.all([1, 2, 3].map(n => addToBatch(shop.deps, { stageId: stage(n), filename: n + '.jpg' })));
+  await Promise.all([1, 2, 3].map(n => addToBatch(shop.deps, art(n, n + '.jpg'))));
   const batch = await batchStatus(shop.deps);
   assert.deepEqual(batch.items.map(item => item.filename), ['1.jpg', '2.jpg', '3.jpg']);
   assert.equal(shop.saved.job.id, batch.id);
-  stopBatch();
+  await stopBatch(shop.deps);
   await idle();
 });
 
@@ -226,9 +306,9 @@ test('each artwork keeps the preset it was added with', async () => {
   const shop = fakeShop();
   const seen = [];
   const start = shop.deps.startMockups;
-  shop.deps.startMockups = (artworkId, layout, preset) => { seen.push(preset); return start(artworkId, layout); };
-  await addToBatch(shop.deps, { stageId: stage(1), filename: 'one.jpg', preset: 'Preset 2' });
-  await addToBatch(shop.deps, { stageId: stage(2), filename: 'two.jpg', preset: 'Preset 1' });
+  shop.deps.startMockups = item => { seen.push(item.preset); return start(item); };
+  await addToBatch(shop.deps, art(1, 'one.jpg', { preset: 'Preset 2' }));
+  await addToBatch(shop.deps, art(2, 'two.jpg', { preset: 'Preset 1' }));
   await idle();
   assert.deepEqual(seen.sort(), ['Preset 1', 'Preset 2']);
   assert.deepEqual((await batchStatus(shop.deps)).items.map(item => item.preset), ['Preset 2', 'Preset 1']);

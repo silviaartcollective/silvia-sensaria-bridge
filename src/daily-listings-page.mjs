@@ -45,7 +45,7 @@ textarea{min-height:300px;resize:vertical;font-size:13px}label{font-size:12px;fo
 <div class="rows" id="bt-uploads"></div>
 <div id="bt-status" class="notice hidden" role="status"></div>
 <div class="rows" id="bt-rows"></div>
-<div class="flex hidden" id="bt-actions" style="margin-top:12px"><div class="pair"><button type="button" id="bt-stop" class="hidden">Stop</button><button type="button" id="bt-resume" class="hidden">Resume</button><button type="button" id="bt-retry" class="hidden">Try the failed ones again</button><button type="button" id="bt-new" class="hidden">Start a new batch</button></div>
+<div class="flex hidden" id="bt-actions" style="margin-top:12px"><div class="pair"><button type="button" id="bt-stop" class="hidden">Stop</button><button type="button" id="bt-resume" class="hidden">Resume</button><button type="button" id="bt-retry" class="hidden">Try the failed ones again</button><button type="button" id="bt-start-over" class="hidden">Start over</button></div>
 <button class="primary" type="button" id="bt-publish" disabled>Publish 0 listings</button></div>
 </section>
 

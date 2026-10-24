@@ -112,6 +112,8 @@ const stagedMasterKey = (stageId, ext) => {
   if (!/^[a-f0-9-]{36}$/.test(String(stageId || ''))) throw new Error('Invalid staged master ID');
   return STAGING_PREFIX + stageId + '/master.' + String(ext || 'jpg').replace(/[^a-z0-9]/g, '');
 };
+// Where a staged master waits (the batch poster renders mockups from it).
+export const stagedMasterObjectKey = (stageId, filename) => stagedMasterKey(stageId, extensionFromFilename(filename));
 export async function stageMasterUpload({ filename, contentType, size } = {}) {
   if (!filename) throw new Error('A master artwork file is required');
   if (!(Number(size) > 0)) throw new Error('The master artwork size is required');
