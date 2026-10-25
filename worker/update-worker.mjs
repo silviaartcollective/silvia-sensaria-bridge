@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
  UPDATE_DIR,WORKER_DIR,compareVersions,downloadUpdate,installStaged,runningWorkerPid,stageUpdate,
- startWorker,updateSource,waitForExit
+ startWorker,stopWorker,updateSource,waitForExit
 } from './updater.mjs';
 
 const args=process.argv.slice(2);
@@ -24,8 +24,7 @@ async function applyAfterExit(){
  const after=Number(args[args.indexOf('--after')+1])||0;
  if(after&&!await waitForExit(after,120000)){
   log('The worker did not stop by itself; stopping it.');
-  try{process.kill(after)}catch{}
-  await waitForExit(after,15000);
+  await stopWorker(after);
  }
  return installStaged(staged,{log,previousPid:after});
 }
@@ -47,8 +46,7 @@ async function updateNow(){
  const pid=runningWorkerPid();
  if(pid){
   log('Stopping the running worker (an unfinished job is retried by its shop)…');
-  try{process.kill(pid)}catch{}
-  await waitForExit(pid,15000);
+  await stopWorker(pid);
  }
  return installStaged(staged,{log,previousPid:pid});
 }

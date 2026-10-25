@@ -42,8 +42,15 @@ export async function stopBatch(deps) {
 
 async function current(deps) {
   if (job) return job;
-  if (!loading) loading = Promise.resolve(deps.loadJob()).then(found => { if (!job) job = found || null; return job; })
-    .finally(() => { loading = null; });
+  if (!loading) loading = Promise.resolve(deps.loadJob()).then(found => {
+    if (!job) {
+      job = found || null;
+      // Read after a restart: nothing works on its items any more, so they wait
+      // (and are picked up again) instead of looking busy for ever.
+      for (const item of job?.items || []) if (item.status === 'working') { item.status = 'waiting'; item.step = 'Stopped'; }
+    }
+    return job;
+  }).finally(() => { loading = null; });
   return loading;
 }
 // Saves run one after another, so an older copy never overwrites a newer one.
@@ -116,6 +123,14 @@ async function lane(deps, mine) {
   }
 }
 
+// After a restart (a deploy, or Render moving the service) a batch that was
+// not stopped goes on by itself.
+export async function resumeAfterRestart(deps) {
+  const batch = await current(deps);
+  if (batch && !batch.paused && !batch.closed && batch.items.some(item => item.status === 'waiting')) run(deps);
+  return Boolean(control);
+}
+
 export async function resumeBatch(deps, { retryFailed = false } = {}) {
   if (!await current(deps)) throw Error('There is no batch to resume.');
   if (control?.stop) throw Error('The batch is still stopping; try again in a moment.');
@@ -161,7 +176,8 @@ async function processItem(deps, item, mine) {
       item.mockups = { total: mockups.total, done: mockups.done, failed: mockups.failed };
       if (mockups.finished) break;
       if (stopped()) return;
-      await step('Mockups: ' + mockups.done + ' of ' + mockups.total + ' made on the PC');
+      // What the PC is doing, so a slow step (a large master downloading) or an offline worker shows.
+      await step('Mockups: ' + mockups.done + ' of ' + mockups.total + ' made on the PC' + (mockups.note ? ' · ' + mockups.note : ''));
       await deps.pause(MOCKUP_POLL_MS);
     }
     if (!mockups.completedIds.length) throw Error('No mockup could be made for this artwork on the PC.');

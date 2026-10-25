@@ -43,8 +43,13 @@ test('an R2 timeout shows a readable message instead of "TimeoutError"',()=>{
  assert.match(read('src/mockup-api.mjs'),/Cloudflare R2 did not respond in time/);
 });
 
-test('the newest batch is rendered first so the current listing never waits behind old ones',()=>{
- assert.match(read('src/mockup-api.mjs'),/return jobs\.sort\(\(a,b\)=>String\(b\.createdAt\)\.localeCompare\(String\(a\.createdAt\)\)\);/);
+test('the newest batch is rendered first so the current listing never waits behind old ones; Daily Listings\' oldest first after it',async()=>{
+ const {claimOrder}=await import('../src/mockup-api.mjs');
+ const job=(id,minute,queue)=>({id,createdAt:'2026-10-25T21:'+String(minute).padStart(2,'0')+':00Z',...(queue?{queue}:{})});
+ const order=claimOrder([job('daily1',1,'batch'),job('creator1',2),job('daily3',5,'batch'),job('daily2',3,'batch'),job('creator2',4)]);
+ assert.deepEqual(order.map(j=>j.id),['creator2','creator1','daily1','daily2','daily3']);
+ assert.match(read('src/mockup-api.mjs'),/ return claimOrder\(jobs\);/);
+ assert.equal(read('src/server.mjs').match(/queue:'batch'\}/g).length,2);
 });
 
 test('a waiting batch says when the PC worker is busy elsewhere',()=>{

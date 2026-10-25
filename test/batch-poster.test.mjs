@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, startOver,
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, resumeAfterRestart, setPublish, publishBatch, closeBatch, startOver,
   layoutOfPixels, resetBatchMemory, MAX_BATCH } from '../src/batch-poster.mjs';
 
 const stage = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
@@ -176,6 +176,64 @@ test('after a restart, resume picks the batch up from R2 and finishes it once', 
   assert.equal(shop.log.filter(line => line.startsWith('reserve')).length, 1);
   assert.equal(shop.log.filter(line => line.startsWith('mockups')).length, 1);
   assert.equal(shop.log.filter(line => line.startsWith('draft')).length, 1);
+});
+
+// The server stops mid-batch (a deploy, Render moving it): its lanes are gone and
+// R2 still has the artworks it was working on as "working".
+async function restartMidBatch(shop, artworks) {
+  resetBatchMemory();
+  for (const artwork of artworks) await addToBatch(shop.deps, artwork);
+  for (let i = 0; i < 50; i++) await tick();
+  const inR2 = JSON.parse(JSON.stringify(shop.saved.job));
+  assert.ok(inR2.items.some(item => item.status === 'working'));
+  shop.deps.pause = shop.deps.mockupStatus = () => new Promise(() => {}); // the old process is gone
+  resetBatchMemory();
+  const after = fakeShop();
+  after.saved.job = inR2;
+  after.deps.mockupStatus = async () => ({ total: 4, done: 4, failed: 0, finished: true, completedIds: ['t1', 't2', 't3', 't4'] });
+  after.deps.writeSeo = async item => ({ title: 'Title ' + item.filename, description: 'About it', tags: ['a'], style: 'Minimalist' });
+  return after;
+}
+
+test('after a restart a batch that was not stopped goes on by itself', async () => {
+  const after = await restartMidBatch(fakeShop({ holdMockups: true }), [art(1, 'one.jpg'), art(2, 'two.jpg')]);
+  assert.deepEqual((await batchStatus(after.deps)).items.map(item => item.status), ['waiting', 'waiting']);
+  assert.equal(await resumeAfterRestart(after.deps), true);
+  await idle();
+  const items = (await batchStatus(after.deps)).items;
+  assert.deepEqual(items.map(item => item.status + (item.error ? ': ' + item.error : '')), ['ready', 'ready']);
+});
+
+test('after a restart, an artwork added before Resume does not leave the earlier ones looking busy for ever', async () => {
+  const after = await restartMidBatch(fakeShop({ holdMockups: true }), [art(1, 'one.jpg'), art(2, 'two.jpg')]);
+  await addToBatch(after.deps, art(3, 'three.jpg'));
+  await idle();
+  assert.deepEqual((await batchStatus(after.deps)).items.map(item => item.status), ['ready', 'ready', 'ready']);
+});
+
+test('a stopped batch stays stopped after a restart', async () => {
+  resetBatchMemory();
+  const shop = fakeShop({ holdMockups: true });
+  await addToBatch(shop.deps, art(1, 'one.jpg'));
+  for (let i = 0; i < 50; i++) await tick();
+  await stopBatch(shop.deps);
+  await idle();
+  resetBatchMemory();
+  assert.equal(await resumeAfterRestart(shop.deps), false);
+  assert.equal(batchRunning(), false);
+  assert.equal((await batchStatus(shop.deps)).items[0].status, 'waiting');
+});
+
+test('while the mockups are made, the artwork says what the PC is doing', async () => {
+  resetBatchMemory();
+  const shop = fakeShop({ holdMockups: true });
+  const status = shop.deps.mockupStatus;
+  shop.deps.mockupStatus = async jobId => ({ ...await status(jobId), note: 'Preparing master artwork on PC' });
+  await addToBatch(shop.deps, art(1, 'one.jpg'));
+  for (let i = 0; i < 50; i++) await tick();
+  assert.equal((await batchStatus(shop.deps)).items[0].step, 'Mockups: 0 of 4 made on the PC · Preparing master artwork on PC');
+  await stopBatch(shop.deps);
+  await idle();
 });
 
 test('Start over empties the batch, stops what is under way and removes uploads that have no artwork ID', async () => {

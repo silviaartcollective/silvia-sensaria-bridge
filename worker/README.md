@@ -97,4 +97,6 @@ From **v4.6.0** the worker updates itself. Every heartbeat reply from the Silvia
 
 **OneDrive folders (v4.7.8):** a mockup folder kept in OneDrive is read too: its files and folders are cloud placeholders, which Windows lists as links, so the worker checks what each one really is.
 
-The dashboards should show **Crop + Mockup Worker v4.7.8**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.
+**Restarts itself (v4.7.9):** `start-worker.cmd` runs the worker under `supervise.mjs`. If the worker stops unexpectedly (a crash, or Windows ending it when memory runs out), it is started again within seconds and carries on with the queued mockups and crops; `worker.log` and each shop's Render log say why it stopped. `stop-worker.cmd` and updates stop it for good (they leave `%TEMP%\pod-crop-worker.lock.stop`, which the next start clears).
+
+The dashboards should show **Crop + Mockup Worker v4.7.9**. `worker.log` prints a `PSD_TIMINGS` line per mockup. The PSD/artwork download cache (`%LOCALAPPDATA%\pod-worker-cache\v1`, 4 GB by default, `POD_WORKER_CACHE_GB` to change) and the prepared-template cache can both be deleted while the worker is stopped.

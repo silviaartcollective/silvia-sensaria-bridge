@@ -32,7 +32,7 @@ import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uplo
 import {mockupObjectKey} from './production.mjs';
 import { handleMockupAPI, mockupJobFromArtwork, mockupJobFromStaged } from './mockup-api.mjs';
 import { mockupOrientationOf } from './mockup-orientation.mjs';
-import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits, photoOrderKey, orderForArtwork } from './batch-poster.mjs';
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, resumeAfterRestart, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits, photoOrderKey, orderForArtwork } from './batch-poster.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
 import { generateEtsySeo, loadAiSeoSettings, saveAiSeoSettings, aiSeoConfigured, seoImage, seoPasteText, sectionUrl, DEFAULT_AI_SEO_INSTRUCTIONS, DEFAULT_AI_SEO_MODEL } from './ai-seo.mjs';
@@ -688,6 +688,16 @@ function recordCropWorkerHeartbeat(input = {}) {
 // not offline, for up to three minutes.
 const WORKER_UPDATE_RESTART_MS = 3 * 60 * 1000;
 
+// The PC worker says why it was started again after stopping unexpectedly
+// (worker/supervise.mjs); logged once, so Render's log keeps the reason.
+let loggedWorkerRestart='';
+function logWorkerRestart(restart){
+  const at=String(restart?.at||'');
+  if(!at||at===loggedWorkerRestart)return;
+  loggedWorkerRestart=at;
+  console.error('PC worker stopped unexpectedly at '+at+' ('+String(restart.reason||'unknown').slice(0,200)+
+    ', after '+(Number(restart.ranSeconds)||0)+' s) and was started again. Its last lines:\n'+String(restart.lastLines||'(none)').slice(0,1500));
+}
 function cropWorkerStatus() {
   const configured = Boolean(String(process.env.CROP_WORKER_TOKEN || '').trim());
   const online = configured &&
@@ -963,9 +973,10 @@ function batchDeps(){
         preset.templates.filter(t=>templateSuits(t,layout)).map(t=>t.id).slice(0,room);
       if(!ids.length)throw Error(preset.name+' has no '+LAYOUT_NAMES[layout]+' mockups. Add some to its folder on the PC '+
         '(or set their orientation in the Product Creator), then try again.');
-      const job=item.artworkId?await mockupJobFromArtwork({artworkId:item.artworkId,templateIds:ids}):
+      // queue:'batch': the PC makes these oldest first, after any Product Creator mockups.
+      const job=item.artworkId?await mockupJobFromArtwork({artworkId:item.artworkId,templateIds:ids,queue:'batch'}):
         await mockupJobFromStaged({stagedKey:stagedMasterObjectKey(item.stageId,item.filename),filename:item.filename,
-          templateIds:ids,orientation:layout}).catch(error=>{
+          templateIds:ids,orientation:layout,queue:'batch'}).catch(error=>{
           throw /not found|NoSuchKey|404/i.test(String(error?.message||error))
             ?Error('The uploaded file is no longer in temporary storage (kept 3 days). Start over and add this artwork again.'):error;
         });
@@ -984,8 +995,11 @@ function batchDeps(){
     mockupStatus:async jobId=>{
       const job=await getMockupJob(jobId);
       const count=status=>job.templates.filter(t=>t.status===status).length;
+      const working=job.templates.find(t=>t.status==='processing');
+      const note=!cropWorkerStatus().online?'the PC worker is offline: start it on the PC to go on':
+        working?String(working.progress||'').replace(/\.+$/,''):count('queued')?'waiting for the PC to finish the artworks before it':'';
       return {total:job.templates.length,done:count('completed'),failed:count('failed')+count('needs_mapping'),
-        finished:!job.templates.some(t=>['queued','processing'].includes(t.status)),
+        finished:!job.templates.some(t=>['queued','processing'].includes(t.status)),note,
         completedIds:job.templates.filter(t=>t.status==='completed').map(t=>t.id)};
     },
     writeSeo:async item=>{
@@ -3262,6 +3276,7 @@ const server = http.createServer(async (req, res) => {
       if (!String(input.workerId || '').trim()) {
         return sendJson(res, 400, { ok: false, error: 'workerId is required' });
       }
+      logWorkerRestart(input.restart);
       return sendJson(res, 200, {
         ok: true,
         worker: recordCropWorkerHeartbeat(input),
@@ -6429,6 +6444,9 @@ server.listen(port, '0.0.0.0', () => {
   setTimeout(()=>{void recoverRecentGeneratedJpgs().catch(
     error=>console.error('PSD startup recovery failed:',error)
   );},30000).unref();
+  // A Daily Listings batch that was running before this restart goes on.
+  setTimeout(()=>{void resumeAfterRestart(batchDeps()).then(resumed=>{if(resumed)console.log('Daily Listings batch resumed after a restart.')},
+    error=>console.error('Daily Listings batch could not resume after a restart:',error.message));},15000).unref();
   if(AUTO_REVIEW_ENABLED){
     setTimeout(()=>{void reconcileNewEtsyPaidOrders();},30000).unref();
     setInterval(()=>{void reconcileNewEtsyPaidOrders();},AUTO_REVIEW_INTERVAL_MS).unref();

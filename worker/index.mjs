@@ -429,6 +429,10 @@ function activeFor(app){
   return list.find(a=>a.app.appUrl===app.appUrl&&a.type==='mockup')||
     list.find(a=>a.app.appUrl===app.appUrl)||list[0]||null;
 }
+// Why supervise.mjs last started the worker again, sent with the heartbeats
+// for a while so each shop's log shows it.
+const RESTART=(()=>{try{return JSON.parse(process.env.POD_WORKER_RESTART||'null')}catch{return null}})();
+const STARTED_AT=Date.now(),RESTART_REPORT_MS=15*60*1000;
 async function heartbeatAll(){
   if(heartbeatInFlight)return;
   heartbeatInFlight=true;
@@ -436,6 +440,7 @@ async function heartbeatAll(){
     await Promise.allSettled(APP_CONNECTIONS.map(async app=>{
       try{
         const reply=await clientFor(app).heartbeat({...heartbeatFor(app,activeFor(app)),update:updateState,autoUpdate:AUTO_UPDATE,
+          ...(RESTART&&Date.now()-STARTED_AT<RESTART_REPORT_MS?{restart:RESTART}:{}),
           mockupFolder:app.mockupFolder?{path:app.mockupFolder,count:folderStatus.get(app.appUrl)?.count||0,
             error:folderStatus.get(app.appUrl)?.error||'',fromConfig:!!app.configMockupFolder}:null});
         if(app===UPDATE_SOURCE)void considerUpdate(reply?.latestWorkerVersion);
@@ -726,6 +731,9 @@ async function main(){
   catch(error){console.error('ag-psd mask patch failed:',error.message)}
   process.on('SIGINT',stop);
   process.on('SIGTERM',stop);
+  // A failed promise nobody waited for is logged; the worker carries on.
+  process.on('unhandledRejection',error=>console.error('Unexpected error (the worker carries on):',error?.stack||error));
+  if(RESTART)console.log('Started again after it stopped unexpectedly ('+RESTART.reason+').');
   process.on('exit',()=>{try{fs.rmSync(LOCK_PATH,{force:true});}catch{}});
   console.log('Shared POD Crop Worker online as '+WORKER_ID+' for: '+
     APP_CONNECTIONS.map(app=>app.name).join(', '));

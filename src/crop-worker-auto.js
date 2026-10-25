@@ -1,4 +1,5 @@
-// Automatically request the existing shared Windows crop worker when an admin page opens.
+// Automatically request the existing shared Windows crop worker when an admin page opens,
+// and again while the page stays open if the worker stops (e.g. during a Daily Listings batch).
 // Browsers can require permission or a user click for custom URL protocols; keep a manual fallback.
 (()=>{
  'use strict';
@@ -7,7 +8,7 @@
  const URL='pod-crop-worker://start';
  const STATUS='/api/crop-worker/status';
  const KEY='pod-crop-worker-autostart-v1';
- const COOLDOWN=10*60*1000;
+ const COOLDOWN=5*60*1000,RECHECK=60*1000;
  const isWindows=()=>/win/i.test(String(navigator.userAgentData?.platform||navigator.platform||navigator.userAgent||''));
  const lastAttempt=()=>{try{return Number(sessionStorage.getItem(KEY)||0)}catch{return 0}};
  const saveAttempt=()=>{try{sessionStorage.setItem(KEY,String(Date.now()))}catch{}};
@@ -76,4 +77,6 @@
  if(document.readyState==='loading')
   document.addEventListener('DOMContentLoaded',()=>{void attemptLaunch()},{once:true});
  else void attemptLaunch();
+ // A worker that stopped while this page is open is started again.
+ setInterval(()=>{if(document.visibilityState==='visible')void attemptLaunch()},RECHECK);
 })();
