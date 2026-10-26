@@ -7,13 +7,14 @@ import { renderDashboard } from './dashboard.mjs';
 import {workerUpdateBundle,latestWorkerVersion,heartbeatUpdate,workerUpdateText,compareWorkerVersions} from './worker-update.mjs';
 import { renderReadinessPage } from './readiness-page.mjs';
 import { renderListingReposterPage } from './listing-reposter-page.mjs';
+import { renderRepostListingsPage } from './repost-listings-page.mjs';
 import { renderDailyListingsPage } from './daily-listings-page.mjs';
 import {
   cropOutputKeyForJob, isStagedRevisionJob, isStagedConverterCropJob, reserveArtworkRevision,
   startArtworkRevisionCrop, getArtworkRevisionStatus, artworkIdFromInventory
 } from './artwork-revision.mjs';
 import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement, listingSalesCount } from './listing-reposter.mjs';
-import { startRenewal, stopRenewal, renewalRunning, MAX_RENEWALS } from './listing-renewer.mjs';
+import { startRenewal, resumeRenewal, stopRenewal, renewalRunning, MAX_RENEWALS, DEFAULT_RENEWALS } from './listing-renewer.mjs';
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
@@ -1123,12 +1124,96 @@ async function repostTemplate({listing,inventory,properties},{style=''}={}){
     }:null
   };
 }
+// A reposted listing that the converter linked to its artwork stays linked:
+// the new listing takes the old one's place in the converter map.
+async function relinkReposted(oldId,newId){
+  const mapping=await loadListingConverterMap(),source=mapping.listings?.[String(oldId)];
+  if(!(source?.status==='converted'&&source.artworkId))return;
+  const nextId=String(newId),other=mapping.listings[nextId];
+  if(other&&other.artworkId!==source.artworkId)
+    throw new Error('Replacement is already mapped to another artwork. Review Etsy listing manually.');
+  mapping.listings[nextId]={...source,listingId:Number(nextId),status:'converted',
+    replacedFromListingId:Number(oldId),repostedAt:new Date().toISOString()};
+  mapping.listings[String(oldId)]={...source,status:'reposted',replacedByListingId:Number(nextId)};
+  await saveListingConverterMap(mapping);
+}
+// SEO for a listing reposted with new mockups: ChatGPT's title, tags, style and
+// description; the listing keeps its shop section.
+async function refreshSeo(listingId){
+  const session=await getEtsySession();
+  const args={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+  const listing=await getListing({listingId,...args});
+  const [first]=await getEtsyListingImages({listingId,...args});
+  if(!first)throw Error('This listing has no photos for ChatGPT to look at.');
+  let layout='';
+  try{layout=listingLayoutForManifest(await loadArtworkManifest(artworkIdFromInventory(await getListingInventory({listingId,...args}))))}catch{}
+  const context=await seoShopContext(session);
+  const seo=await generateEtsySeo({image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
+    orientation:layout,previous:{title:listing.title,tags:listing.tags||[]},...context});
+  const current=context.sections.find(item=>String(item.shop_section_id)===String(listing.shop_section_id||''));
+  return {title:seo.title,tags:seo.tags,style:seo.style,description:seo.description,
+    ...(current?{sectionId:String(current.shop_section_id),sectionName:current.title,sectionUrl:sectionUrl(context.shopName,current.shop_section_id)}
+      :{sectionId:seo.sectionId,sectionName:seo.sectionName,sectionUrl:seo.sectionUrl})};
+}
+// Listing Reposter (listing-renewer.mjs). The mockup, draft and publish steps
+// are the Daily Listings batch's (batchDeps).
+const REPOST_PRESET_KEY='settings/listing-renewer/mockup-preset.json';
 function renewalDeps(){
+  const batch=batchDeps();
+  const etsyArgs=async()=>{const s=await getEtsySession();return {keystring:s.keystring,sharedSecret:s.sharedSecret,accessToken:s.accessToken}};
   return {
     newId:()=>crypto.randomUUID(),
+    loadJob:loadRenewalJob,
     saveJob:job=>putJsonObject(RENEWER_JOB_KEY,job),
+    pause:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
     listActive:async()=>allActiveListings(await getEtsySession()),
     salesCount:async id=>listingSalesCount(await getEtsySession(),id),
+    // Whether the listing's artwork is in the app (it then gets new mockups), its shape and first photo.
+    describe:async listingId=>{
+      const args=await etsyArgs();
+      const [inventory,[first]]=await Promise.all([getListingInventory({listingId,...args}),getEtsyListingImages({listingId,...args})]);
+      let artworkId='',layout='';
+      try{
+        const id=artworkIdFromInventory(inventory),manifest=await loadArtworkManifest(id);
+        if(manifest?.status==='ready'&&manifest.master?.key&&await artworkObjectExists(manifest.master.key)){artworkId=id;layout=listingLayoutForManifest(manifest)}
+      }catch{}
+      return {artworkId,layout,photo:first?.url_170x135||first?.url_570xN||''};
+    },
+    refreshSeo,
+    startMockups:batch.startMockups,
+    mockupStatus:batch.mockupStatus,
+    // The artwork lets go of its old listing and mockups, so the new listing is
+    // set up from scratch with this run's mockups (a draft left by an earlier
+    // try of this listing is kept and finished).
+    prepareArtwork:async row=>{
+      const args=await etsyArgs(),manifest=await loadArtworkManifest(row.artworkId);
+      let keepDraft=false;
+      if(manifest?.etsyDraftListingId&&String(manifest.etsyDraftListingId)!==String(row.listingId))
+        keepDraft=(await getListing({listingId:manifest.etsyDraftListingId,...args}).catch(()=>null))?.state==='draft';
+      await updateArtworkManifest(row.artworkId,current=>{
+        current.repostHistory=[...(current.repostHistory||[]),{at:new Date().toISOString(),fromListingId:Number(row.listingId),
+          previousListingId:current.etsyDraftListingId||null,previousMockups:(current.mockups||[]).length}].slice(-20);
+        current.mockups=[];current.selectedMockupTemplates={};delete current.etsyPhotoOrder;
+        if(!keepDraft)for(const field of ['etsyDraftListingId','etsyDraftCreatedAt','etsyDraftSetup','etsyConfiguredAt','etsyConfiguration'])
+          delete current[field];
+      });
+    },
+    attachMockups:batch.attachMockups,
+    savePhotoOrder:batch.savePhotoOrder,
+    createDraft:batch.createDraft,
+    draftSetup:batch.draftSetup,
+    publish:batch.publish,
+    deactivate:async(oldId,newId)=>{
+      const session=await getEtsySession(),args=await etsyArgs();
+      const old=await getListing({listingId:oldId,...args});
+      if(old.state==='active')
+        await withEtsyListingRetry(()=>updateListing({...args,shopId:session.shop.shop_id,listingId:oldId,listing:{state:'inactive'}}));
+      const [oldAfter,newAfter]=await Promise.all([getListing({listingId:oldId,...args}),getListing({listingId:newId,...args})]);
+      if(newAfter.state!=='active'||oldAfter.state!=='inactive')
+        throw Error('Check both listings on Etsy: the new one is '+newAfter.state+', the old one '+oldAfter.state+'.');
+      await relinkReposted(oldId,newId);
+    },
+    // A listing whose artwork is not in the app is copied (listing-reposter.mjs).
     record:async id=>{
       const session=await getEtsySession();
       try{return await getJsonObject('reposter/'+session.shop.shop_id+'/'+id+'/replacement.json')}
@@ -1137,7 +1222,11 @@ function renewalDeps(){
     newSeo:renewalSeo,
     prepare:async(id,input)=>prepareReplacement(await getEtsySession(),id,input,{automatic:true,
       template:context=>repostTemplate(context,{style:input.style})}),
-    finalize:async id=>finalizeReplacement(await getEtsySession(),id,'PUBLISH AND DELETE OLD',{deleteOld:true})
+    finalize:async id=>{
+      const result=await finalizeReplacement(await getEtsySession(),id,'PUBLISH AND DEACTIVATE');
+      await relinkReposted(id,result.record.draftId);
+      return result;
+    }
   };
 }
 function photoReplacerDeps(){
@@ -5019,7 +5108,7 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/daily-listings'))return;
     return sendHtml(res,200,renderDailyListingsPage());
   }
-  if(req.method==='GET'&&(url.pathname==='/daily-listings-client.js'||url.pathname==='/daily-batch-client.js')){
+  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js'].includes(url.pathname)){
     if(!requireAdminApi(req,res))return;
     const js=readFileSync(new URL('.'+url.pathname,import.meta.url),'utf8');
     res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
@@ -5041,8 +5130,9 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res,200,{ok:true,job,running:batchRunning(),max:MAX_BATCH,chatGpt:aiSeoConfigured()});
       }
       if(req.method==='GET'&&action==='/presets'){
+        // The preset chosen for Daily Listings, or for the Listing Reposter (?for=repost).
         const [templates,media,orders,folder,saved]=await Promise.all([listMockupTemplates(),presetMediaStatus(),loadPhotoOrders(),
-          getPcMockupFolder(),getJsonObject(BATCH_PRESET_KEY).catch(()=>null)]);
+          getPcMockupFolder(),getJsonObject(url.searchParams.get('for')==='repost'?REPOST_PRESET_KEY:BATCH_PRESET_KEY).catch(()=>null)]);
         const presetImages=presetImagesOf(media),room=ETSY_PHOTO_LIMIT-presetImages.length;
         const video=media.items.find(item=>item.exists&&item.role==='video');
         const ready=templates.filter(t=>t.status==='ready'),presets=mockupPresets(ready);
@@ -5098,7 +5188,7 @@ const server = http.createServer(async (req, res) => {
         const name=String(body.name||'').slice(0,120);
         if(!mockupPresets(await listMockupTemplates()).some(item=>presetKey(item.name)===presetKey(name)))
           return sendJson(res,400,{ok:false,error:'That preset is not a folder in the PC mockup folder.'});
-        await putJsonObject(BATCH_PRESET_KEY,{name,savedAt:new Date().toISOString()});
+        await putJsonObject(body.for==='repost'?REPOST_PRESET_KEY:BATCH_PRESET_KEY,{name,savedAt:new Date().toISOString()});
         return sendJson(res,200,{ok:true,chosen:name});
       }
       if(action==='/preview-url'){
@@ -5154,29 +5244,38 @@ const server = http.createServer(async (req, res) => {
         if(job&&!renewalRunning()&&['finding','renewing'].includes(job.status))job.status='stopped';
         let scopes=new Set();
         try{scopes=new Set(String((await getEtsySession()).scope||'').split(/\s+/))}catch{}
-        return sendJson(res,200,{ok:true,job,running:renewalRunning(),max:MAX_RENEWALS,
-          chatGpt:aiSeoConfigured(),canDelete:scopes.has('listings_d')});
+        return sendJson(res,200,{ok:true,job,running:renewalRunning(),max:MAX_RENEWALS,count:DEFAULT_RENEWALS,
+          chatGpt:aiSeoConfigured(),canEdit:['listings_r','listings_w','transactions_r'].every(scope=>scopes.has(scope))});
       }
       if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'Method not allowed.'});
       if(action==='/stop')return sendJson(res,200,{ok:true,stopping:stopRenewal()});
-      if(action!=='/start')return sendJson(res,404,{ok:false,error:'Unknown renewal action.'});
+      if(!['/start','/resume'].includes(action))return sendJson(res,404,{ok:false,error:'Unknown reposter action.'});
       const body=await readJsonBody(req);
-      if(body.confirm!=='RENEW LISTINGS ON ETSY')
-        return sendJson(res,400,{ok:false,error:'Explicit confirmation is required: this publishes new listings and deletes the old ones.'});
+      if(body.confirm!=='REPOST LISTINGS ON ETSY')
+        return sendJson(res,400,{ok:false,error:'Explicit confirmation is required: this publishes new listings and deactivates the old ones.'});
       if(!aiSeoConfigured())return sendJson(res,400,{ok:false,error:'ChatGPT is not connected: add OPENAI_API_KEY in Render first.'});
       const session=await getEtsySession();
       const scopes=new Set(String(session.scope||'').split(/\s+/));
-      const lacking=['listings_r','listings_w','listings_d','transactions_r'].filter(scope=>!scopes.has(scope));
-      if(lacking.length)return sendJson(res,403,{ok:false,needsReauthorization:true,
-        error:'Reconnect Etsy first (the Reconnect Etsy link on this page): renewing needs permission to '+
-          (lacking.includes('listings_d')?'delete the old listings':'read and edit listings and sales')+'.'});
-      const job=await startRenewal(renewalDeps(),{count:body.count});
+      if(!['listings_r','listings_w','transactions_r'].every(scope=>scopes.has(scope)))return sendJson(res,403,{ok:false,needsReauthorization:true,
+        error:'Reconnect Etsy first (the Reconnect Etsy link on this page): reposting needs permission to read and edit listings and sales.'});
+      if(action==='/resume'){
+        const job=await resumeRenewal(renewalDeps(),{retryFailed:body.retryFailed===true});
+        return sendJson(res,200,{ok:true,job,running:true});
+      }
+      // The new listings get their mockups from the preset chosen on the Listing Reposter page.
+      const preset=(await getJsonObject(REPOST_PRESET_KEY).catch(()=>null))?.name||'';
+      const job=await startRenewal(renewalDeps(),{count:body.count,preset});
       return sendJson(res,200,{ok:true,job,running:true});
     }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
   }
 
   if (req.method === 'GET' && url.pathname === '/listing-reposter') {
     if (!requireAdminPage(req,res,'/listing-reposter')) return;
+    return sendHtml(res,200,renderRepostListingsPage());
+  }
+  // The single-listing reposter (your own SEO and mockups, or a replacement artwork).
+  if (req.method === 'GET' && url.pathname === '/listing-reposter/one') {
+    if (!requireAdminPage(req,res,'/listing-reposter/one')) return;
     return sendHtml(res,200,renderListingReposterPage('Silvia Art Collective'));
   }
   if (req.method === 'GET' && url.pathname === '/api/reposter/candidates') {
@@ -5217,16 +5316,7 @@ const server = http.createServer(async (req, res) => {
       if(action==='finalize'){
         const result=await finalizeReplacement(session,id,body.confirm);
         // Preserve the converted listing's artwork ID linkage for the new Etsy listing.
-        const mapping=await loadListingConverterMap(),source=mapping.listings?.[id];
-        if(source?.status==='converted' && source.artworkId){
-          const nextId=String(result.record.draftId),other=mapping.listings[nextId];
-          if(other && other.artworkId!==source.artworkId)
-            throw new Error('Replacement is already mapped to another artwork. Review Etsy listing manually.');
-          mapping.listings[nextId]={...source,listingId:Number(nextId),status:'converted',
-            replacedFromListingId:Number(id),repostedAt:new Date().toISOString()};
-          mapping.listings[id]={...source,status:'reposted',replacedByListingId:Number(nextId)};
-          await saveListingConverterMap(mapping);
-        }
+        await relinkReposted(id,result.record.draftId);
         return sendJson(res,200,{ok:true,...result});
       }
     }catch(error){return sendJson(res,400,{ok:false,error:String(error.message||error)});}

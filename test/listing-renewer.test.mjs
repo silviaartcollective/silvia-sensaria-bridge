@@ -115,6 +115,8 @@ function deps({ saved, onPrepared = () => {}, template = null } = {}) {
     newId: () => 'job-' + ++n,
     saveJob: async job => { saved.job = structuredClone(job); },
     listActive: async () => [...etsy.listings.values()].filter(item => item.state === 'active'),
+    // These listings' artworks are not in the app: they are copied.
+    describe: async () => null,
     salesCount: id => reposter.listingSalesCount(session, id),
     record: async id => { try { return await getJsonObject('reposter/' + SHOP + '/' + id + '/replacement.json'); } catch { return null; } },
     newSeo: async id => ({ title: 'New Title For ' + id, description: 'New description ' + id,
@@ -223,7 +225,7 @@ test('an app-made listing is renewed with the current template: today\'s sizes, 
   await finished();
   const row = saved.job.results[0];
   assert.equal(row.status, 'done', row.error);
-  assert.equal(row.note, 'Sizes, prices and profiles from the current template.');
+  assert.equal(row.note, 'Photos copied; sizes, prices and profiles from the current template.');
   assert.equal(etsy.listings.has(401), false);
   const sizes = etsy.inventory.get(row.newListingId).products.map(p => p.property_values[0].values[0] + ' ' + p.offerings[0].price);
   assert.deepEqual(sizes, ['16x24 45', '20x30 65', '30x45 140']);

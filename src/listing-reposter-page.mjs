@@ -22,7 +22,7 @@ th,td{padding:11px 9px;border-bottom:1px solid var(--line);text-align:left;verti
 .actions{display:flex;gap:9px;flex-wrap:wrap;margin:14px 0}.hidden{display:none!important}
 @media(max-width:800px){.shell{grid-template-columns:1fr}aside{display:none}main{padding:22px 13px}.formgrid{grid-template-columns:1fr}.imageGrid{grid-template-columns:repeat(3,1fr)}h1{font-size:30px}}
 </style></head><body><div class="shell"><aside><nav><a class="nav active" href="/listing-reposter">Listing Reposter</a></nav></aside>
-<main><div class="flex"><div><h1>Listing Reposter</h1><p class="sub">__SHOP__ · Safely refresh zero-sale listings while retaining their product details.</p></div><a class="button" href="/">Dashboard</a></div>
+<main><p><a href="/listing-reposter">← Listing Reposter</a></p><div class="flex"><div><h1>Repost one listing</h1><p class="sub">__SHOP__ · Safely refresh zero-sale listings while retaining their product details.</p></div><a class="button" href="/">Dashboard</a></div>
 <div class="card flex" style="gap:14px"><div><strong>PC Crop Worker</strong>
 <p id="crop-worker-status" class="muted">Checking connection…</p></div>
 <div class="actions" style="margin:0">
