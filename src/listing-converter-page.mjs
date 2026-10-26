@@ -615,7 +615,8 @@ async function convertListing(item,card){
      master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size}})
    });
    const artworkId=d.artworkId,previouslyQueuedCropJobId=d.cropJobId||null;
-   if(d.resumed)status.textContent='Resuming '+artworkId+' with the existing ID…';
+   if(d.resumed)status.textContent=d.replacedFile?'Using '+file.name+' for '+artworkId+' (an earlier try was left unfinished)…':
+    'Resuming '+artworkId+' with the existing ID…';
    if(d.uploadAlreadyPresent){
     status.textContent='Artwork '+artworkId+' already in R2; reusing the uploaded source…';
     bar.style.width='65%';

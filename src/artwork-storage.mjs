@@ -89,6 +89,9 @@ function normalizeContentType(value, filename) {
     m4v: 'video/x-m4v'
   })[ext] || 'application/octet-stream';
 }
+// The master's file extension and type, as a reservation stores them.
+export const artworkFileExtension = filename => extensionFromFilename(filename);
+export const artworkContentType = (value, filename) => normalizeContentType(value, filename);
 
 function mockupSortOrder(filename, fallbackIndex) {
   const normalized = String(filename || '').toLowerCase().trim();

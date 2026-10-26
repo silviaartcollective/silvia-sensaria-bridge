@@ -48,6 +48,11 @@ test('a worker stopped on purpose (stop-worker.cmd, an update) is not started ag
 test('the launcher runs the worker under supervise.mjs; every deliberate stop leaves the marker',()=>{
  assert.match(read('worker/start-worker.cmd'),/'node supervise\.mjs >> worker\.log 2>&1'/);
  assert.doesNotMatch(read('worker/start-worker.cmd'),/'node index\.mjs/);
+ // A launch while the worker runs ends quietly, and nothing writes to the log the worker holds open.
+ const launcher=read('worker/start-worker.cmd');
+ assert.ok(launcher.indexOf("if \"%errorlevel%\"==\"3\" exit /b 0")<launcher.indexOf('node supervise.mjs'));
+ assert.doesNotMatch(launcher,/echo[^\n]*>>"%LOG%"/);
+ assert.match(launcher,/>>"%~dp0launch\.log" 2>nul/);
  assert.match(read('worker/stop-worker.cmd'),/Set-Content -Path \(\$lock \+ '\.stop'\) -Value \$p\.Id; Stop-Process/);
  const updater=read('worker/update-worker.mjs');
  assert.doesNotMatch(updater,/process\.kill\(/);

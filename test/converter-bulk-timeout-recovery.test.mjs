@@ -115,3 +115,15 @@ test('server uses one authenticated R2 store read for a batch of crop states',as
  assert.match(server,/requireAdminApi\(req,res\)/);
  assert.match(server,/ids.length>60/);
 });
+
+test('a conversion left reserved with another file takes the newly chosen master under the same artwork ID',()=>{
+ const reserve=server.slice(server.indexOf("url.pathname === '/api/listing-converter/reserve'"),server.indexOf("if (existing?.status === 'converted')"));
+ assert.doesNotMatch(reserve,/with another file\. Select the original master to resume/);
+ // The new file replaces the reserved master; its crops are made again and it is uploaded, not reused.
+ assert.match(reserve,/current\.master=\{originalFilename:filename,key:masterObjectKey\(existing\.artworkId,artworkFileExtension\(filename\)\)/);
+ assert.match(reserve,/'cropWorkerJobId','cropWorkerQueuedAt'\]\)delete current\[field\]/);
+ assert.match(reserve,/replacedFile:true,listingId,\s*artworkId:existing\.artworkId,orientation:replaced\.orientation,uploadAlreadyPresent:false,cropJobId:null/);
+ // A crop still made from the earlier file cannot overwrite the new one's.
+ assert.match(server,/if\(latest\.master\?\.key!==currentJob\.masterKey\)\s*throw Error\('Master artwork changed before default crops completed\.'\);/);
+ assert.match(html,/d\.replacedFile\?'Using '\+file\.name\+' for '\+artworkId/);
+});
