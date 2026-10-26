@@ -30,13 +30,16 @@ test.after(() => r2.close());
 
 // Etsy stand-in: listings, inventory, photos, videos, sales, publish and delete.
 const SHOP = 77;
+// Every listing renews in 2 days and was refreshed long ago: each unsold one is due for a repost.
+const NOW = 2e9;
 const etsy = { listings: new Map(), inventory: new Map(), images: new Map(), videos: new Map(), sales: new Map(),
   forms: new Map(), nextId: 9000, nextImage: 50000, calls: [] };
 function addListing(id, { title, created, sales = 0, photos = 20, video = true }) {
   etsy.listings.set(id, { listing_id: id, shop_id: SHOP, state: 'active', title, tags: ['old tag one', 'old tag two'],
     description: 'Old description', price: { amount: 3000, divisor: 100 }, quantity: 999, taxonomy_id: 2078,
     shipping_profile_id: 5, readiness_state_id: 6, return_policy_id: 7, shop_section_id: 111, who_made: 'i_did',
-    when_made: 'made_to_order', is_supply: false, should_auto_renew: true, original_creation_timestamp: created });
+    when_made: 'made_to_order', is_supply: false, should_auto_renew: true, original_creation_timestamp: created,
+    ending_timestamp: NOW + 2 * 86400 });
   etsy.inventory.set(id, { products: [
     { sku: 'SAC' + id + '-P-1218', offerings: [{ price: { amount: 3000, divisor: 100 }, quantity: 999, is_enabled: true }],
       property_values: [{ property_id: 513, property_name: 'Size', value_ids: [1], values: ['12x18'] }] },
@@ -113,7 +116,10 @@ function deps({ saved, onPrepared = () => {}, template = null } = {}) {
   let n = 0;
   return {
     newId: () => 'job-' + ++n,
+    now: () => NOW * 1000,
     saveJob: async job => { saved.job = structuredClone(job); },
+    refreshedListings: async () => Object.fromEntries([...etsy.listings.keys()].map(id => [id, { at: '2001-01-01T00:00:00.000Z' }])),
+    forgetRefreshed: async () => {},
     listActive: async () => [...etsy.listings.values()].filter(item => item.state === 'active'),
     // These listings' artworks are not in the app: they are copied.
     describe: async () => null,

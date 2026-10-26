@@ -15,8 +15,8 @@ import {
   cropOutputKeyForJob, isStagedRevisionJob, isStagedConverterCropJob, reserveArtworkRevision,
   startArtworkRevisionCrop, getArtworkRevisionStatus, artworkIdFromInventory
 } from './artwork-revision.mjs';
-import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement, listingSalesCount } from './listing-reposter.mjs';
-import { startRenewal, resumeRenewal, stopRenewal, renewalRunning, MAX_RENEWALS, DEFAULT_RENEWALS } from './listing-renewer.mjs';
+import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement, listingSalesCount, getListingVideos } from './listing-reposter.mjs';
+import { startRenewal, resumeRenewal, stopRenewal, renewalRunning, checkRules, MAX_RENEWALS, DEFAULT_RENEWALS, DEFAULT_RULES } from './listing-renewer.mjs';
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
 import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
@@ -179,6 +179,7 @@ import {
   updateListingProperty,
   getPropertiesByTaxonomyId,
   getListingInventory,
+  getListingProperties,
   updateListingInventory,
   uploadListingImage,
   setListingImageRank,
@@ -1160,6 +1161,91 @@ async function refreshSeo(listingId){
     ...(current?{sectionId:String(current.shop_section_id),sectionName:current.title,sectionUrl:sectionUrl(context.shopName,current.shop_section_id)}
       :{sectionId:seo.sectionId,sectionName:seo.sectionName,sectionUrl:seo.sectionUrl})};
 }
+// Refresh in place: the reposter's new mockups go on the listing itself, in
+// the preset's arranged order with the preset photos (as a new draft of the
+// artwork gets them), and the artwork's record follows: its mockups, photo
+// order and the Etsy photos the app put on. The listing keeps its video; one
+// without a video gets the preset video.
+async function refreshListingPhotos({listingId,artworkId,orientation,preset,mockupJobId,templateIds}){
+  const session=await getEtsySession();
+  const [manifest,job,media,orders]=await Promise.all([loadArtworkManifest(artworkId),getMockupJob(String(mockupJobId||'')),
+    presetMediaStatus(),loadPhotoOrders()]);
+  if(!manifest?.master?.key||job.artworkId!==artworkId)throw Error('These mockups belong to another artwork. Nothing was changed on Etsy.');
+  const chosen=new Set((templateIds||[]).map(String));
+  const outputs=job.templates.filter(t=>t.status==='completed'&&t.outputKey&&chosen.has(String(t.id)));
+  if(!outputs.length)throw Error('None of this run\'s mockups is ready in R2.');
+  // Copied into the artwork's folder, as for a new draft.
+  const copied=await mapWithConcurrency(outputs.map((t,index)=>({t,index})),6,async({t,index})=>{
+    const key=mockupObjectKey(artworkId,index,'jpg'),etsyKey=t.etsyKey?key.replace(/\.jpg$/,'.etsy.jpg'):'';
+    const [,etsyCopied]=await Promise.all([copyArtworkObject(mockupFileKey(t),key),
+      etsyKey?copyArtworkObject(t.etsyKey,etsyKey).then(()=>true,()=>false):false]);
+    return {index,originalFilename:t.outputName,key,contentType:'image/jpeg',generatedFromKey:t.outputKey,sourceJobId:job.id,
+      etsyKey:etsyCopied?etsyKey:''};
+  });
+  const presetImages=presetImagesOf(media),ids=outputs.map(t=>String(t.id));
+  const saved=orders[photoOrderKey(preset,orientation)]?.order;
+  const tiles=saved?.length?orderForArtwork(saved,{templateIds:ids,presetKeys:presetImages.map(item=>item.key)})
+    :defaultPlannedOrder({presets:presetImages,generated:ids.map(id=>'generated:'+id)});
+  const byTile=new Map([...copied.map((mockup,index)=>['generated:'+ids[index],mockup]),
+    ...presetImages.map(item=>['key:'+item.key,{key:item.key,originalFilename:item.filename}])]);
+  const photos=tiles.map(id=>byTile.get(id)).filter(Boolean).slice(0,ETSY_PHOTO_LIMIT).map(item=>({key:item.key,
+    filename:String(item.originalFilename||item.key.split('/').pop()),read:()=>etsyReadyImage(item.key,{etsyKey:item.etsyKey||''})}));
+  const placed=await replaceListingPhotos({session,listingId,photos,altText:manifest.title||''});
+  await updateArtworkManifest(artworkId,current=>{
+    current.refreshHistory=[...(current.refreshHistory||[]),{at:new Date().toISOString(),listingId:Number(listingId),
+      previousMockups:(current.mockups||[]).length}].slice(-20);
+    current.mockups=copied;current.selectedMockupTemplates={};
+    current.etsyPhotoOrder={tiles:photos.map(photo=>'key:'+photo.key),jobId:job.id,savedAt:new Date().toISOString()};
+    current.etsyMedia={...(current.etsyMedia||{}),images:placed};
+    current.etsyGeneratedSourceKeys=outputs.map(t=>t.outputKey);
+  });
+  // A full-size JPG still on its way from the PC replaces its copy when it arrives.
+  if(outputs.some(t=>t.fullPending))void refreshArtworkMockupCopies(artworkId,job.id).catch(()=>{});
+  const video=media.items.find(item=>item.role==='video'&&item.exists);
+  if(video&&!(await getListingVideos(session,listingId)).length){
+    const latest=await loadArtworkManifest(artworkId);
+    await uploadPreparedVideoToEtsy({session,listingId,manifest:{...latest,etsyMedia:{...(latest.etsyMedia||{}),video:null}},
+      plan:{mediaItems:[{key:video.key,contentType:video.contentType,originalFilename:video.filename,presetRole:'video'}],
+        reusableVideoId:await presetVideoId(session.shop.shop_id,video.key),objectByKey:new Map()}});
+  }
+  return {photos:placed.length};
+}
+// Refresh in place: the listing's new title, tags and description and, for an
+// artwork in the app, the current template's variants, profiles and style. The
+// description is built as for a new draft (the orientation's template); a
+// listing whose artwork is not in the app keeps its description and variants.
+async function refreshListingDetails({listingId,artworkId,seo}){
+  const session=await getEtsySession(),shopId=session.shop.shop_id;
+  const args={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
+  const write=listing=>withEtsyListingRetry(()=>updateListing({...args,shopId,listingId,listing}));
+  if(!artworkId)return write({title:seo.title,tags:seo.tags});
+  const [listing,inventory,properties,manifest]=await Promise.all([getListing({listingId,...args}),getListingInventory({listingId,...args}),
+    getListingProperties({shopId,listingId,...args}),loadArtworkManifest(artworkId)]);
+  const template=await repostTemplate({listing,inventory,properties},{style:seo.style});
+  if(!template)throw Error('The artwork '+artworkId+' is not ready in the app any more; its title and variants were not changed.');
+  const description=listingDescription((await loadListingTemplates().catch(()=>null))?.orientations?.[listingLayoutForManifest(manifest)]||null,
+    listingDefaults.descriptionTemplate,{seoDescription:seo.description,shopSectionName:seo.sectionName||'',shopSectionUrl:seo.sectionUrl||''});
+  const {price,quantity,readiness_state_id,...profiles}=template.listing;
+  await write({...profiles,title:seo.title,description,tags:seo.tags,shop_section_id:Number(seo.sectionId)||listing.shop_section_id||undefined});
+  await withEtsyListingRetry(()=>updateListingInventory({listingId,inventory:template.inventory,...args}));
+  if(template.applyAttributes)await template.applyAttributes(listingId);
+}
+// The listings the reposter refreshed, and when: one still unsold later is
+// reposted. Lanes record at the same time, so the writes take turns.
+const REFRESHED_KEY='settings/listing-renewer/refreshed.json',RENEWER_RULES_KEY='settings/listing-renewer/rules.json';
+let refreshedWrites=Promise.resolve();
+async function loadRefreshed(){
+  try{return (await getJsonObject(REFRESHED_KEY))?.listings||{}}catch(error){if(isMissingR2Object(error))return {};throw error}
+}
+function changeRefreshed(change){
+  const run=refreshedWrites.then(async()=>{
+    const listings=await loadRefreshed();change(listings);
+    await putJsonObject(REFRESHED_KEY,{listings,updatedAt:new Date().toISOString()});
+  });
+  refreshedWrites=run.catch(()=>{});
+  return run;
+}
+async function savedRenewalRules(){try{return checkRules(await getJsonObject(RENEWER_RULES_KEY))}catch{return {...DEFAULT_RULES}}}
 // Listing Reposter (listing-renewer.mjs). The mockup, draft and publish steps
 // are the Daily Listings batch's (batchDeps).
 const REPOST_PRESET_KEY='settings/listing-renewer/mockup-preset.json';
@@ -1169,10 +1255,14 @@ function renewalDeps(){
   const etsyArgs=async()=>{const s=await getEtsySession();return {keystring:s.keystring,sharedSecret:s.sharedSecret,accessToken:s.accessToken}};
   return {
     newId:()=>crypto.randomUUID(),
+    now:()=>Date.now(),
     loadJob:loadRenewalJob,
     saveJob:job=>putJsonObject(RENEWER_JOB_KEY,job),
     pause:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
     listActive:async()=>allActiveListings(await getEtsySession()),
+    refreshedListings:loadRefreshed,
+    markRefreshed:(listingId,info)=>changeRefreshed(listings=>{listings[String(listingId)]={...info,at:new Date().toISOString()}}),
+    forgetRefreshed:listingId=>changeRefreshed(listings=>{delete listings[String(listingId)]}),
     salesCount:async id=>listingSalesCount(await getEtsySession(),id),
     // Whether the listing's artwork is in the app (it then gets new mockups), its shape and first photo.
     describe:async listingId=>{
@@ -1188,6 +1278,9 @@ function renewalDeps(){
     refreshSeo,
     startMockups:batch.startMockups,
     mockupStatus:batch.mockupStatus,
+    // Refresh: the same listing gets the new mockups, SEO and template.
+    replacePhotos:refreshListingPhotos,
+    updateDetails:refreshListingDetails,
     // The artwork lets go of its old listing and mockups, so the new listing is
     // set up from scratch with this run's mockups (a draft left by an earlier
     // try of this listing is kept and finished).
@@ -1909,6 +2002,41 @@ async function ensureListingPhotoOrder({session,listingId,orderedIds}){
       sharedSecret:session.sharedSecret,accessToken:session.accessToken}),{attempts:6,baseDelayMs:220});
   }
   return updates.length;
+}
+// Puts new photos on a live listing in place of its old ones, so it is never
+// without photos: each new photo replaces the old one at its place (Etsy's
+// overwrite), old photos left over then come off, and the new ones are put in
+// order. Etsy keeps 20 photos at most: when the listing is full, an old photo
+// makes room. Run again after an interruption, it gives the same result.
+async function replaceListingPhotos({session,listingId,photos,altText=''}){
+  const args={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken},shopId=session.shop.shop_id;
+  const readImages=()=>getEtsyListingImages({listingId,...args});
+  const read=async()=>(await readImages()).slice().sort((a,b)=>Number(a.rank)-Number(b.rank));
+  const idOf=image=>String(image.listing_image_id);
+  const remove=image=>withEtsyListingRetry(()=>deleteListingImage({shopId,listingId,listingImageId:idOf(image),...args}),{attempts:4,baseDelayMs:220});
+  const before=await read(),placed=[];
+  for(const [index,photo] of photos.entries()){
+    const object=await photo.read(),rank=index+1,overwrite=rank<=before.length;
+    const upload=replace=>withEtsyListingRetry(()=>uploadListingImage({shopId,listingId,imageBuffer:object.body,filename:photo.filename,
+      contentType:object.contentType||'image/jpeg',rank,overwrite:replace,altText,...args}),{attempts:8,baseDelayMs:180});
+    let result;
+    try{result=await upload(overwrite)}
+    catch(error){
+      const live=await read(),mine=new Set(placed.map(row=>row.listingImageId));
+      const spare=live.filter(image=>!mine.has(idOf(image))).pop();
+      if(live.length>=ETSY_PHOTO_LIMIT&&spare)await remove(spare);
+      else if(!overwrite)throw error;
+      result=await upload(false);
+    }
+    const listingImageId=String(result?.listing_image_id||result?.listingImageId||'');
+    if(!listingImageId)throw Error('Etsy returned no image ID for '+photo.filename+'. Check the listing on Etsy before trying again.');
+    placed.push({key:photo.key,filename:photo.filename,rank,listingImageId});
+  }
+  const mine=new Set(placed.map(row=>row.listingImageId));
+  for(const image of await read())if(!mine.has(idOf(image)))await remove(image);
+  await verifyEtsyImageReceipts({receipts:placed,readImages});
+  await ensureListingPhotoOrder({session,listingId,orderedIds:placed.map(row=>row.listingImageId)});
+  return placed;
 }
 
 // The preset photos of a new draft (the video follows the mockups, see
@@ -5251,6 +5379,7 @@ const server = http.createServer(async (req, res) => {
         let scopes=new Set();
         try{scopes=new Set(String((await getEtsySession()).scope||'').split(/\s+/))}catch{}
         return sendJson(res,200,{ok:true,job,running:renewalRunning(),max:MAX_RENEWALS,count:DEFAULT_RENEWALS,
+          rules:await savedRenewalRules(),refreshed:Object.keys(await loadRefreshed().catch(()=>({}))).length,
           chatGpt:aiSeoConfigured(),canEdit:['listings_r','listings_w','transactions_r'].every(scope=>scopes.has(scope))});
       }
       if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'Method not allowed.'});
@@ -5258,7 +5387,7 @@ const server = http.createServer(async (req, res) => {
       if(!['/start','/resume'].includes(action))return sendJson(res,404,{ok:false,error:'Unknown reposter action.'});
       const body=await readJsonBody(req);
       if(body.confirm!=='REPOST LISTINGS ON ETSY')
-        return sendJson(res,400,{ok:false,error:'Explicit confirmation is required: this publishes new listings and deactivates the old ones.'});
+        return sendJson(res,400,{ok:false,error:'Explicit confirmation is required: this changes listings on Etsy, and reposts publish new listings and deactivate the old ones.'});
       if(!aiSeoConfigured())return sendJson(res,400,{ok:false,error:'ChatGPT is not connected: add OPENAI_API_KEY in Render first.'});
       const session=await getEtsySession();
       const scopes=new Set(String(session.scope||'').split(/\s+/));
@@ -5268,9 +5397,11 @@ const server = http.createServer(async (req, res) => {
         const job=await resumeRenewal(renewalDeps(),{retryFailed:body.retryFailed===true});
         return sendJson(res,200,{ok:true,job,running:true});
       }
-      // The new listings get their mockups from the preset chosen on the Listing Reposter page.
+      // The listings get their mockups from the preset chosen on the Listing Reposter page.
       const preset=(await getJsonObject(REPOST_PRESET_KEY).catch(()=>null))?.name||'';
-      const job=await startRenewal(renewalDeps(),{count:body.count,preset});
+      const rules=checkRules(body.rules);
+      await putJsonObject(RENEWER_RULES_KEY,{...rules,savedAt:new Date().toISOString()});
+      const job=await startRenewal(renewalDeps(),{count:body.count,preset,rules});
       return sendJson(res,200,{ok:true,job,running:true});
     }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
   }

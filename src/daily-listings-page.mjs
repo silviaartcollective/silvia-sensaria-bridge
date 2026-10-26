@@ -79,7 +79,7 @@ export function renderDailyListingsPage() {
 ${renderMockupPresetsSection()}
 
 <section class="card" id="renew"><div class="flex"><h2>Renew listings</h2><a class="button" href="/listing-reposter">Open the Listing Reposter</a></div>
-<p class="muted">Reposting your oldest unsold listings (new SEO, new mockups from a preset, the current template; the old listings are deactivated) is on the Listing Reposter page.</p>
+<p class="muted">Refreshing unsold listings (new SEO, new mockups from a preset, the current template, on the same listing) and reposting the ones that still don't sell is on the Listing Reposter page.</p>
 </section>
 
 ${renderChatGptSection()}

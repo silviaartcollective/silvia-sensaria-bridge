@@ -24,3 +24,21 @@ test('the Listing Reposter is laid out like Daily Listings: how many, its mockup
  assert.match(server,/finalizeReplacement\(await getEtsySession\(\),id,'PUBLISH AND DEACTIVATE'\)/);
  assert.match(read('src/mockup-presets-client.js'),/request\('\/api\/batch\/presets'\+\(FOR\?'\?for='\+FOR:''\)\)/);
 });
+
+test('refresh first, repost later: the two ages and the renewal window are settings, sent with Start and remembered',()=>{
+ const html=renderRepostListingsPage();
+ assert.match(html,/Refresh after <input type="number" id="rp-refresh" class="count" min="1" max="36" value="4"> months/);
+ assert.match(html,/Repost after <input type="number" id="rp-repost" class="count" min="2" max="48" value="12"> months/);
+ assert.match(html,/Renewing within <input type="number" id="rp-window" class="count" min="1" max="120" value="7"> days/);
+ const client=read('src/repost-listings-client.js');
+ assert.match(client,/void run\('\/api\/renewer\/start',\{count:n,rules:r,confirm:CONFIRM\}\)/);
+ assert.match(client,/el\('rp-refresh'\)\.value=String\(data\.rules\.refreshMonths\)/);
+ const server=read('src/server.mjs');
+ assert.match(server,/const rules=checkRules\(body\.rules\);\n      await putJsonObject\(RENEWER_RULES_KEY,/);
+ assert.match(server,/startRenewal\(renewalDeps\(\),\{count:body\.count,preset,rules\}\)/);
+ // A refresh changes the listing itself: its photos (in place, never left without any) and its details.
+ assert.match(server,/replacePhotos:refreshListingPhotos,\n    updateDetails:refreshListingDetails,/);
+ assert.match(server,/const placed=await replaceListingPhotos\(\{session,listingId,photos,altText:manifest\.title\|\|''\}\);/);
+ assert.match(server,/rank,overwrite:replace,altText,\.\.\.args\}\)/);
+ assert.match(server,/forgetRefreshed:listingId=>changeRefreshed\(listings=>\{delete listings\[String\(listingId\)\]\}\),/);
+});

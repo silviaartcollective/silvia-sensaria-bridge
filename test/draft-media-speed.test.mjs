@@ -8,11 +8,11 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 test('Etsy receives ready 2400 px copies instead of Render resizing full-size originals',()=>{
  const server=read('src/server.mjs');
  assert.match(server,/async function etsyReadyImage\(key,\{etsyKey=''\}=\{\}\)/);
- // The media plan and both mockup syncs use the ready copies; the master
- // artwork is never sent to Etsy at all.
+ // The media plan, both mockup syncs and the reposter's refresh use the ready
+ // copies; the master artwork is never sent to Etsy at all.
  assert.match(server,/await etsyReadyImage\(item\.key, \{ etsyKey: etsyKeyForMedia\(manifest, item\.key\) \}\)/);
  assert.doesNotMatch(server,/etsyReadyImage\(manifest\.master\.key/);
- assert.equal(server.match(/etsyReadyImage\(item\.key,\{etsyKey:item\.etsyKey\|\|''\}\)/g)?.length,2);
+ assert.equal(server.match(/etsyReadyImage\(item\.key,\{etsyKey:item\.etsyKey\|\|''\}\)/g)?.length,3);
  assert.match(server,/if \(!object \|\| object\.etsyReady\) return;/);
  // Preset photos are resized once per server start, not once per draft.
  assert.match(server,/if\(PRESET_MEDIA\.some\(item=>item\.key===key\)\)presetEtsyImages\.set\(key,optimized\)/);
@@ -106,9 +106,9 @@ test('photos upload three at a time; a refusal slows only this upload and the ne
  assert.match(uploader,/await Promise\.allSettled\(\[\.\.\.inFlight\]\);\s*result=await oneAtATime\(\(\)=>send\(photo,object,true\)\);/);
  assert.match(uploader,/const attempt=lanes>1\?send\(photo,object,false\):oneAtATime\(\(\)=>send\(photo,object,true\)\);/);
  // Preset photos and mockups both go through it, and the order is checked after
- // simultaneous uploads.
+ // simultaneous uploads (and after the reposter's refresh replaced the photos).
  assert.equal((server.match(/await uploadPhotosToListing\(\{/g)||[]).length,2);
- assert.equal((server.match(/await ensureListingPhotoOrder\(\{/g)||[]).length,2);
+ assert.equal((server.match(/await ensureListingPhotoOrder\(\{/g)||[]).length,3);
 });
 
 test('the preset video goes on after the mockups',()=>{

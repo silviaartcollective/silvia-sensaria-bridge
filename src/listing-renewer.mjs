@@ -1,11 +1,17 @@
-// Listing Reposter: the oldest active listings that never sold are posted again
-// as new listings, and each old listing is deactivated once its new one is live.
-// A listing whose artwork is in the app is rebuilt like a Daily Listings draft:
-// new SEO from ChatGPT, new mockups from the chosen preset (made on the PC) in
-// the preset's arranged photo order, and the current template's variants,
-// profiles and attributes. Any other listing is copied with its own photos and
-// video (listing-reposter.mjs prepare/finalize). The job is kept in R2, so the
-// page can be closed, and a stopped run can be resumed.
+// Listing Reposter: active listings that never sold get a second chance in two
+// steps, each in the days before the listing renews on Etsy:
+//  - refresh (by default at 4 months): the same listing gets new SEO from
+//    ChatGPT, new mockups from the chosen preset (made on the PC) in the
+//    preset's arranged photo order, and the current template's variants and
+//    profiles. It keeps its favourites, views and link, and costs nothing.
+//  - repost (by default at 12 months, only once refreshed and still unsold):
+//    posted again as a new listing like a Daily Listings draft, and the old one
+//    is deactivated once the new one is live. Done just before a renewal, its
+//    $0.20 listing fee takes the place of the renewal Etsy would charge.
+// A listing whose artwork is not in the app gets new SEO only when refreshed,
+// and is copied with its own photos and video when reposted
+// (listing-reposter.mjs prepare/finalize). The job is kept in R2, so the page
+// can be closed, and a stopped run can be resumed.
 
 let running = null;
 export const renewalRunning = () => Boolean(running);
@@ -13,18 +19,56 @@ export function stopRenewal() { if (running) running.stop = true; return Boolean
 
 const now = () => new Date().toISOString();
 const DAY = 86400;
-const LANES = 3;          // listings reposted at the same time (the PC makes mockups one artwork after another)
+const MONTH = 30.44 * DAY;
+const TOLERANCE = 5 * DAY; // Etsy's 4 months are calendar months
+const LANES = 3;          // listings worked on at the same time (the PC makes mockups one artwork after another)
 const SALES_CHECKS = 5;   // sales looked up at the same time
 const MOCKUP_POLL_MS = 5000;
 const SETUP_POLL_MS = 3000;
 const SETUP_WAIT_MS = 20 * 60 * 1000;
 export const MAX_RENEWALS = 50;
 export const DEFAULT_RENEWALS = 20;
+export const DEFAULT_RULES = { refreshMonths: 4, repostMonths: 12, windowDays: 7 };
+
+export function checkRules(input = {}) {
+  const rules = { ...DEFAULT_RULES };
+  for (const key of Object.keys(DEFAULT_RULES))
+    if (input?.[key] !== undefined && input[key] !== '') rules[key] = Math.round(Number(input[key]));
+  if (!(rules.refreshMonths >= 1 && rules.refreshMonths <= 36)) throw Error('Refresh after 1 to 36 months without a sale.');
+  if (!(rules.repostMonths > rules.refreshMonths && rules.repostMonths <= 48))
+    throw Error('Repost after more months than the refresh (up to 48).');
+  if (!(rules.windowDays >= 1 && rules.windowDays <= 120)) throw Error('Choose listings renewing within 1 to 120 days.');
+  return rules;
+}
 
 const born = item => Number(item?.original_creation_timestamp || item?.created_timestamp || item?.creation_timestamp || 0);
 export function oldestFirst(listings) {
   return [...listings].sort((a, b) => (born(a) || Infinity) - (born(b) || Infinity) || Number(a.listing_id) - Number(b.listing_id));
 }
+// When Etsy next renews the listing (its expiry); without that, every 4 months
+// from its creation. In seconds.
+export function nextRenewal(item, at) {
+  const ending = Number(item?.ending_timestamp || 0);
+  if (ending) return ending;
+  const created = born(item), period = 4 * MONTH;
+  return created + Math.max(1, Math.ceil((at - created) / period)) * period;
+}
+// What an unsold listing is due for at its next renewal, if that is within the
+// window: 'refresh' once it is refreshMonths old, 'repost' once it was
+// refreshed, is repostMonths old and has had the months between since.
+export function dueFor(item, refreshed, rules, at) {
+  const created = born(item);
+  if (!created) return '';
+  const renews = nextRenewal(item, at);
+  if (renews - at > rules.windowDays * DAY || renews < at - DAY) return '';
+  const age = renews - created;
+  if (refreshed?.at) {
+    const since = renews - Date.parse(refreshed.at) / 1000;
+    return age >= rules.repostMonths * MONTH - TOLERANCE && since >= (rules.repostMonths - rules.refreshMonths) * MONTH - TOLERANCE ? 'repost' : '';
+  }
+  return age >= rules.refreshMonths * MONTH - TOLERANCE ? 'refresh' : '';
+}
+const seconds = deps => Math.floor((deps.now ? deps.now() : Date.now()) / 1000);
 
 // Runs the job's waiting listings in the background; the job is saved as it goes.
 function launch(deps, job, work) {
@@ -49,21 +93,21 @@ function launch(deps, job, work) {
   return control;
 }
 
-export async function startRenewal(deps, { count, preset = '' }) {
-  if (running) throw Error('Reposting is already running. Wait for it or stop it first.');
+export async function startRenewal(deps, { count, preset = '', rules = {} }) {
+  if (running) throw Error('The reposter is already running. Wait for it or stop it first.');
   const total = Math.round(Number(count));
-  if (!(total >= 1 && total <= MAX_RENEWALS)) throw Error('Choose how many listings to repost (1 to ' + MAX_RENEWALS + ').');
-  const job = { id: deps.newId(), status: 'finding', count: total, preset: String(preset || ''), createdAt: now(), updatedAt: now(),
-    progress: { checked: 0, listings: 0, done: 0, total }, results: [], error: '' };
+  if (!(total >= 1 && total <= MAX_RENEWALS)) throw Error('Choose how many listings to work on (1 to ' + MAX_RENEWALS + ').');
+  const job = { id: deps.newId(), status: 'finding', count: total, preset: String(preset || ''), rules: checkRules(rules),
+    createdAt: now(), updatedAt: now(), progress: { checked: 0, listings: 0, due: 0, done: 0, total }, results: [], error: '' };
   await deps.saveJob(job);
-  launch(deps, job, (control, save) => findOldestUnsold(deps, job, control, save));
+  launch(deps, job, (control, save) => findDue(deps, job, control, save));
   return job;
 }
 
 // Goes on with a stopped run (also after a restart): listings not finished are
 // picked up where they were; retryFailed tries the failed ones again too.
 export async function resumeRenewal(deps, { retryFailed = false } = {}) {
-  if (running) throw Error('Reposting is already running.');
+  if (running) throw Error('The reposter is already running.');
   const job = await deps.loadJob();
   if (!job?.results?.length) throw Error('There is no run to resume. Start a new one.');
   for (const row of job.results) {
@@ -77,25 +121,36 @@ export async function resumeRenewal(deps, { retryFailed = false } = {}) {
   return job;
 }
 
-async function findOldestUnsold(deps, job, control, save) {
-  const listings = oldestFirst(await deps.listActive());
+// The listings due for a refresh or a repost at a renewal within the window,
+// the soonest renewal first, that never sold.
+async function findDue(deps, job, control, save) {
+  const at = seconds(deps);
+  const [listings, refreshed] = await Promise.all([deps.listActive(), deps.refreshedListings()]);
+  const due = [];
+  for (const item of listings) {
+    const action = dueFor(item, refreshed[String(item.listing_id)], job.rules, at);
+    if (action) due.push({ item, action, renews: nextRenewal(item, at) });
+  }
+  due.sort((a, b) => a.renews - b.renews || born(a.item) - born(b.item) || Number(a.item.listing_id) - Number(b.item.listing_id));
   job.progress.listings = listings.length;
-  for (let index = 0; index < listings.length && job.results.length < job.count; index += SALES_CHECKS) {
+  job.progress.due = due.length;
+  for (let index = 0; index < due.length && job.results.length < job.count; index += SALES_CHECKS) {
     if (control.stop) return;
-    const group = listings.slice(index, index + SALES_CHECKS);
-    const sales = await Promise.all(group.map(item => deps.salesCount(item.listing_id).catch(() => null)));
+    const group = due.slice(index, index + SALES_CHECKS);
+    const sales = await Promise.all(group.map(({ item }) => deps.salesCount(item.listing_id).catch(() => null)));
     const found = [];
-    group.forEach((item, at) => {
+    group.forEach(({ item, action, renews }, place) => {
       job.progress.checked++;
       // Unknown sales (the check failed) count as sold: never risk replacing one that sold.
-      if (sales[at] !== 0 || job.results.length + found.length >= job.count) return;
+      if (sales[place] !== 0 || job.results.length + found.length >= job.count) return;
       const created = born(item);
-      found.push({ listingId: Number(item.listing_id), title: String(item.title || '').slice(0, 140),
+      found.push({ listingId: Number(item.listing_id), title: String(item.title || '').slice(0, 140), action,
         createdAt: created ? new Date(created * 1000).toISOString() : null,
-        ageDays: created ? Math.floor((Date.now() / 1000 - created) / DAY) : null,
+        ageDays: created ? Math.floor((at - created) / DAY) : null,
+        renewsAt: new Date(renews * 1000).toISOString(), refreshedAt: refreshed[String(item.listing_id)]?.at || null,
         status: 'waiting', step: 'Waiting', newListingId: null, newTitle: '', error: '' });
     });
-    // Whether its artwork is in the app (new mockups) or not (its photos are copied).
+    // Whether its artwork is in the app (new mockups) or not (new SEO only, or its photos copied).
     await Promise.all(found.map(async row => {
       const about = await deps.describe(row.listingId).catch(() => null);
       Object.assign(row, { artworkId: about?.artworkId || '', layout: about?.layout || '', photo: about?.photo || '' });
@@ -104,7 +159,7 @@ async function findOldestUnsold(deps, job, control, save) {
     await save();
   }
   if (job.results.some(row => row.artworkId) && !job.preset)
-    throw Error('Choose a mockup preset first: the new listings get their mockups from it.');
+    throw Error('Choose a mockup preset first: the refreshed and reposted listings get their mockups from it.');
 }
 
 async function renewAll(deps, job, control, save) {
@@ -114,8 +169,10 @@ async function renewAll(deps, job, control, save) {
       const row = job.results.find(entry => entry.status === 'waiting');
       if (!row) return;
       row.status = 'working'; row.error = '';
-      if (row.artworkId) await refreshOne(deps, job, row, control, save);
-      else await copyOne(deps, row, control, save);
+      // Runs started before refreshing existed only reposted.
+      const work = (row.action || 'repost') === 'refresh' ? (row.artworkId ? refreshInPlace : refreshSeoOnly)
+        : (row.artworkId ? repostWithMockups : repostCopy);
+      await work(deps, job, row, control, save);
       if (['done', 'failed'].includes(row.status)) job.progress.done++;
       await save();
     }
@@ -127,39 +184,89 @@ const failed = (row, error) => {
   row.status = 'failed'; row.step = 'Failed';
   row.error = String(error?.message || error).slice(0, 300);
 };
+const halt = row => { row.status = 'waiting'; row.step = 'Stopped'; };
 
-// A listing whose artwork is in the app: new SEO and mockups, the current
-// template, published; then the old one is deactivated. Each step is kept on
-// the row, so a stopped or restarted run goes on from the step it reached.
-async function refreshOne(deps, job, row, control, save) {
+// New mockups from the preset, made on the PC, while ChatGPT writes the SEO.
+// Returns the mockups made, or null when stopped.
+async function mockupsAndSeo(deps, job, row, control, save) {
   const step = async text => { row.step = text; await save(); };
-  const stopped = () => { if (!control.stop) return false; row.status = 'waiting'; row.step = 'Stopped'; return true; };
+  if (!row.mockupJobId) {
+    await step('Starting the mockups');
+    const started = await deps.startMockups({ artworkId: row.artworkId, orientation: row.layout, preset: job.preset });
+    row.mockupJobId = started.jobId;
+    await save();
+  }
+  const seo = row.seo ? Promise.resolve(row.seo) : deps.refreshSeo(row.listingId);
+  seo.catch(() => {});
+  let mockups;
+  for (;;) {
+    mockups = await deps.mockupStatus(row.mockupJobId);
+    if (mockups.finished) break;
+    if (control.stop) return null;
+    await step('Mockups: ' + mockups.done + ' of ' + mockups.total + ' made on the PC' + (mockups.note ? ' · ' + mockups.note : ''));
+    await deps.pause(MOCKUP_POLL_MS);
+  }
+  if (!mockups.completedIds.length) throw Error('No mockup could be made for this artwork on the PC.');
+  if (!row.seo) {
+    await step('Writing the SEO with ChatGPT');
+    row.seo = await seo;
+    row.newTitle = row.seo.title;
+    await save();
+  }
+  return mockups;
+}
+
+// Refresh, artwork in the app: the same listing gets the new mockups (in the
+// preset's arranged order, with the preset photos), the new SEO and the
+// current template's variants and profiles.
+async function refreshInPlace(deps, job, row, control, save) {
+  const step = async text => { row.step = text; await save(); };
   try {
-    if (!row.mockupJobId) {
-      await step('Starting the mockups');
-      const started = await deps.startMockups({ artworkId: row.artworkId, orientation: row.layout, preset: job.preset });
-      row.mockupJobId = started.jobId;
+    const mockups = await mockupsAndSeo(deps, job, row, control, save);
+    if (!mockups || control.stop) return halt(row);
+    if (!row.photosReplaced) {
+      await step('Replacing the photos with the new mockups');
+      await deps.replacePhotos({ listingId: row.listingId, artworkId: row.artworkId, orientation: row.layout, preset: job.preset,
+        mockupJobId: row.mockupJobId, templateIds: mockups.completedIds });
+      row.photosReplaced = true;
       await save();
     }
-    // ChatGPT writes the SEO while the PC makes the mockups.
-    const seo = row.seo ? Promise.resolve(row.seo) : deps.refreshSeo(row.listingId);
-    seo.catch(() => {});
-    let mockups;
-    for (;;) {
-      mockups = await deps.mockupStatus(row.mockupJobId);
-      if (mockups.finished) break;
-      if (stopped()) return;
-      await step('Mockups: ' + mockups.done + ' of ' + mockups.total + ' made on the PC' + (mockups.note ? ' · ' + mockups.note : ''));
-      await deps.pause(MOCKUP_POLL_MS);
-    }
-    if (!mockups.completedIds.length) throw Error('No mockup could be made for this artwork on the PC.');
+    if (control.stop) return halt(row);
+    await step('Updating the title, tags, description and variants');
+    await deps.updateDetails({ listingId: row.listingId, artworkId: row.artworkId, seo: row.seo });
+    await deps.markRefreshed(row.listingId, { artworkId: row.artworkId, title: row.seo.title });
+    row.status = 'done'; row.step = 'Refreshed';
+  } catch (error) { failed(row, error); }
+}
+
+// Refresh, artwork not in the app: new title and tags from ChatGPT; its
+// photos, description and variants stay.
+async function refreshSeoOnly(deps, job, row, control, save) {
+  const step = async text => { row.step = text; await save(); };
+  try {
     if (!row.seo) {
-      await step('Writing the SEO with ChatGPT');
-      row.seo = await seo;
+      await step('Writing new SEO with ChatGPT');
+      row.seo = await deps.newSeo(row.listingId);
       row.newTitle = row.seo.title;
       await save();
     }
-    if (stopped()) return;
+    if (control.stop) return halt(row);
+    await step('Updating the title and tags');
+    await deps.updateDetails({ listingId: row.listingId, artworkId: '', seo: row.seo });
+    await deps.markRefreshed(row.listingId, { artworkId: '', title: row.seo.title });
+    row.note = 'New title and tags; photos, description and variants kept: this listing\'s artwork is not in the app.';
+    row.status = 'done'; row.step = 'Refreshed';
+  } catch (error) { failed(row, error); }
+}
+
+// Repost, artwork in the app: new SEO and mockups, the current template,
+// published; then the old one is deactivated. Each step is kept on the row, so
+// a stopped or restarted run goes on from the step it reached.
+async function repostWithMockups(deps, job, row, control, save) {
+  const step = async text => { row.step = text; await save(); };
+  try {
+    const mockups = await mockupsAndSeo(deps, job, row, control, save);
+    if (!mockups || control.stop) return halt(row);
     if (!row.prepared) {
       // The artwork lets go of its old listing and mockups; the new listing gets this run's, in the arranged order.
       await step('Getting the artwork ready for its new listing');
@@ -170,7 +277,7 @@ async function refreshOne(deps, job, row, control, save) {
       row.prepared = true;
       await save();
     }
-    if (stopped()) return;
+    if (control.stop) return halt(row);
     for (let attempt = 1; ; attempt++) {
       if (!row.newListingId || attempt > 1) {
         await step('Creating the new listing');
@@ -179,7 +286,7 @@ async function refreshOne(deps, job, row, control, save) {
       }
       await step('Adding photos, video and variants');
       const setup = await waitForSetup(deps, row, control);
-      if (setup === 'stopped') { row.status = 'waiting'; row.step = 'Stopped'; return; }
+      if (setup === 'stopped') return halt(row);
       if (setup === 'completed') break;
       if (setup !== 'interrupted' || attempt >= 2) throw Error('The new listing\'s setup did not finish: ' + setup);
     }
@@ -194,6 +301,7 @@ async function refreshOne(deps, job, row, control, save) {
     }
     await step('Deactivating the old listing');
     await deps.deactivate(row.listingId, row.newListingId);
+    await deps.forgetRefreshed(row.listingId).catch(() => {});
     row.status = 'done'; row.step = 'Reposted';
   } catch (error) { failed(row, error); }
 }
@@ -210,9 +318,9 @@ async function waitForSetup(deps, row, control) {
   }
 }
 
-// A listing whose artwork is not in the app: copied with its own photos and
-// video, new SEO from ChatGPT; the old one is deactivated.
-async function copyOne(deps, row, control, save) {
+// Repost, artwork not in the app: copied with its own photos and video, new
+// SEO from ChatGPT; the old one is deactivated.
+async function repostCopy(deps, job, row, control, save) {
   const step = async text => { row.step = text; await save(); };
   try {
     // A copy stopped part-way goes on with the SEO it already used.
@@ -224,7 +332,7 @@ async function copyOne(deps, row, control, save) {
       if (seo.descriptionKept) row.note = 'Photos, description and variants kept: this listing\'s artwork is not in the app.';
     }
     row.newTitle = seo.title;
-    if (control.stop) { row.status = 'waiting'; row.step = 'Stopped'; return; }
+    if (control.stop) return halt(row);
     if (!earlier || earlier.status === 'building') {
       await step('Copying to a new listing');
       const { record } = await deps.prepare(row.listingId, { title: seo.title, description: seo.description, tags: seo.tags,
@@ -234,6 +342,7 @@ async function copyOne(deps, row, control, save) {
     await step('Publishing, then deactivating the old listing');
     const { record } = await deps.finalize(row.listingId);
     row.newListingId = Number(record.draftId) || null;
+    await deps.forgetRefreshed(row.listingId).catch(() => {});
     row.status = 'done'; row.step = 'Reposted';
   } catch (error) { failed(row, error); }
 }
