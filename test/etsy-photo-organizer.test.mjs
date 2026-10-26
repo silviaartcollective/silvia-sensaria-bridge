@@ -108,13 +108,17 @@ test('a photo lifts the moment it is pressed and lands the moment it is let go; 
  assert.doesNotMatch(ui,/body\.mg-org-dragging \*/);
 });
 
-test('Daily Listings arranges a preset\'s photos in the Product Creator\'s organizer, opened at once',()=>{
+test('Daily Listings and the Listing Reposter arrange a preset\'s photos in the Product Creator\'s organizer, opened at once',()=>{
  const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
- const creator=read('src/mockup-generator-client.js'),batch=read('src/daily-batch-client.js'),server=read('src/server.mjs');
+ const creator=read('src/mockup-generator-client.js'),batch=read('src/mockup-presets-client.js'),server=read('src/server.mjs');
  const ui=read('src/mockup-generator-ui.mjs'),daily=read('src/daily-listings-page.mjs'),page=read('src/product-creator.mjs');
  // One organizer: both pages load it and hold the same dialog and styles.
  assert.match(page,/<script src="\/assets\/photo-organizer-client\.js" defer><\/script>\n<script type="module" src="\/assets\/mockup-generator-client\.js">/);
  assert.match(daily,/\$\{PHOTO_ORGANIZER_CSS\}/);
+ // The reposter page has the same Mockup presets section (its own preset choice) and organizer.
+ const repost=read('src/repost-listings-page.mjs');
+ assert.match(repost,/\$\{renderMockupPresetsSection\(\{forRepost:true\}\)\}/);
+ assert.match(repost,/\$\{renderPhotoOrganizer\(\{back:'Cancel'\}\)\}\n<script src="\/assets\/photo-organizer-client\.js" defer>/);
  assert.match(daily,/\$\{renderPhotoOrganizer\(\{back:'Cancel'\}\)\}\n<script src="\/assets\/photo-organizer-client\.js" defer>/);
  assert.match(ui,/\$\{PHOTO_ORGANIZER_CSS\}/);
  assert.match(ui,/\$\{renderPhotoOrganizer\(\)\}/);
