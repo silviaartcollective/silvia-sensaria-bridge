@@ -75,7 +75,10 @@ test('a renewal asks for SEO different from the listing\'s current one', async (
 
 test('OpenAI problems are explained in plain words', async () => {
   const fail = (status, body) => generateEtsySeo({ image, settings, apiKey: 'k', fetchImpl: fakeOpenAi([{ status, body }]).fetchImpl });
-  await assert.rejects(fail(401, { error: { message: 'bad key' } }), /API key in Render was not accepted/);
+  await assert.rejects(fail(401, { error: { message: 'Incorrect API key provided: sk-proj-****abcd.' } }),
+    /API key in Render was not accepted\. Check OPENAI_API_KEY\. OpenAI says: Incorrect API key provided: sk-proj-\*\*\*\*abcd\./);
+  await assert.rejects(fail(401, { error: { message: 'You have insufficient permissions for this operation. Missing scopes: api.responses.write.' } }),
+    /OpenAI says: You have insufficient permissions .*api\.responses\.write/);
   await assert.rejects(fail(429, { error: { code: 'insufficient_quota', message: 'quota' } }), /no API credit left/);
   await assert.rejects(fail(404, { error: { code: 'model_not_found', message: 'no such model' } }), /does not offer the model/);
   await assert.rejects(generateEtsySeo({ image, settings, apiKey: '' }), /add OPENAI_API_KEY in Render/);
