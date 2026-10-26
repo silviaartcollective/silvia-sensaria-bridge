@@ -124,12 +124,13 @@ function priceNumber(value) {
   if(value && typeof value==='object')return Number(value.amount)/Number(value.divisor||100);
   return Number(value);
 }
+// Option names, not Etsy's value IDs: a draft built from the template has none yet.
 export function inventorySignature(inventory) {
   return (inventory?.products||[]).map(p=>({
     sku:String(p.sku||''),
     properties:(p.property_values||[]).map(v=>({
       id:Number(v.property_id),
-      values:(v.value_ids?.length?v.value_ids:v.values||[]).map(String).sort()
+      values:(v.values?.length?v.values:v.value_ids||[]).map(String).sort()
     })).sort((a,b)=>a.id-b.id),
     offers:(p.offerings||[]).map(o=>({
       price:Math.round(priceNumber(o.price)*100)/100,
@@ -142,6 +143,25 @@ export function assertSameInventory(original,cloned) {
   if(!a.length||JSON.stringify(a)!==JSON.stringify(b))
     throw new Error('Copied variants, SKUs, prices, or quantities differ from the original. Original listing kept active.');
   return true;
+}
+// The draft has exactly the template's variants it was given.
+export function assertTemplateInventory(record,inventory) {
+  const expected=record?.template?.signature||[];
+  if(!expected.length||JSON.stringify(expected)!==JSON.stringify(inventorySignature(inventory)))
+    throw new Error('The new listing\'s variants, SKUs, prices or quantities differ from the current template. Original listing kept active.');
+  return true;
+}
+// Variation photos point at option value IDs, which a draft built from the
+// template does not share with the old listing: they are matched by option name.
+function variationImageMappings(variationImages,oldInventory,newInventory,imageMap){
+  const names=new Map(),ids=new Map();
+  for(const product of oldInventory?.products||[])for(const v of product.property_values||[])
+    (v.value_ids||[]).forEach((valueId,i)=>names.set(v.property_id+':'+valueId,String(v.values?.[i]??'')));
+  for(const product of newInventory?.products||[])for(const v of product.property_values||[])
+    (v.values||[]).forEach((name,i)=>{if(v.value_ids?.[i])ids.set(v.property_id+':'+name,Number(v.value_ids[i]))});
+  return variationImages.map(v=>({property_id:Number(v.property_id),
+    value_id:ids.get(v.property_id+':'+names.get(v.property_id+':'+v.value_id)),image_id:imageMap[String(v.image_id)]}))
+    .filter(x=>x.property_id&&x.value_id&&x.image_id);
 }
 
 // automatic: Renew listings (listing-renewer.mjs) has no renewal count to confirm.
@@ -217,7 +237,10 @@ export async function reserveMockups(session,id,files) {
   return result;
 }
 // automatic: any active listing without sales (Renew listings picks the oldest).
-export async function prepareReplacement(session,sourceId,input,{automatic=false}={}) {
+// template: returns the latest draft template for the listing (variants,
+// prices, profiles and attributes as a new draft of its artwork gets them
+// today), or null to copy the listing as it is (one the app did not make).
+export async function prepareReplacement(session,sourceId,input,{automatic=false,template=null}={}) {
   const id=listingId(sourceId),shop=session.shop.shop_id,lock=shop+':'+id;
   if(LOCKS.has(lock))throw new Error('Reposting is already processing for this listing.');
   LOCKS.add(lock);
@@ -233,6 +256,7 @@ export async function prepareReplacement(session,sourceId,input,{automatic=false
       getEtsyListingImages({listingId:id,...args(session)}),
       getListingVideos(session,id),getVariationImages(session,id)
     ]);
+    const fresh=template?await template({listing,inventory,properties}):null;
     let managedArtworkId=null;
     let stagedArtwork=null;
     if(seo.artworkMode==='replace') {
@@ -264,7 +288,7 @@ export async function prepareReplacement(session,sourceId,input,{automatic=false
     let draftId=record?.draftId;
     if(!draftId){
       const draft=await createDraftListing({
-        ...args(session),listing:listingCopy(listing,seo,inventory)
+        ...args(session),listing:{...listingCopy(listing,seo,inventory),...(fresh?.listing||{})}
       });
       draftId=Number(draft.listing_id);
       if(!Number.isSafeInteger(draftId)||draftId<=0)throw new Error('Etsy draft creation returned no listing ID.');
@@ -278,8 +302,11 @@ export async function prepareReplacement(session,sourceId,input,{automatic=false
     }
     // Etsy does not support atomic copying; all operations are resumable and the original stays live.
     if(!record.inventoryCopied){
-      await updateListingInventory({listingId:draftId,inventory,...args(session)});
-      record.inventoryCopied=true;await putJsonObject(key(shop,id),record);
+      await updateListingInventory({listingId:draftId,inventory:fresh?fresh.inventory:inventory,...args(session)});
+      record.inventoryCopied=true;
+      // Checked again before the new listing is published.
+      record.template=fresh?{signature:inventorySignature(fresh.inventory),appliedAt:now()}:null;
+      await putJsonObject(key(shop,id),record);
     }
     if(!record.propertiesCopied){
       const rows=properties.results||[];
@@ -289,6 +316,11 @@ export async function prepareReplacement(session,sourceId,input,{automatic=false
           valueIds:p.value_ids||[],values:p.values||[],scaleId:p.scale_id,...args(session)});
       }
       record.propertiesCopied=true;await putJsonObject(key(shop,id),record);
+    }
+    // The template's attributes go over the copied ones.
+    if(fresh?.applyAttributes&&!record.attributesRefreshed){
+      await fresh.applyAttributes(draftId);
+      record.attributesRefreshed=true;await putJsonObject(key(shop,id),record);
     }
     for(let index=0;index<images.length;index++){
       const source=images[index],ident=seo.mockupMode==='keep'?String(source.listing_image_id):source.key;
@@ -323,20 +355,22 @@ export async function prepareReplacement(session,sourceId,input,{automatic=false
       await putJsonObject(key(shop,id),record);
     }
     if(variationImages.length){
-      const mappings=variationImages.map(v=>({
+      const mappings=fresh?variationImageMappings(variationImages,inventory,
+        await getListingInventory({listingId:draftId,...args(session)}),record.imageMap):variationImages.map(v=>({
         property_id:Number(v.property_id),value_id:Number(v.value_id),
         image_id:record.imageMap[String(v.image_id)]
       }));
-      if(mappings.some(x=>!x.image_id||!x.property_id||!x.value_id))
+      if(!fresh&&mappings.some(x=>!x.image_id||!x.property_id||!x.value_id))
         throw new Error('Cannot safely restore original variation mockup assignments.');
-      await etsy(session,'/shops/'+shop+'/listings/'+draftId+'/variation-images',{
+      if(mappings.length)await etsy(session,'/shops/'+shop+'/listings/'+draftId+'/variation-images',{
         method:'POST',body:{variation_images:mappings}
       });
     }
     const verified=await getEtsyListingImages({listingId:draftId,...args(session)});
     if(verified.length!==images.length)throw new Error('Draft does not yet have the same number of expected mockups.');
     const latestInventory=await getListingInventory({listingId:draftId,...args(session)});
-    assertSameInventory(inventory,latestInventory);
+    if(record.template)assertTemplateInventory(record,latestInventory);
+    else assertSameInventory(inventory,latestInventory);
     const verifiedVideos=await getListingVideos(session,draftId);
     if(verifiedVideos.length!==originalVideos.length)
       throw new Error('Draft video count differs from original. Original listing kept active.');
@@ -386,7 +420,9 @@ export async function finalizeReplacement(session,sourceId,confirmation,{deleteO
       getEtsyListingImages({listingId:id,...args(session)}),
       getListingVideos(session,record.draftId),getListingVideos(session,id)
     ]);
-    assertSameInventory(originalInventory,draftInventory);
+    // A listing renewed with the current template has that template's variants.
+    if(record.template)assertTemplateInventory(record,draftInventory);
+    else assertSameInventory(originalInventory,draftInventory);
     const imageCount=record.completedImages?.length||0;
     if(!imageCount||draftImages.length!==imageCount)
       throw new Error('Replacement draft mockups changed since preparation. Original kept active.');

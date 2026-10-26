@@ -31,7 +31,7 @@ test.after(() => r2.close());
 // Etsy stand-in: listings, inventory, photos, videos, sales, publish and delete.
 const SHOP = 77;
 const etsy = { listings: new Map(), inventory: new Map(), images: new Map(), videos: new Map(), sales: new Map(),
-  nextId: 9000, nextImage: 50000, calls: [] };
+  forms: new Map(), nextId: 9000, nextImage: 50000, calls: [] };
 function addListing(id, { title, created, sales = 0, photos = 20, video = true }) {
   etsy.listings.set(id, { listing_id: id, shop_id: SHOP, state: 'active', title, tags: ['old tag one', 'old tag two'],
     description: 'Old description', price: { amount: 3000, divisor: 100 }, quantity: 999, taxonomy_id: 2078,
@@ -65,7 +65,9 @@ globalThis.fetch = async (input, options = {}) => {
   if ((m = path.match(/^\/shops\/77\/listings\/(\d+)\/transactions$/))) return json({ count: etsy.sales.get(Number(m[1])) || 0, results: [] });
   if ((m = path.match(/^\/listings\/(\d+)\/inventory$/))) {
     const id = Number(m[1]);
-    if (method === 'PUT') etsy.inventory.set(id, JSON.parse(options.body));
+    // Etsy gives each option value an ID.
+    if (method === 'PUT') etsy.inventory.set(id, { ...JSON.parse(options.body), products: JSON.parse(options.body).products.map(product => ({
+      ...product, property_values: product.property_values.map(v => ({ ...v, value_ids: v.values.map((_, i) => 9000 + i) })) })) });
     return json(etsy.inventory.get(id));
   }
   if ((m = path.match(/^\/shops\/77\/listings\/(\d+)\/properties$/))) return json({ results: [{ property_id: 200, value_ids: [1], values: ['Minimalist'] }] });
@@ -76,6 +78,7 @@ globalThis.fetch = async (input, options = {}) => {
   if (path === '/shops/77/listings' && method === 'POST') {
     const form = new URLSearchParams(String(options.body));
     const id = ++etsy.nextId;
+    etsy.forms.set(id, Object.fromEntries(form));
     etsy.listings.set(id, { listing_id: id, shop_id: SHOP, state: 'draft', title: form.get('title'),
       tags: String(form.get('tags') || '').split(','), description: form.get('description'),
       shop_section_id: Number(form.get('shop_section_id')), original_creation_timestamp: 2e9 });
@@ -106,7 +109,7 @@ const reposter = await import('../src/listing-reposter.mjs');
 const { getJsonObject } = await import('../src/r2.mjs');
 const session = { shop: { shop_id: SHOP, shop_name: 'TestShop' }, keystring: 'k', sharedSecret: 's', accessToken: 'a' };
 
-function deps({ saved, onPrepared = () => {} } = {}) {
+function deps({ saved, onPrepared = () => {}, template = null } = {}) {
   let n = 0;
   return {
     newId: () => 'job-' + ++n,
@@ -116,7 +119,7 @@ function deps({ saved, onPrepared = () => {} } = {}) {
     record: async id => { try { return await getJsonObject('reposter/' + SHOP + '/' + id + '/replacement.json'); } catch { return null; } },
     newSeo: async id => ({ title: 'New Title For ' + id, description: 'New description ' + id,
       tags: ['new tag a', 'new tag b', 'new tag c'] }),
-    prepare: async (id, input) => { const out = await reposter.prepareReplacement(session, id, input, { automatic: true }); onPrepared(id); return out; },
+    prepare: async (id, input) => { const out = await reposter.prepareReplacement(session, id, input, { automatic: true, template }); onPrepared(id); return out; },
     finalize: id => reposter.finalizeReplacement(session, id, 'PUBLISH AND DELETE OLD', { deleteOld: true })
   };
 }
@@ -196,4 +199,51 @@ test('when the sales check fails, the listing is treated as sold and skipped', a
   assert.deepEqual(saved.job.results.map(row => row.listingId), [302]);
   assert.equal(etsy.listings.get(301).state, 'active');
   assert.equal(saved.job.status, 'done');
+});
+
+// What the server's repostTemplate gives an app-made listing: today's sizes and prices.
+const currentTemplate = attributes => async ({ listing }) => ({
+  listing: { price: 45, quantity: 999, shipping_profile_id: 55, readiness_state_id: 66, return_policy_id: 77 },
+  inventory: { products: [
+    { sku: 'SAC' + listing.listing_id + '-P-1624', offerings: [{ price: 45, quantity: 999, is_enabled: true }],
+      property_values: [{ property_id: 513, property_name: 'Size', value_ids: [], values: ['16x24'] }] },
+    { sku: 'SAC' + listing.listing_id + '-P-2030', offerings: [{ price: 65, quantity: 999, is_enabled: true }],
+      property_values: [{ property_id: 513, property_name: 'Size', value_ids: [], values: ['20x30'] }] },
+    { sku: 'SAC' + listing.listing_id + '-C-3045', offerings: [{ price: 140, quantity: 999, is_enabled: true }],
+      property_values: [{ property_id: 513, property_name: 'Size', value_ids: [], values: ['30x45'] }] }
+  ], price_on_property: [513], quantity_on_property: [], sku_on_property: [513], minimumPrice: 45 },
+  applyAttributes: async listingId => attributes.push(listingId)
+});
+
+test('an app-made listing is renewed with the current template: today\'s sizes, prices and profiles, not its old ones', async () => {
+  for (const id of [...etsy.listings.keys()]) if (etsy.listings.get(id).state === 'active') etsy.listings.get(id).state = 'inactive';
+  addListing(401, { title: 'Old sizes', created: 0.05e9, photos: 4 });
+  const saved = {}, attributes = [];
+  await startRenewal(deps({ saved, template: currentTemplate(attributes) }), { count: 1 });
+  await finished();
+  const row = saved.job.results[0];
+  assert.equal(row.status, 'done', row.error);
+  assert.equal(row.note, 'Sizes, prices and profiles from the current template.');
+  assert.equal(etsy.listings.has(401), false);
+  const sizes = etsy.inventory.get(row.newListingId).products.map(p => p.property_values[0].values[0] + ' ' + p.offerings[0].price);
+  assert.deepEqual(sizes, ['16x24 45', '20x30 65', '30x45 140']);
+  const form = etsy.forms.get(row.newListingId);
+  assert.deepEqual([form.price, form.shipping_profile_id, form.readiness_state_id, form.return_policy_id, form.shop_section_id],
+    ['45', '55', '66', '77', '111']);
+  assert.deepEqual(attributes, [row.newListingId]);
+  assert.equal(etsy.images.get(row.newListingId).length, 4);
+  const record = await getJsonObject('reposter/77/401/replacement.json');
+  assert.equal(record.template.signature.length, 3);
+});
+
+test('a renewed listing whose variants changed before publishing is not published', async () => {
+  for (const id of [...etsy.listings.keys()]) if (etsy.listings.get(id).state === 'active') etsy.listings.get(id).state = 'inactive';
+  addListing(501, { title: 'Edited meanwhile', created: 0.04e9, photos: 2 });
+  const { record } = await reposter.prepareReplacement(session, 501, { title: 'New', description: 'New', tags: ['a'],
+    mockupMode: 'keep', artworkMode: 'keep' }, { automatic: true, template: currentTemplate([]) });
+  etsy.inventory.get(record.draftId).products[0].offerings[0].price = 30;
+  await assert.rejects(reposter.finalizeReplacement(session, 501, 'PUBLISH AND DELETE OLD', { deleteOld: true }),
+    /differ from the current template/);
+  assert.equal(etsy.listings.get(501).state, 'active');
+  assert.equal(etsy.listings.get(record.draftId).state, 'draft');
 });
