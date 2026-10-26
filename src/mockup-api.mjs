@@ -84,7 +84,7 @@ const openBatch=j=>!!j&&j.artworkUploaded&&!j.deleted&&
 const claimWaiters=new Set();
 // Queues mockups from the already-uploaded R2 master instead of uploading it
 // twice (the Product Creator and the batch poster).
-export async function mockupJobFromArtwork({artworkId,templateIds,fitMode='cover'}){
+export async function mockupJobFromArtwork({artworkId,templateIds,fitMode='cover',queue=''}){
  artworkId=String(artworkId||'');
  if(!/^[A-Z]{2,5}[0-9]{1,12}$/.test(artworkId))throw Error('Valid artwork ID required.');
  const manifest=await loadArtworkManifest(artworkId);
@@ -95,7 +95,7 @@ export async function mockupJobFromArtwork({artworkId,templateIds,fitMode='cover
  const job=await createMockupJob({
    filename:master.originalFilename||artworkId+'.jpg',
    size:info.size,templateIds,
-    artworkOrientation:mockupOrientationOf(manifest),fitMode:fitMode||'cover'
+    artworkOrientation:mockupOrientationOf(manifest),fitMode:fitMode||'cover',queue
  });
  job.artworkId=artworkId;job.sourceMasterKey=master.key;
  await putMockupJob(job);
@@ -104,6 +104,15 @@ export async function mockupJobFromArtwork({artworkId,templateIds,fitMode='cover
  // Persist the linkage for refresh/restart recovery and progress UI.
  manifest.mockupJobIds=[...new Set([...(manifest.mockupJobIds||[]),job.id])].slice(-30);
  await saveArtworkManifest(manifest);
+ return confirmed;
+}
+// Queues mockups from a master still waiting in staging (before it has an
+// artwork ID); linkMockupArtwork ties the batch to the artwork later.
+export async function mockupJobFromStaged({stagedKey,filename,templateIds,orientation='unclassified',fitMode='cover',queue=''}){
+ const info=await artworkObjectInfo(stagedKey);
+ const job=await createMockupJob({filename,size:info.size,templateIds,artworkOrientation:orientation,fitMode,queue});
+ await copyArtworkObject(stagedKey,job.artworkKey);
+ const confirmed=await markMockupArtworkUploaded(job.id);markBatchActive(job.id);
  return confirmed;
 }
 function markBatchActive(id){
@@ -140,9 +149,16 @@ async function claimCandidates(owner=''){
   if(j.paused)continue;
   if(!hasActiveMockupLease(j)||(j.lease.owner===owner&&j.templates.some(t=>t.status==='queued')))jobs.push(j);
  }
- // Newest batch first: the listing being created now should not wait behind
- // older batches that were queued while the worker was unavailable.
- return jobs.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
+ return claimOrder(jobs);
+}
+// Newest batch first: the listing being created now should not wait behind
+// older batches that were queued while the worker was unavailable. Daily
+// Listings' artworks come after it, oldest first, so each one finishes before
+// the next takes the PC (and its master downloads while the last PSDs render).
+export function claimOrder(jobs){
+ const batch=j=>j.queue==='batch';
+ return jobs.sort((a,b)=>batch(a)-batch(b)||(batch(a)
+  ?String(a.createdAt).localeCompare(String(b.createdAt)):String(b.createdAt).localeCompare(String(a.createdAt))));
 }
 // Download links go straight to R2 so full-size JPGs never count against the
 // Render service's outbound bandwidth.

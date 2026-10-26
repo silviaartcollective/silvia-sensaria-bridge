@@ -1,3 +1,4 @@
+import {PHOTO_ORGANIZER_CSS,renderPhotoOrganizer} from './mockup-generator-ui.mjs';
 // Daily Listings: new listings in a batch, mockup sets, Renew listings and the
 // ChatGPT SEO settings (daily-listings-client.js, daily-batch-client.js).
 export function renderDailyListingsPage() {
@@ -8,7 +9,7 @@ export function renderDailyListingsPage() {
 .shell{display:grid;grid-template-columns:238px minmax(0,1fr);min-height:100vh}aside{padding:24px;background:#252820;color:#fff}.nav{display:block;color:#e5e8df;padding:11px;text-decoration:none}
 main{padding:32px;min-width:0;max-width:1200px;width:100%;margin:0 auto}h1,h2{font-family:Georgia,serif;font-weight:400}h1{font-size:36px;margin:0}h2{font-size:23px;margin:0 0 10px}
 .sub{color:var(--muted);margin:7px 0 23px}.card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:20px;margin:15px 0}
-.flex{display:flex;align-items:center;justify-content:space-between;gap:13px;flex-wrap:wrap}.pair{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.flex{display:flex;align-items:center;justify-content:space-between;gap:13px;flex-wrap:wrap}.drop{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:16px;border:2px dashed var(--line);border-radius:12px;transition:border-color .12s,background .12s}.drop.over{border-color:var(--green);background:#eef3ec}.pair{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
 button,.button{padding:10px 14px;border:1px solid var(--line);background:#fff;color:#30392c;border-radius:8px;font:inherit;cursor:pointer;text-decoration:none;font-weight:600}
 button.primary{background:var(--green);color:white;border-color:var(--green)}button:disabled{opacity:.55;cursor:default}
 input,textarea{width:100%;border:1px solid #ccc9c0;background:white;border-radius:7px;padding:10px;color:var(--ink);font:inherit}
@@ -33,19 +34,21 @@ textarea{min-height:300px;resize:vertical;font-size:13px}label{font-size:12px;fo
 .tpl .name{font-size:12px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tpl.unused{opacity:.45}.group-title{font-weight:650;margin:14px 0 2px}.group-title .muted{font-weight:400}
 #mp-tabs button.primary{background:var(--green);color:#fff}
+.group-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.group-title button{padding:5px 10px;font-size:12px}
 @media(max-width:800px){.shell{grid-template-columns:1fr}aside{display:none}main{padding:22px 16px}h1{font-size:30px}.row{grid-template-columns:1fr}.row.item{grid-template-columns:56px minmax(0,1fr)}.row.item .side{grid-column:1/-1;justify-items:start}}
+${PHOTO_ORGANIZER_CSS}
 </style></head><body><div class="shell"><aside><nav><a class="nav active" href="/daily-listings">Daily Listings</a></nav></aside>
 <main><h1>Daily Listings</h1><p class="sub">Post a batch of new artworks and renew your oldest unsold listings, with SEO written by ChatGPT.</p>
 
 <section class="card" id="batch"><div class="flex"><h2>New listings</h2><span class="muted" id="bt-updated"></span></div>
 <p class="muted">Choose up to 20 artworks. Each one gets its artwork ID, the mockups from the chosen preset that suit its shape (made on the PC worker), SEO from ChatGPT and an Etsy draft set up like the Product Creator does it (preset photos, variants and the orientation's template). The drafts wait here until you press Publish all. Keep this page open while the artworks upload; after that it can be closed.</p>
 <div class="checks" id="bt-checks"></div>
-<div class="pair"><label class="button" for="bt-files" style="margin:0">Choose artworks…</label><input type="file" id="bt-files" multiple accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff" class="hidden">
-<span class="muted" id="bt-pick-note">JPG, PNG, WebP or TIFF masters</span></div>
+<div class="drop" id="bt-drop"><label class="button" for="bt-files" style="margin:0">Choose artworks…</label><input type="file" id="bt-files" multiple accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff" class="hidden">
+<span class="muted" id="bt-pick-note">or drag them here · JPG, PNG, WebP or TIFF masters</span></div>
 <div class="rows" id="bt-uploads"></div>
 <div id="bt-status" class="notice hidden" role="status"></div>
 <div class="rows" id="bt-rows"></div>
-<div class="flex hidden" id="bt-actions" style="margin-top:12px"><div class="pair"><button type="button" id="bt-stop" class="hidden">Stop</button><button type="button" id="bt-resume" class="hidden">Resume</button><button type="button" id="bt-retry" class="hidden">Try the failed ones again</button><button type="button" id="bt-new" class="hidden">Start a new batch</button></div>
+<div class="flex hidden" id="bt-actions" style="margin-top:12px"><div class="pair"><button type="button" id="bt-stop" class="hidden">Stop</button><button type="button" id="bt-resume" class="hidden">Resume</button><button type="button" id="bt-retry" class="hidden">Try the failed ones again</button><button type="button" id="bt-start-over" class="hidden">Start over</button></div>
 <button class="primary" type="button" id="bt-publish" disabled>Publish 0 listings</button></div>
 </section>
 
@@ -73,5 +76,7 @@ textarea{min-height:300px;resize:vertical;font-size:13px}label{font-size:12px;fo
 <div class="flex"><button type="button" id="ai-default">Use the built-in instructions</button><button class="primary" type="button" id="ai-save">Save ChatGPT settings</button></div>
 <div id="ai-status" class="notice hidden" role="status"></div>
 </section>
-</main></div><script src="/daily-listings-client.js" defer></script><script src="/daily-batch-client.js" defer></script></body></html>`;
+</main></div>
+${renderPhotoOrganizer({back:'Cancel'})}
+<script src="/assets/photo-organizer-client.js" defer></script><script src="/daily-listings-client.js" defer></script><script src="/daily-batch-client.js" defer></script></body></html>`;
 }

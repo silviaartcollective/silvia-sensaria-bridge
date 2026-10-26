@@ -48,7 +48,7 @@ test('one PSD never pauses the batch; a paused batch shows Resume',()=>{
  assert.match(client,/\['mg-pause',\(\)=>job\?\.paused\?resume\(\):pause\(\)\]/);
  assert.match(client,/button\.textContent=job\?\.paused\?'Resume':'Pause after current PSD'/);
  assert.match(client,/job\.paused\?'The batch is paused\. Click Resume to continue\.'/);
- assert.match(read('worker/api.mjs'),/WORKER_VERSION = '4\.7\.8'/);
+ assert.match(read('worker/api.mjs'),/WORKER_VERSION = '4\.7\.9'/);
 });
 
 test('a render that hangs is stopped and its slot keeps working; advance preparation gives way to a batch',async()=>{

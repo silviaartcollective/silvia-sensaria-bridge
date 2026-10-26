@@ -128,7 +128,7 @@ test('up to 20 mockups: photos the organizer puts past Etsy\'s 20 are not added,
  assert.match(server,/removeUnwantedDraftPhotos\(\{session,listingId,manifest:fresh,live:existingPhotos,order:chosenOrder\}\)/);
  const sync=server.slice(server.indexOf('async function syncGeneratedMockupsForArtwork'),server.indexOf('async function reconcileCompletedMockupsForArtwork'));
  assert.doesNotMatch(sync,/17/);
- const client=read('src/mockup-generator-client.js'),ui=read('src/mockup-generator-ui.mjs');
+ const client=read('src/photo-organizer-client.js'),ui=read('src/mockup-generator-ui.mjs');
  assert.match(client,/node\.classList\.toggle\('over',index>=organizer\.limit\)/);
  assert.match(client,/class:'mg-org-limit',role:'separator'/);
  assert.match(ui,/id="mg-select-all">Select first 20</);

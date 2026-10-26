@@ -11,17 +11,33 @@ const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const NO_SECTION = 'None';
 
 export const DEFAULT_AI_SEO_INSTRUCTIONS = `You write Etsy SEO for wall art prints sold as posters, canvas and framed canvas.
-Look closely at the artwork image and describe what is really in it: subject, colours, mood, art style and the rooms it suits.
+Look closely at the artwork: its subject, its exact colours, its texture and brushwork, its mood and its style.
 
-Title: up to 140 characters. Start with the words a buyer would type into Etsy search (for example "Sage Green Abstract Wall Art"), then add more search phrases separated by commas or " | ". Natural wording, no keyword stuffing, no words in all capitals. Use each of the characters % : & at most once.
+Title: 60 to 100 characters, in exactly this form:
+<Main subject phrase> Wall Art: <Colour> <Colour> <Texture or feel words> <Style> Style
+- The main subject phrase is what a buyer types into Etsy search, for example "Neutral Coastal Landscape", "Sage Green Abstract", "Moody Botanical".
+- After the colon: the two main colours as plain colour words (Beige, Brown, Sage, Navy, Ochre…), then one to three words for the texture or feel (Soft Textured, Layered, Distressed, Minimal…), then the style word and "Style".
+- Title Case. One colon only; no other punctuation, no "|", no commas. No repeated words, no words in all capitals.
 
-Description: 2 to 4 short sentences about the artwork for the "About this artwork" part of the listing. Warm and specific, with the main search words used naturally. No sizes, prices, shipping or frame details (the listing adds those).
+Description: exactly 2 sentences for the "About this artwork" part of the listing.
+- Sentence 1 names the real colours with nuance (warm beige, soft taupe, muted grey, deep earthy brown…) and describes the composition, brushwork and texture.
+- Sentence 2 says the mood it creates (calm, grounded, contemplative…).
+- No sizes, prices, frames, shipping, rooms or sales phrases ("perfect for…").
 
-Tags: exactly 13, each at most 20 characters including spaces, letters, numbers and spaces only. Use multi-word phrases buyers search for (subject, colour, style, room, gift). No repeated tags and no tag that only repeats the title word for word.
+Tags: exactly 13, all lowercase, 2 or 3 words each, at most 20 characters each including spaces.
+- Mix: the subject (neutral landscape, abstract shoreline), colour with subject (beige coastal art, brown wall art), mood (moody landscape, calm neutral art), texture (textured wall art), style (minimalist art) and decor phrases (coastal wall decor, earth tone decor).
+- No repeats, no single words, no tag that copies the title.
 
 Style: the one Etsy style from the list that fits best.
 
-Shop section: the one shop section from the list where this artwork belongs. Use "None" only if none fits.`;
+Shop section: the one shop section from the list where this artwork belongs, by its colours and subject. Use "None" only if none fits.
+
+An example of exactly the result wanted, for a neutral coastal landscape:
+Title: Neutral Coastal Landscape Wall Art: Beige Brown Soft Textured Minimalist Style
+Description: Warm beige, soft taupe, muted grey, and deep earthy brown tones blend across a quiet coastal landscape with layered horizontal brushwork and subtle distressed texture. The softened horizon, gentle tonal transitions, and atmospheric composition create a calm, grounded, and contemplative mood.
+Tags: neutral landscape, beige coastal art, brown wall art, moody landscape, soft coastal art, muted wall art, textured wall art, abstract shoreline, earth tone decor, calm neutral art, minimalist art, coastal wall decor, neutral wall decor
+Style: Minimalist
+Shop section: Neutral & Muted Tone Art`;
 
 const clean = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
@@ -191,8 +207,8 @@ export async function generateEtsySeo({
     text: { format: { type: 'json_schema', name: 'etsy_listing_seo', strict: true, schema: seoSchema(names) } },
     max_output_tokens: 6000
   };
-  // Reasoning models think briefly: this is a short, well-defined task.
-  if (/^(gpt-5|o\d)/i.test(options.model)) request.reasoning = { effort: 'low' };
+  // Reasoning models think a little: enough to follow the title pattern closely.
+  if (/^(gpt-5|o\d)/i.test(options.model)) request.reasoning = { effort: 'medium' };
 
   let problems = [], usage = { input_tokens: 0, output_tokens: 0 };
   for (let attempt = 1; attempt <= 2; attempt++) {

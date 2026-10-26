@@ -1,10 +1,11 @@
 // Batch listings: up to 20 artworks become Etsy drafts in one go. For each one
-// (its master already uploaded to R2 staging by the page): it gets its artwork
-// ID, the chosen mockup preset's PSDs for its orientation render on the PC while ChatGPT
-// writes the SEO, and the draft is created the way the Product Creator does it
-// (preset photos, mockups, variants, the orientation's template). The drafts
-// then wait for one "Publish all". The job is kept in R2, so the page can be
-// closed and a stopped batch resumed: every step is skipped once it is done.
+// (its master already uploaded to R2 staging by the page): the chosen mockup
+// preset's PSDs for its shape render on the PC from the staged master while
+// ChatGPT writes the SEO; then, as in the Product Creator, it gets its artwork
+// ID and R2 folder and the draft is created (preset photos, mockups, variants,
+// the orientation's template). The drafts then wait for one "Publish all".
+// The job is kept in R2, so the page can be closed and a stopped batch
+// resumed: every step is skipped once it is done.
 
 export const MAX_BATCH = 20;
 const LANES = 3;                 // artworks worked on at the same time
@@ -21,12 +22,35 @@ let loading = null;              // the one read of the batch from R2
 let adding = Promise.resolve();  // artworks are added one after another
 
 export const batchRunning = () => Boolean(control) || publishing;
-export function stopBatch() { if (control) control.stop = true; return Boolean(control); }
+
+// The listing layout from the artwork's pixels (as src/panoramic-layout.mjs:
+// 1.85:1 or wider is panoramic).
+export function layoutOfPixels(width, height) {
+  const w = Number(width), h = Number(height);
+  if (!(w > 0 && h > 0)) return '';
+  return w === h ? 'square' : h > w ? 'portrait' : w / h >= 1.85 ? 'panoramic' : 'landscape';
+}
+
+// Stop: nothing new starts, artworks added meanwhile wait too, and the steps
+// under way end at their next check. Resume goes on from there.
+export async function stopBatch(deps) {
+  const batch = await current(deps);
+  if (batch) { batch.paused = true; await save(deps); }
+  if (control) control.stop = true;
+  return Boolean(batch);
+}
 
 async function current(deps) {
   if (job) return job;
-  if (!loading) loading = Promise.resolve(deps.loadJob()).then(found => { if (!job) job = found || null; return job; })
-    .finally(() => { loading = null; });
+  if (!loading) loading = Promise.resolve(deps.loadJob()).then(found => {
+    if (!job) {
+      job = found || null;
+      // Read after a restart: nothing works on its items any more, so they wait
+      // (and are picked up again) instead of looking busy for ever.
+      for (const item of job?.items || []) if (item.status === 'working') { item.status = 'waiting'; item.step = 'Stopped'; }
+    }
+    return job;
+  }).finally(() => { loading = null; });
   return loading;
 }
 // Saves run one after another, so an older copy never overwrites a newer one.
@@ -44,6 +68,7 @@ export async function batchStatus(deps) {
   const batch = await current(deps);
   if (!batch) return null;
   const view = JSON.parse(JSON.stringify(batch));
+  view.stopping = Boolean(control?.stop);
   if (!control) for (const item of view.items) if (item.status === 'working') { item.status = 'waiting'; item.step = 'Stopped'; }
   return view;
 }
@@ -54,7 +79,7 @@ export function addToBatch(deps, artwork) {
   adding = added;
   return added;
 }
-async function addNow(deps, { stageId, filename, contentType, size, previewKey = '', preset = '' }) {
+async function addNow(deps, { stageId, filename, contentType, size, previewKey = '', preset = '', width = 0, height = 0 }) {
   if (!/^[0-9a-f-]{36}$/i.test(String(stageId || ''))) throw Error('Upload the artwork first.');
   let batch = await current(deps);
   if (!batch || batch.closed) {
@@ -64,7 +89,7 @@ async function addNow(deps, { stageId, filename, contentType, size, previewKey =
   if (batch.items.some(item => item.stageId === stageId)) return batch;
   batch.items.push({ n: batch.items.length + 1, filename: String(filename || 'artwork').slice(0, 120), stageId,
     contentType: String(contentType || ''), size: Number(size) || 0, previewKey: String(previewKey || ''),
-    preset: String(preset || '').slice(0, 120),
+    preset: String(preset || '').slice(0, 120), width: Number(width) || 0, height: Number(height) || 0,
     status: 'waiting', step: 'Waiting', artworkId: '', orientation: '', mockupJobId: '', mockups: null,
     seo: null, mockupsAttached: false, listingId: null, publish: true, error: '' });
   await save(deps);
@@ -74,7 +99,7 @@ async function addNow(deps, { stageId, filename, contentType, size, previewKey =
 
 // Starts (or tops up) the lanes that work on waiting items.
 function run(deps) {
-  if (!job) return;
+  if (!job || job.paused) return;
   if (!control) control = { stop: false, lanes: 0 };
   const lanesWanted = Math.min(LANES, control.lanes + job.items.filter(item => item.status === 'waiting').length);
   while (control.lanes < lanesWanted) {
@@ -98,9 +123,18 @@ async function lane(deps, mine) {
   }
 }
 
+// After a restart (a deploy, or Render moving the service) a batch that was
+// not stopped goes on by itself.
+export async function resumeAfterRestart(deps) {
+  const batch = await current(deps);
+  if (batch && !batch.paused && !batch.closed && batch.items.some(item => item.status === 'waiting')) run(deps);
+  return Boolean(control);
+}
+
 export async function resumeBatch(deps, { retryFailed = false } = {}) {
   if (!await current(deps)) throw Error('There is no batch to resume.');
   if (control?.stop) throw Error('The batch is still stopping; try again in a moment.');
+  job.paused = false;
   for (const item of job.items) {
     if (item.status === 'working' && !control) item.status = 'waiting';
     if (retryFailed && item.status === 'failed') { item.status = 'waiting'; item.error = ''; item.step = 'Waiting'; }
@@ -111,16 +145,25 @@ export async function resumeBatch(deps, { retryFailed = false } = {}) {
 
 async function processItem(deps, item, mine) {
   const step = async text => { item.step = text; await save(deps); };
+  const stopped = () => { if (!mine.stop) return false; item.status = 'waiting'; item.step = 'Stopped'; return true; };
+  const saveArtwork = async () => {
+    await step('Saving the artwork');
+    Object.assign(item, await deps.reserveArtwork(item));
+    await save(deps);
+  };
   try {
-    if (!item.artworkId) {
-      await step('Saving the artwork');
-      Object.assign(item, await deps.reserveArtwork(item));
-      await save(deps);
+    // The shape comes from the page; without it (e.g. a TIFF the browser cannot
+    // read) the artwork is saved first, which tells it.
+    if (!item.orientation) {
+      item.orientation = layoutOfPixels(item.width, item.height);
+      if (!item.orientation) await saveArtwork();
     }
+    if (stopped()) return;
     if (!item.mockupJobId) {
       await step('Starting the mockups');
-      const started = await deps.startMockups(item.artworkId, item.orientation, item.preset);
+      const started = await deps.startMockups(item);
       item.mockupJobId = started.jobId;
+      item.mockupsFromStaging = !item.artworkId;
       item.mockups = { total: started.total, done: 0, failed: 0 };
       await save(deps);
     }
@@ -132,8 +175,9 @@ async function processItem(deps, item, mine) {
       mockups = await deps.mockupStatus(item.mockupJobId);
       item.mockups = { total: mockups.total, done: mockups.done, failed: mockups.failed };
       if (mockups.finished) break;
-      if (mine.stop) { item.status = 'waiting'; item.step = 'Stopped'; return; }
-      await step('Mockups: ' + mockups.done + ' of ' + mockups.total + ' made on the PC');
+      if (stopped()) return;
+      // What the PC is doing, so a slow step (a large master downloading) or an offline worker shows.
+      await step('Mockups: ' + mockups.done + ' of ' + mockups.total + ' made on the PC' + (mockups.note ? ' · ' + mockups.note : ''));
       await deps.pause(MOCKUP_POLL_MS);
     }
     if (!mockups.completedIds.length) throw Error('No mockup could be made for this artwork on the PC.');
@@ -142,10 +186,23 @@ async function processItem(deps, item, mine) {
       item.seo = await seo;
       await save(deps);
     }
+    if (stopped()) return;
+    // Only now, as in the Product Creator, the artwork gets its ID and R2 folder.
+    if (!item.artworkId) await saveArtwork();
+    if (item.mockupsFromStaging && !item.mockupsLinked) {
+      await deps.linkMockups(item);
+      item.mockupsLinked = true;
+    }
     if (!item.mockupsAttached) {
       await deps.attachMockups(item.artworkId, item.mockupJobId, mockups.completedIds);
       item.mockupsAttached = true;
     }
+    // The photo order saved for the preset and this shape, used by the draft.
+    if (!item.orderSaved && deps.savePhotoOrder) {
+      await deps.savePhotoOrder(item, mockups.completedIds);
+      item.orderSaved = true;
+    }
+    if (stopped()) return;
     // A draft whose setup was cut short (a restart) is set up again; Etsy keeps the one draft.
     for (let attempt = 1; ; attempt++) {
       if (!item.listingId || attempt > 1) {
@@ -217,6 +274,25 @@ export async function closeBatch(deps) {
   return batch;
 }
 
+// Start over: the batch is stopped and emptied, and artworks are chosen again.
+// Drafts already created stay on Etsy as drafts; masters still waiting in
+// temporary storage are removed.
+export async function startOver(deps, { waitMs = 90000 } = {}) {
+  if (publishing) throw Error('Wait for publishing to finish first.');
+  const batch = await current(deps);
+  if (control) control.stop = true;
+  const until = Date.now() + waitMs;
+  while (control) {
+    if (Date.now() > until) throw Error('The batch is still finishing a step; try again in a moment.');
+    await deps.pause(200);
+  }
+  for (const item of batch?.items || []) if (!item.artworkId) await Promise.resolve(deps.discardUpload?.(item)).catch(() => {});
+  job = null;
+  saving = saving.catch(() => {}).then(() => deps.saveJob(null));
+  await saving;
+  return null;
+}
+
 // For tests: forget the batch held in memory.
 export function resetBatchMemory() { job = null; control = null; publishing = false; saving = Promise.resolve(); loading = null; adding = Promise.resolve(); }
 
@@ -274,3 +350,15 @@ export function mockupPresets(templates) {
 // orientation, or a square artwork in a template marked square-compatible.
 export const templateSuits = (template, layout) => String(template?.orientation || '') === layout ||
   (layout === 'square' && template?.squareCompatible === true);
+
+// The Etsy photo order chosen for a preset and shape (Daily Listings → Arrange
+// photos): tile ids as in the Product Creator's organizer
+// (src/etsy-photo-organizer.mjs). An artwork's own order keeps those of its
+// photos that it has, in that order; any others follow.
+export const photoOrderKey = (preset, layout) => presetKey(preset) + '|' + String(layout || '');
+export function orderForArtwork(saved = [], { templateIds = [], presetKeys = [] } = {}) {
+  const have = new Set([...templateIds.map(id => 'generated:' + id), ...presetKeys.map(key => 'key:' + key)]);
+  const order = [], seen = new Set();
+  for (const id of [...saved, ...have]) if (have.has(id) && !seen.has(id)) { seen.add(id); order.push(id); }
+  return order;
+}

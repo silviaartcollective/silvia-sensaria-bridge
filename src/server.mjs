@@ -26,12 +26,13 @@ import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
 import { previewDescriptionUpdates, applyDescriptionUpdates, reviseCanvasThickness } from './description-updater.mjs';
 
 import { renderProductCreator } from './product-creator.mjs';
-import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey,listMockupTemplates,getMockupTemplate} from './mockup-generator.mjs';
+import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey,listMockupTemplates,getMockupTemplate,linkMockupArtwork} from './mockup-generator.mjs';
 import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verification.mjs';
 import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
 import {mockupObjectKey} from './production.mjs';
-import { handleMockupAPI, mockupJobFromArtwork } from './mockup-api.mjs';
-import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, setPublish, publishBatch, closeBatch, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits } from './batch-poster.mjs';
+import { handleMockupAPI, mockupJobFromArtwork, mockupJobFromStaged } from './mockup-api.mjs';
+import { mockupOrientationOf } from './mockup-orientation.mjs';
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, resumeAfterRestart, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits, photoOrderKey, orderForArtwork } from './batch-poster.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
 import { generateEtsySeo, loadAiSeoSettings, saveAiSeoSettings, aiSeoConfigured, seoImage, seoPasteText, sectionUrl, DEFAULT_AI_SEO_INSTRUCTIONS, DEFAULT_AI_SEO_MODEL } from './ai-seo.mjs';
@@ -102,6 +103,7 @@ import {
 import {
   reserveArtworkUpload,
   stageMasterUpload,
+  stagedMasterObjectKey,
   pruneStagedMasters,
   completeArtworkUpload,
   cancelArtworkUpload,
@@ -686,6 +688,16 @@ function recordCropWorkerHeartbeat(input = {}) {
 // not offline, for up to three minutes.
 const WORKER_UPDATE_RESTART_MS = 3 * 60 * 1000;
 
+// The PC worker says why it was started again after stopping unexpectedly
+// (worker/supervise.mjs); logged once, so Render's log keeps the reason.
+let loggedWorkerRestart='';
+function logWorkerRestart(restart){
+  const at=String(restart?.at||'');
+  if(!at||at===loggedWorkerRestart)return;
+  loggedWorkerRestart=at;
+  console.error('PC worker stopped unexpectedly at '+at+' ('+String(restart.reason||'unknown').slice(0,200)+
+    ', after '+(Number(restart.ranSeconds)||0)+' s) and was started again. Its last lines:\n'+String(restart.lastLines||'(none)').slice(0,1500));
+}
 function cropWorkerStatus() {
   const configured = Boolean(String(process.env.CROP_WORKER_TOKEN || '').trim());
   const online = configured &&
@@ -884,7 +896,26 @@ function crossSitePost(req){
 const BATCH_JOB_KEY='settings/batch-poster/job.json';
 const BATCH_PRESET_KEY='settings/batch-poster/mockup-preset.json';
 const LAYOUT_NAMES={portrait:'Vertical',landscape:'Horizontal',square:'Square',panoramic:'Panoramic'};
-const presetPhotoRoom=async()=>ETSY_PHOTO_LIMIT-(await presetMediaStatus()).items.filter(item=>item.exists&&item.role!=='video').length;
+const presetImagesOf=media=>media.items.filter(item=>item.exists&&item.role!=='video');
+// The Etsy photo order arranged for each preset and shape (Arrange photos).
+const BATCH_PHOTO_ORDERS_KEY='settings/batch-poster/photo-orders.json';
+async function loadPhotoOrders(){
+  try{return (await getJsonObject(BATCH_PHOTO_ORDERS_KEY))||{}}catch(error){if(isMissingR2Object(error))return {};throw error}
+}
+// The organizer's tiles for a preset: the preset photos and the preset's PSDs.
+const presetPhotoTiles=(preset,presetImages)=>[
+  ...presetImages.map(item=>({id:'key:'+item.key,kind:'preset',label:PRESET_LABELS[item.role]||'Preset photo',
+    thumb:'/api/etsy-photo-organizer/thumb?key='+encodeURIComponent(item.key)})),
+  ...preset.templates.map(t=>({id:'generated:'+t.id,kind:'mockup',label:t.name,thumb:'/api/batch/template-preview/'+encodeURIComponent(t.id)}))];
+// A preset's photos for one shape, in its saved order (else the usual one):
+// the preset photos and the preset's PSDs that suit the shape.
+function presetPhotoPlan(preset,layout,{presetImages,orders}){
+  const ids=[...presetImages.map(item=>'key:'+item.key),
+    ...preset.templates.filter(t=>templateSuits(t,layout)).map(t=>'generated:'+t.id)];
+  const saved=orders[photoOrderKey(preset.name,layout)]?.order||null;
+  const planned=defaultPlannedOrder({presets:presetImages,generated:ids.filter(id=>id.startsWith('generated:'))});
+  return {ids,saved,order:mergeOrder(saved||planned,ids)};
+}
 // A small picture of a template for the page: the worker's preview of the PSD,
 // else the last mockup made with it. Kept in memory once made.
 const templatePreviews=new Map();
@@ -930,21 +961,45 @@ function batchDeps(){
       const manifest=await completeArtworkUpload(reservation.artworkId);
       return {artworkId:reservation.artworkId,orientation:listingLayoutForManifest(manifest)};
     },
-    startMockups:async(artworkId,layout,presetName)=>{
-      const [templates,room]=await Promise.all([listMockupTemplates(),presetPhotoRoom()]);
-      const preset=mockupPresets(templates).find(item=>presetKey(item.name)===presetKey(presetName));
-      if(!preset)throw Error('The mockup preset "'+(presetName||'(none)')+'" is not a folder in the PC mockup folder any more. Choose a preset, then try again.');
-      const ids=preset.templates.filter(t=>templateSuits(t,layout)).map(t=>t.id).slice(0,room);
+    // From the staged master (no artwork ID yet), or from the artwork when it has one.
+    startMockups:async item=>{
+      const layout=item.orientation,[templates,media,orders]=await Promise.all([listMockupTemplates(),presetMediaStatus(),loadPhotoOrders()]);
+      const preset=mockupPresets(templates).find(entry=>presetKey(entry.name)===presetKey(item.preset));
+      if(!preset)throw Error('The mockup preset "'+(item.preset||'(none)')+'" is not a folder in the PC mockup folder any more. Choose a preset, then try again.');
+      // With an arranged order, the PSDs placed within Etsy's 20 photos; else the first that fit.
+      const presetImages=presetImagesOf(media),room=ETSY_PHOTO_LIMIT-presetImages.length;
+      const plan=presetPhotoPlan(preset,layout,{presetImages,orders});
+      const ids=plan.saved?plan.order.slice(0,ETSY_PHOTO_LIMIT).filter(id=>id.startsWith('generated:')).map(id=>id.slice(10)):
+        preset.templates.filter(t=>templateSuits(t,layout)).map(t=>t.id).slice(0,room);
       if(!ids.length)throw Error(preset.name+' has no '+LAYOUT_NAMES[layout]+' mockups. Add some to its folder on the PC '+
         '(or set their orientation in the Product Creator), then try again.');
-      const job=await mockupJobFromArtwork({artworkId,templateIds:ids});
+      // queue:'batch': the PC makes these oldest first, after any Product Creator mockups.
+      const job=item.artworkId?await mockupJobFromArtwork({artworkId:item.artworkId,templateIds:ids,queue:'batch'}):
+        await mockupJobFromStaged({stagedKey:stagedMasterObjectKey(item.stageId,item.filename),filename:item.filename,
+          templateIds:ids,orientation:layout,queue:'batch'}).catch(error=>{
+          throw /not found|NoSuchKey|404/i.test(String(error?.message||error))
+            ?Error('The uploaded file is no longer in temporary storage (kept 3 days). Start over and add this artwork again.'):error;
+        });
       return {jobId:job.id,total:job.templates.length};
+    },
+    // Mockups made before the artwork had an ID now belong to it.
+    linkMockups:async item=>{
+      const manifest=await loadArtworkManifest(item.artworkId);
+      await linkMockupArtwork(item.mockupJobId,{artworkId:item.artworkId,masterKey:manifest.master.key,orientation:mockupOrientationOf(manifest)});
+    },
+    // Start over: a master that never got an artwork ID, and its preview, are removed.
+    discardUpload:async item=>{
+      await deleteArtworkObject(stagedMasterObjectKey(item.stageId,item.filename)).catch(()=>{});
+      if(item.previewKey)await deleteArtworkObject(item.previewKey).catch(()=>{});
     },
     mockupStatus:async jobId=>{
       const job=await getMockupJob(jobId);
       const count=status=>job.templates.filter(t=>t.status===status).length;
+      const working=job.templates.find(t=>t.status==='processing');
+      const note=!cropWorkerStatus().online?'the PC worker is offline: start it on the PC to go on':
+        working?String(working.progress||'').replace(/\.+$/,''):count('queued')?'waiting for the PC to finish the artworks before it':'';
       return {total:job.templates.length,done:count('completed'),failed:count('failed')+count('needs_mapping'),
-        finished:!job.templates.some(t=>['queued','processing'].includes(t.status)),
+        finished:!job.templates.some(t=>['queued','processing'].includes(t.status)),note,
         completedIds:job.templates.filter(t=>t.status==='completed').map(t=>t.id)};
     },
     writeSeo:async item=>{
@@ -958,6 +1013,17 @@ function batchDeps(){
       return generateEtsySeo({image:await seoImage(picture),orientation:item.orientation,...(await seoShopContext(await getEtsySession()))});
     },
     attachMockups:(artworkId,jobId,templateIds)=>syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds}),
+    // The order arranged for the preset and shape goes on the artwork, as the
+    // Product Creator's organizer does; the draft is then set up in that order.
+    savePhotoOrder:async(item,templateIds)=>{
+      const saved=(await loadPhotoOrders())[photoOrderKey(item.preset,item.orientation)]?.order;
+      if(!saved?.length)return;
+      const presetKeys=presetImagesOf(await presetMediaStatus()).map(entry=>entry.key);
+      const tiles=orderForArtwork(saved,{templateIds,presetKeys});
+      await updateArtworkManifest(item.artworkId,current=>{
+        current.etsyPhotoOrder={tiles,jobId:item.mockupJobId,savedAt:new Date().toISOString()};
+      });
+    },
     createDraft:async item=>{
       if(!batchDefaultsCache.value||Date.now()-batchDefaultsCache.at>10*60*1000)
         batchDefaultsCache={at:Date.now(),value:await batchShopDefaults(await getEtsySession())};
@@ -3147,9 +3213,10 @@ const server = http.createServer(async (req, res) => {
       'x-content-type-options':'nosniff'});
     res.end(js);return;
   }
-  if(mockupUrl.pathname==='/assets/mockup-generator-client.js'){
+  // The photo organizer is shared with Daily Listings.
+  if(mockupUrl.pathname==='/assets/mockup-generator-client.js'||mockupUrl.pathname==='/assets/photo-organizer-client.js'){
     if(!requireAdminApi(req,res))return;
-    const js=readFileSync(new URL('./mockup-generator-client.js',import.meta.url));
+    const js=readFileSync(new URL('.'+mockupUrl.pathname.slice('/assets'.length),import.meta.url));
     res.writeHead(200,{'content-type':'text/javascript; charset=utf-8',
       'content-length':js.length,'cache-control':'private, no-store',
       'x-content-type-options':'nosniff'});
@@ -3209,6 +3276,7 @@ const server = http.createServer(async (req, res) => {
       if (!String(input.workerId || '').trim()) {
         return sendJson(res, 400, { ok: false, error: 'workerId is required' });
       }
+      logWorkerRestart(input.restart);
       return sendJson(res, 200, {
         ok: true,
         worker: recordCropWorkerHeartbeat(input),
@@ -4937,8 +5005,10 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res,200,{ok:true,job,running:batchRunning(),max:MAX_BATCH,chatGpt:aiSeoConfigured()});
       }
       if(req.method==='GET'&&action==='/presets'){
-        const [templates,room,folder,saved]=await Promise.all([listMockupTemplates(),presetPhotoRoom(),getPcMockupFolder(),
-          getJsonObject(BATCH_PRESET_KEY).catch(()=>null)]);
+        const [templates,media,orders,folder,saved]=await Promise.all([listMockupTemplates(),presetMediaStatus(),loadPhotoOrders(),
+          getPcMockupFolder(),getJsonObject(BATCH_PRESET_KEY).catch(()=>null)]);
+        const presetImages=presetImagesOf(media),room=ETSY_PHOTO_LIMIT-presetImages.length;
+        const video=media.items.find(item=>item.exists&&item.role==='video');
         const ready=templates.filter(t=>t.status==='ready'),presets=mockupPresets(ready);
         const chosen=presets.find(item=>presetKey(item.name)===presetKey(saved?.name))||presets[0]||null;
         // The folder may be set on the PC (worker config) rather than in the app.
@@ -4950,13 +5020,20 @@ const server = http.createServer(async (req, res) => {
           const dir=String(t.localPath||'').split('/').slice(0,-1).join('/')||'(directly in the mockup folder)';
           seen.set(dir,(seen.get(dir)||0)+1);
         }
-        return sendJson(res,200,{ok:true,folder:folder||worker.mockupFolder?.path||'',room,chosen:chosen?.name||'',
+        // Arrange photos opens at once: each preset's tiles and its order for each shape come with the list.
+        return sendJson(res,200,{ok:true,folder:folder||worker.mockupFolder?.path||'',room,chosen:chosen?.name||'',limit:ETSY_PHOTO_LIMIT,
+          video:video?{label:'Preset video',src:await signedArtworkUrl(video.key,3600).catch(()=>null)}:null,
           worker:{online:worker.online,folder:worker.mockupFolder?.path||'',fromConfig:worker.mockupFolder?.fromConfig===true,
             count:worker.mockupFolder?.count??null,error:worker.mockupFolder?.error||''},
           folders:[...seen].sort((a,b)=>b[1]-a[1]).slice(0,12).map(([path,count])=>({path,count})),
           outside:ready.filter(t=>t.source==='pc').length-presets.reduce((sum,item)=>sum+item.templates.length,0),
           presets:presets.map(item=>({name:item.name,templates:item.templates.map(t=>({id:t.id,name:t.name,localPath:t.localPath,
-            orientation:t.orientation||'unclassified',squareCompatible:t.squareCompatible===true}))}))});
+            orientation:t.orientation||'unclassified',squareCompatible:t.squareCompatible===true})),
+            tiles:presetPhotoTiles(item,presetImages),
+            arrange:Object.fromEntries(Object.keys(LAYOUT_NAMES).map(layout=>{
+              const plan=presetPhotoPlan(item,layout,{presetImages,orders});
+              return [layout,{order:plan.order,saved:Boolean(plan.saved)}];
+            }))}))});
       }
       const previewRoute=action.match(/^\/template-preview\/([A-Za-z0-9_-]{1,80})$/);
       if(req.method==='GET'&&previewRoute){
@@ -4967,6 +5044,20 @@ const server = http.createServer(async (req, res) => {
       }
       if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'Method not allowed.'});
       const body=await readJsonBody(req);
+      if(action==='/photo-order'){
+        const layout=String(body.layout||'');
+        if(!LAYOUT_NAMES[layout])return sendJson(res,400,{ok:false,error:'Unknown shape.'});
+        const [templates,media,orders]=await Promise.all([listMockupTemplates(),presetMediaStatus(),loadPhotoOrders()]);
+        const preset=mockupPresets(templates).find(entry=>presetKey(entry.name)===presetKey(body.preset));
+        if(!preset)return sendJson(res,400,{ok:false,error:'The mockup preset "'+String(body.preset||'(none)').slice(0,120)+'" is not a folder in the PC mockup folder any more.'});
+        const known=new Set(presetPhotoPlan(preset,layout,{presetImages:presetImagesOf(media),orders}).ids);
+        const order=(Array.isArray(body.order)?body.order:[]).map(String).filter(id=>known.has(id));
+        const key=photoOrderKey(preset.name,layout);
+        // An empty order goes back to the usual one.
+        if(order.length)orders[key]={order,savedAt:new Date().toISOString()};else delete orders[key];
+        await putJsonObject(BATCH_PHOTO_ORDERS_KEY,orders);
+        return sendJson(res,200,{ok:true,saved:Boolean(order.length)});
+      }
       if(action==='/presets'){
         const name=String(body.name||'').slice(0,120);
         if(!mockupPresets(await listMockupTemplates()).some(item=>presetKey(item.name)===presetKey(name)))
@@ -4982,14 +5073,22 @@ const server = http.createServer(async (req, res) => {
         if(!aiSeoConfigured())return sendJson(res,400,{ok:false,error:'ChatGPT is not connected: add OPENAI_API_KEY in Render first.'});
         const previewKey=/^batch-poster\/previews\/[0-9a-f-]{36}\.jpg$/.test(String(body.previewKey||''))?String(body.previewKey):'';
         if(!String(body.preset||'').trim())return sendJson(res,400,{ok:false,error:'Choose the mockup preset first.'});
-        await addToBatch(deps,{stageId:body.stageId,filename:body.filename,contentType:body.contentType,size:body.size,previewKey,preset:body.preset});
+        await addToBatch(deps,{stageId:body.stageId,filename:body.filename,contentType:body.contentType,size:body.size,previewKey,preset:body.preset,
+          width:Number(body.width)||0,height:Number(body.height)||0});
         return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
       }
       if(action==='/resume'){
         await resumeBatch(deps,{retryFailed:body.retryFailed===true});
         return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
       }
-      if(action==='/stop')return sendJson(res,200,{ok:true,stopping:stopBatch()});
+      if(action==='/stop'){
+        await stopBatch(deps);
+        return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
+      }
+      if(action==='/start-over'){
+        await startOver(deps);
+        return sendJson(res,200,{ok:true,job:null,running:false});
+      }
       if(action==='/tick'){
         await setPublish(deps,{n:body.n,publish:body.publish});
         return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
@@ -6345,6 +6444,9 @@ server.listen(port, '0.0.0.0', () => {
   setTimeout(()=>{void recoverRecentGeneratedJpgs().catch(
     error=>console.error('PSD startup recovery failed:',error)
   );},30000).unref();
+  // A Daily Listings batch that was running before this restart goes on.
+  setTimeout(()=>{void resumeAfterRestart(batchDeps()).then(resumed=>{if(resumed)console.log('Daily Listings batch resumed after a restart.')},
+    error=>console.error('Daily Listings batch could not resume after a restart:',error.message));},15000).unref();
   if(AUTO_REVIEW_ENABLED){
     setTimeout(()=>{void reconcileNewEtsyPaidOrders();},30000).unref();
     setInterval(()=>{void reconcileNewEtsyPaidOrders();},AUTO_REVIEW_INTERVAL_MS).unref();

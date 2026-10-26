@@ -16,6 +16,8 @@ export const WORKER_DIR=path.dirname(fileURLToPath(import.meta.url));
 export const UPDATE_DIR=path.join(WORKER_DIR,'.update');
 // The running worker writes its process ID here (stop-worker.cmd reads it too).
 export const LOCK_PATH=process.env.POD_WORKER_LOCK_PATH||path.join(os.tmpdir(),'pod-crop-worker.lock');
+// Left before the worker is stopped on purpose, so supervise.mjs does not start it again.
+export const STOP_PATH=LOCK_PATH+'.stop';
 // Files an update never touches: the shop tokens and the logs.
 const KEEP=new Set(['config.local.json','worker.log','update.log']);
 const FILE_NAME=/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
@@ -137,6 +139,12 @@ export async function waitForExit(pid,timeoutMs){
  }
  return false;
 }
+// Stops the worker on purpose: supervise.mjs sees the marker and ends too.
+export async function stopWorker(pid,timeoutMs=15000){
+ try{fs.writeFileSync(STOP_PATH,String(pid))}catch{}
+ try{process.kill(pid)}catch{}
+ return waitForExit(pid,timeoutMs);
+}
 export function startWorker(dir=WORKER_DIR){
  if(process.platform==='win32'){
   spawn('cmd.exe',['/c','start-worker.cmd'],{cwd:dir,detached:true,stdio:'ignore',windowsHide:true}).unref();
@@ -199,7 +207,7 @@ export async function installStaged(stagedDir,{dir=WORKER_DIR,updateDir=UPDATE_D
  }catch(error){
   log('Update to v'+version+' failed: '+error.message+'. Restoring the previous version.');
   const pid=runningWorkerPid();
-  if(pid&&pid!==previousPid){try{process.kill(pid)}catch{} await waitForExit(pid,15000)}
+  if(pid&&pid!==previousPid)await stopWorker(pid);
   await restoreBackup({dir,updateDir});
   if(dependenciesMissing(dir))await npmInstall(dir,log).catch(e=>log('npm install failed: '+e.message));
   await recordFailure(version,error,{updateDir});

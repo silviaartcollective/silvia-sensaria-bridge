@@ -255,7 +255,7 @@ export async function getMockupJob(id){
 }
 // The artwork fills the template's artwork layer ("cover"): where their shapes
 // differ its edges are trimmed rather than leaving white bands ("contain").
-export async function createMockupJob({filename,size,templateIds,fitMode='cover',artworkOrientation='unclassified'}){
+export async function createMockupJob({filename,size,templateIds,fitMode='cover',artworkOrientation='unclassified',queue=''}){
  const artName=safeFilename(filename),extension=extFile(artName,['jpg','jpeg','png','webp','tif','tiff']);
  if(!Array.isArray(templateIds)||!templateIds.length||templateIds.length>150)
   throw Error('Select between 1 and 150 templates.');
@@ -268,7 +268,7 @@ export async function createMockupJob({filename,size,templateIds,fitMode='cover'
  if(normalizedArtworkOrientation!=='unclassified')
   validateTemplateSelection(templates,normalizedArtworkOrientation);
  const id=crypto.randomUUID(),created=iso();
- const job={id,createdAt:created,updatedAt:created,filename:artName,
+ const job={id,createdAt:created,updatedAt:created,filename:artName,...(queue==='batch'?{queue}:{}),
   artworkKey:ROOT+'/jobs/'+id+'/artwork.'+extension,artworkSize:Number(size),artworkUploaded:false,
   fitMode,artworkOrientation:normalizedArtworkOrientation,status:'awaiting_artwork',paused:false,lease:null,
   templates:templates.map(t=>({id:t.id,name:t.name,outputName:outputFileName(t.name),

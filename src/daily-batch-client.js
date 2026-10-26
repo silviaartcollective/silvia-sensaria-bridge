@@ -19,7 +19,7 @@ const layoutOf=(width,height)=>width===height?'square':height>width?'portrait':w
 // ---------------------------------------------------------------- mockup presets
 // The presets are folders on the PC; the page shows them and remembers which
 // one new artworks use.
-let presets=[],chosen='',room=20,presetsLoaded=null;
+let presets=[],chosen='',room=20,presetsLoaded=null,presetsAt=0,limit=20,video=null;
 const ORDER=['portrait','landscape','square','panoramic','unclassified'];
 const presetByName=name=>presets.find(p=>p.name===name)||null;
 const countsOf=preset=>Object.keys(NAMES).map(key=>[key,preset.templates.filter(t=>t.orientation===key).length]).filter(([,n])=>n);
@@ -45,18 +45,29 @@ function showPresets(){
   const list=preset.templates.filter(t=>(key==='unclassified'?!NAMES[t.orientation]:t.orientation===key));
   if(!list.length)continue;
   const title=make('div','group-title',key==='unclassified'?'Shape not known yet ':NAMES[key]+' artworks ');
+  // With an arranged order, the PSDs within Etsy's 20 photos are used; else the first that fit.
+  const plan=key!=='unclassified'&&preset.arrange?.[key],custom=Boolean(plan?.saved);
+  const used=custom?new Set(plan.order.slice(0,limit).filter(id=>id.startsWith('generated:')).map(id=>id.slice(10))):null;
   title.append(make('span','muted',key==='unclassified'
    ?'('+list.length+'): the PC worker finds it when it opens these PSDs, or set it in the Product Creator.'
-   :'('+list.length+(list.length>room?', the first '+room+' are used':'')+')'));
+   :'('+list.length+(custom?', in your arranged photo order'+(used.size<list.length?': the '+used.size+' within Etsy\'s '+limit+' photos are used':''):
+    list.length>room?', the first '+room+' are used':'')+')'));
+  if(key!=='unclassified'){
+   const arrange=make('button','','Arrange photos');arrange.type='button';
+   arrange.addEventListener('click',()=>void openArrange(preset.name,key).catch(error=>notice('mp-status',String(error.message||error),'error')));
+   title.append(arrange);
+  }
   const grid=make('div','tpl-grid');
-  list.forEach((template,index)=>grid.append(card(template,key!=='unclassified'&&index>=room)));
+  list.forEach((template,index)=>grid.append(card(template,key!=='unclassified'&&(used?!used.has(template.id):index>=room))));
   groups.append(title,grid);
  }
  checks();
 }
 async function loadPresets(){
  const data=await request('/api/batch/presets');
- presets=data.presets||[];room=data.room;chosen=data.chosen||'';
+ presets=data.presets||[];room=data.room;chosen=data.chosen||'';limit=data.limit||20;video=data.video||null;presetsAt=Date.now();
+ // The preset photos are in every organizer: their pictures load now.
+ for(const tile of presets[0]?.tiles||[])if(tile.kind==='preset')new Image().src=tile.thumb;
  const where=data.folder?' ('+data.folder+')':'';
  el('mp-about').textContent='Your presets are the folders named Preset 1, Preset 2… in the PC mockup folder'+where+
   '. Each new listing gets the PSDs from the chosen preset that suit its artwork\'s shape. Add, remove or move PSDs on the PC; the worker picks the change up within a minute.';
@@ -77,6 +88,34 @@ async function loadPresets(){
  else if(data.outside>0)notice('mp-status',data.outside+' PSD'+(data.outside===1?' is':'s are')+' not in a preset folder, so new listings do not use '+(data.outside===1?'it':'them')+'.');
  else el('mp-status').classList.add('hidden');
  showPresets();
+}
+// ---------------------------------------------------------------- photo order
+// The Etsy photo order for a preset and shape, arranged in the Product
+// Creator's organizer (photo-organizer-client.js). Each preset's photos and
+// orders come with the preset list, so it opens at once.
+async function openArrange(presetName,layout){
+ // The preset video's link lasts an hour.
+ if(video&&Date.now()-presetsAt>45*60*1000)await loadPresets();
+ const preset=presetByName(presetName),plan=preset?.arrange?.[layout];
+ if(!plan)return;
+ photoOrganizer.open({tiles:preset.tiles,order:plan.order,limit,video,saveLabel:'Save order',
+  note:(plan.saved?'Your saved order for ':'The usual order for ')+presetName+' · '+NAMES[layout]+
+   ' artworks. Every new listing with this preset and shape gets the order you save, until you change it.',
+  onSave:()=>void saveArranged(presetName,layout),onBack:()=>photoOrganizer.close()});
+}
+async function saveArranged(presetName,layout){
+ const order=photoOrganizer.order();
+ if(!order)return;
+ el('mg-org-save').disabled=true;
+ try{
+  await request('/api/batch/photo-order',{preset:presetName,layout,order});
+  const preset=presetByName(presetName);
+  if(preset)preset.arrange[layout]={order,saved:true};
+  photoOrganizer.close();
+  showPresets();
+  notice('mp-status','Photo order saved for '+presetName+' · '+NAMES[layout]+' artworks. New listings with this preset and shape get it.');
+ }catch(error){el('mg-org-status').textContent=String(error.message||error);}
+ finally{el('mg-org-save').disabled=false;}
 }
 el('mp-refresh').addEventListener('click',()=>{presetsLoaded=loadPresets().catch(error=>notice('mp-status',String(error.message||error),'error'));});
 async function choose(name){
@@ -108,13 +147,13 @@ function show(){
  const parts=[ready&&ready+' draft'+(ready===1?'':'s')+' ready',published&&published+' published',working&&working+' being made',
   waiting&&waiting+' waiting',failed&&failed+' failed'].filter(Boolean);
  notice('bt-status',items.length+' artwork'+(items.length===1?'':'s')+' in this batch: '+parts.join(', ')+'.'+
-  (!state.running&&(waiting||working)?' Stopped: press Resume to go on.':''),failed?'warn':'');
+  (job.stopping?' Stopping: the artworks being worked on stop after their current step.'
+   :!state.running&&(waiting||working)?' Stopped: press Resume to go on, or Start over.':''),failed?'warn':'');
  el('bt-updated').textContent=job.updatedAt?'Updated '+new Date(job.updatedAt).toLocaleTimeString():'';
  const rows=el('bt-rows');rows.replaceChildren();
  for(const item of items){
   const row=make('div','row item');
-  let picture;
-  if(item.previewUrl){picture=make('img');picture.src=item.previewUrl;picture.alt='';picture.loading='lazy';}else picture=make('div','ph');
+  const picture=previewOf(item);
   const text=make('div');
   text.append(make('div','t',item.seo?.title||item.filename));
   text.append(make('div','muted',[item.filename,item.artworkId,NAMES[item.orientation]].filter(Boolean).join(' · ')));
@@ -144,10 +183,10 @@ function show(){
  const ticked=items.filter(item=>item.status==='ready'&&item.publish!==false).length;
  el('bt-publish').textContent='Publish '+ticked+' listing'+(ticked===1?'':'s');
  el('bt-publish').disabled=!ticked||state.running;
- el('bt-stop').classList.toggle('hidden',!state.running);
+ el('bt-stop').classList.toggle('hidden',!state.running||job.stopping);
  el('bt-resume').classList.toggle('hidden',state.running||!(waiting||working));
  el('bt-retry').classList.toggle('hidden',state.running||!failed);
- el('bt-new').classList.toggle('hidden',state.running||waiting+working>0);
+ el('bt-start-over').classList.toggle('hidden',!items.length);
 }
 async function refresh(){
  try{state={...state,...await request('/api/batch')};show();}
@@ -157,14 +196,29 @@ async function refresh(){
 }
 
 // Uploads: the master to R2 staging, a 1024 px preview for ChatGPT, then the batch.
-function put(url,file,type,onProgress){
+function put(url,file,type,onProgress,upload){
  return new Promise((resolve,reject)=>{
   const xhr=new XMLHttpRequest();xhr.open('PUT',url);xhr.setRequestHeader('content-type',type);
+  if(upload)upload.xhr=xhr;
+  xhr.onabort=()=>reject(Error('Upload cancelled.'));
   xhr.upload.onprogress=event=>{if(event.lengthComputable)onProgress(event.loaded/event.total);};
   xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(Error('Upload failed (HTTP '+xhr.status+').'));
   xhr.onerror=()=>reject(Error('Upload failed: the connection dropped.'));
   xhr.send(file);
  });
+}
+// Each artwork's picture is made once and kept, so the list refreshing every
+// few seconds never loads it again (the server's links change every time).
+// An artwork uploaded from this page shows the preview made here at once.
+const pictures=new Map(),localPreviews=new Map(); // stageId -> <img>, object URL
+function previewOf(item){
+ const known=pictures.get(item.stageId);
+ if(known)return known;
+ const src=localPreviews.get(item.stageId)||item.previewUrl;
+ if(!src)return make('div','ph');
+ const img=make('img');img.src=src;img.alt='';img.decoding='async';
+ pictures.set(item.stageId,img);
+ return img;
 }
 async function preview(file){
  try{
@@ -177,8 +231,10 @@ async function preview(file){
   return {blob:await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.85)),...size};
  }catch{return null} // e.g. TIFF: the server makes the preview from the master
 }
+let pickNote='';   // what the last choice of files left out
 function showUploads(){
  const box=el('bt-uploads');box.replaceChildren();
+ if(pickNote)box.append(make('div','notice warn',pickNote));
  for(const upload of uploads.filter(u=>u.active||u.error)){
   const row=make('div','row'),text=make('div');
   text.append(make('div','t',upload.file.name),make('div','muted',upload.error||upload.note||'Uploading… '+Math.round(upload.progress*100)+'%'));
@@ -188,8 +244,9 @@ function showUploads(){
  }
 }
 async function uploadOne(upload){
- const file=upload.file;
+ const file=upload.file,cancelled=()=>{if(upload.cancelled)throw Error('Upload cancelled.');};
  try{
+  cancelled();
   const preset=presetByName(chosen);
   if(!preset)throw Error('Choose a mockup preset first (Mockup presets below).');
   const small=await preview(file);
@@ -199,23 +256,34 @@ async function uploadOne(upload){
     upload.note=preset.name+' has no '+NAMES[shape]+' mockups yet: add some to its folder before this artwork reaches its mockups.';
   }
   const staged=await request('/api/artworks/stage',{filename:file.name,contentType:file.type||'application/octet-stream',size:file.size});
-  await put(staged.uploadUrl,file,staged.contentType,fraction=>{upload.progress=fraction*0.95;showUploads();});
+  await put(staged.uploadUrl,file,staged.contentType,fraction=>{upload.progress=fraction*0.95;showUploads();},upload);
+  cancelled();
   let previewKey='';
   if(small?.blob){
    const target=await request('/api/batch/preview-url',{});
    await put(target.uploadUrl,small.blob,'image/jpeg',()=>{});
    previewKey=target.key;
+   localPreviews.set(staged.stageId,URL.createObjectURL(small.blob));
   }
-  const data=await request('/api/batch/add',{stageId:staged.stageId,filename:file.name,contentType:staged.contentType,size:file.size,previewKey,preset:preset.name});
+  cancelled();
+  const data=await request('/api/batch/add',{stageId:staged.stageId,filename:file.name,contentType:staged.contentType,size:file.size,previewKey,preset:preset.name,
+   width:small?.width||0,height:small?.height||0});
   state={...state,...data};upload.active=false;upload.progress=1;
- }catch(error){upload.active=false;upload.error=String(error.message||error);}
+ }catch(error){upload.active=false;if(!upload.cancelled)upload.error=String(error.message||error);}
  showUploads();show();
 }
-el('bt-files').addEventListener('change',async()=>{
- const files=[...el('bt-files').files];el('bt-files').value='';
- if(!files.length)return;
+// Artworks come from the file picker or are dropped on New listings.
+async function addFiles(picked){
+ if(!picked.length)return;
+ // Only images; with more than the batch has room for, the first ones are taken.
+ const images=picked.filter(file=>/^image\//.test(file.type)||/\.(jpe?g|png|webp|tiff?)$/i.test(file.name));
  const room=state.max-((state.job&&!state.job.closed)?state.job.items.length:0);
- if(files.length>room){notice('bt-status','This batch has room for '+room+' more artwork'+(room===1?'':'s')+'. Choose fewer, or publish and start a new batch.','warn');return;}
+ if(room<=0){notice('bt-status','This batch is full ('+state.max+' artworks). Publish it and start a new batch for more.','warn');return;}
+ const files=images.slice(0,room),left=images.length-files.length,skipped=picked.length-images.length;
+ const said=[left&&'The first '+files.length+' were added: a batch holds '+state.max+'. Add the other '+left+' to the next batch.',
+  skipped&&skipped+' file'+(skipped===1?' was':'s were')+' not an image and '+(skipped===1?'was':'were')+' left out.'].filter(Boolean);
+ pickNote=said.join(' ');showUploads();
+ if(!files.length)return;
  await presetsLoaded;
  const added=files.map(file=>({file,active:true,progress:0,error:'',note:''}));
  uploads.push(...added);showUploads();show();
@@ -224,7 +292,32 @@ el('bt-files').addEventListener('change',async()=>{
  let next=0;
  await Promise.all(Array.from({length:Math.min(3,added.length)},async()=>{while(next<added.length)await uploadOne(added[next++]);}));
  void refresh();
+}
+el('bt-files').addEventListener('change',()=>{
+ const picked=[...el('bt-files').files];el('bt-files').value='';
+ void addFiles(picked);
 });
+// Drag and drop: files dropped anywhere on New listings are added like chosen
+// ones. Dropped anywhere else they are ignored, instead of opening in the tab.
+const hasFiles=event=>[...(event.dataTransfer?.types||[])].includes('Files');
+const dropBox=el('bt-drop'),dropArea=el('batch');
+let dragDepth=0;
+const dragOver=on=>dropBox.classList.toggle('over',on);
+dropArea.addEventListener('dragenter',event=>{if(!hasFiles(event))return;event.preventDefault();dragDepth++;dragOver(true);});
+dropArea.addEventListener('dragleave',event=>{if(!hasFiles(event))return;if(--dragDepth<=0){dragDepth=0;dragOver(false);}});
+dropArea.addEventListener('dragover',event=>{if(!hasFiles(event))return;event.preventDefault();event.dataTransfer.dropEffect='copy';});
+dropArea.addEventListener('drop',event=>{
+ if(!hasFiles(event))return;
+ event.preventDefault();dragDepth=0;dragOver(false);
+ if(uploads.some(u=>u.active)){notice('bt-status','The artworks being uploaded are added first; drop more when they are done.','warn');return;}
+ void addFiles([...event.dataTransfer.files]);
+});
+window.addEventListener('dragover',event=>{
+ if(!hasFiles(event))return;
+ event.preventDefault();
+ if(!dropArea.contains(event.target))event.dataTransfer.dropEffect='none';
+});
+window.addEventListener('drop',event=>{if(hasFiles(event))event.preventDefault();});
 const action=(id,path,body,ask)=>el(id).addEventListener('click',async()=>{
  if(ask&&!confirm(ask()))return;
  el(id).disabled=true;
@@ -235,7 +328,10 @@ const action=(id,path,body,ask)=>el(id).addEventListener('click',async()=>{
 action('bt-stop','/api/batch/stop',()=>({}));
 action('bt-resume','/api/batch/resume',()=>({}));
 action('bt-retry','/api/batch/resume',()=>({retryFailed:true}));
-action('bt-new','/api/batch/new',()=>({}),()=>'Start a new batch? Drafts in this batch that were not published stay on Etsy as drafts.');
+// Start over also cancels uploads still running on this page.
+el('bt-start-over').addEventListener('click',()=>{for(const upload of uploads)if(upload.active){upload.cancelled=true;upload.xhr?.abort();}},true);
+action('bt-start-over','/api/batch/start-over',()=>({}),()=>'Start over?\n\nThe batch is stopped and emptied, and you choose the artworks again. '+
+ 'Artworks without a draft are removed from temporary storage; drafts already created stay on Etsy as drafts.');
 action('bt-publish','/api/batch/publish',()=>({confirm:'PUBLISH NEW LISTINGS ON ETSY'}),()=>{
  const n=(state.job?.items||[]).filter(item=>item.status==='ready'&&item.publish!==false).length;
  return 'Publish '+n+' listing'+(n===1?'':'s')+' on Etsy?\n\nEach new listing costs Etsy\'s $0.20 listing fee.';
