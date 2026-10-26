@@ -60,7 +60,7 @@ ${PHOTO_ORGANIZER_CSS}
 </section>
 
 <section class="card" id="renew"><div class="flex"><h2>Renew listings</h2><span class="muted" id="rn-updated"></span></div>
-<p class="muted">The oldest active listings that never sold are posted again as new listings: same photos, video, variations, prices and shop section, with a new title, tags and description from ChatGPT. Each old listing is deleted once its new one is live. A listing that sells while it is being copied is kept. Each new listing costs Etsy's $0.20 listing fee.</p>
+<p class="muted">The oldest active listings that never sold are posted again as new listings: same photos, video and shop section, the sizes, prices, shipping and processing of the current template (as a new Product Creator draft gets them), and a new title, tags and description from ChatGPT. A listing the app did not make keeps its own variations and description. Each old listing is deleted once its new one is live. A listing that sells while it is being copied is kept. Each new listing costs Etsy's $0.20 listing fee.</p>
 <div class="checks" id="rn-checks"></div>
 <div class="pair"><label class="pair" style="margin:0">Listings to renew <input type="number" id="rn-count" class="count" min="1" max="50" value="20"></label>
 <button class="primary" id="rn-start" type="button">Renew 20 listings</button><button id="rn-stop" type="button" class="hidden">Stop</button></div>

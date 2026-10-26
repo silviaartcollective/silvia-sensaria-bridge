@@ -44,7 +44,7 @@ th,td{padding:11px 9px;border-bottom:1px solid var(--line);text-align:left;verti
 <option value="keep">Keep original Etsy mockups</option><option value="replace">Replace with new JPEG mockups</option></select></div>
 <div id="upload-wrap" class="hidden"><label for="mockups">New JPEGs (1–20, each max 20MB)</label><input id="mockups" type="file" accept="image/jpeg" multiple></div></div>
 <div class="card"><h2>Artwork & production files</h2>
-<p class="muted">Both choices keep the exact same artwork ID and original SAC/JAC variant SKUs. Replacing the artwork updates the stored source and fulfillment ratio files only after the PC cropper completes and the new Etsy listing is verified.</p>
+<p class="muted">Both choices keep the same artwork ID. The new listing gets the current template's sizes, prices, shipping and processing (its SAC/JAC variant SKUs from that artwork ID), as a new Product Creator draft does; a listing the app did not make keeps its own. Replacing the artwork updates the stored source and fulfillment ratio files only after the PC cropper completes and the new Etsy listing is verified.</p>
 <label for="artwork-mode">Artwork source</label>
 <select id="artwork-mode"><option value="keep">Keep existing artwork and production files</option>
 <option value="replace">Replace artwork source and re-crop for every size</option></select>

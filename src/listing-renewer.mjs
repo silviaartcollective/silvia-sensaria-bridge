@@ -1,6 +1,7 @@
 // Renew listings: the oldest active listings that never sold are posted again
-// as new listings (new SEO from ChatGPT; the same photos, video, variations and
-// prices), and each old listing is deleted once its new one is live. The copy,
+// as new listings (new SEO from ChatGPT; the same photos and video; the variants,
+// prices and profiles of the current draft template when the app made the
+// listing, else copied), and each old listing is deleted once its new one is live. The copy,
 // its checks and the delete are listing-reposter.mjs (prepare/finalize); this
 // runs them for many listings. The job is kept in R2, so the page can be closed.
 
@@ -90,13 +91,14 @@ async function renewOne(deps, row, save) {
     if (!seo) {
       await step('Writing new SEO with ChatGPT');
       seo = await deps.newSeo(row.listingId);
-      if (seo.descriptionKept) row.note = 'Description kept: this listing was not made by the app.';
+      if (seo.descriptionKept) row.note = 'Description and variants kept: this listing was not made by the app.';
     }
     row.newTitle = seo.title;
     if (!earlier || earlier.status === 'building') {
       await step('Copying to a new listing');
-      await deps.prepare(row.listingId, { title: seo.title, description: seo.description, tags: seo.tags,
-        mockupMode: 'keep', artworkMode: 'keep' });
+      const { record } = await deps.prepare(row.listingId, { title: seo.title, description: seo.description, tags: seo.tags,
+        style: seo.style, mockupMode: 'keep', artworkMode: 'keep' });
+      if (record?.template) row.note = 'Sizes, prices and profiles from the current template.';
     }
     await step('Publishing, then deleting the old listing');
     const { record } = await deps.finalize(row.listingId);

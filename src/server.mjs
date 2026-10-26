@@ -1080,13 +1080,48 @@ async function renewalSeo(listingId){
   const context=await seoShopContext(session);
   const seo=await generateEtsySeo({image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
     orientation:layout,previous:{title:listing.title,tags:listing.tags||[]},...context});
-  if(!manifest)return {title:seo.title,tags:seo.tags,description:String(listing.description||''),descriptionKept:true};
+  if(!manifest)return {title:seo.title,tags:seo.tags,style:seo.style,description:String(listing.description||''),descriptionKept:true};
   const current=context.sections.find(item=>String(item.shop_section_id)===String(listing.shop_section_id||''));
   const template=(await loadListingTemplates().catch(()=>null))?.orientations?.[layout];
-  return {title:seo.title,tags:seo.tags,description:listingDescription(template,listingDefaults.descriptionTemplate,{
+  return {title:seo.title,tags:seo.tags,style:seo.style,description:listingDescription(template,listingDefaults.descriptionTemplate,{
     seoDescription:seo.description,
     shopSectionName:current?current.title:seo.sectionName,
     shopSectionUrl:current?sectionUrl(context.shopName,current.shop_section_id):seo.sectionUrl})};
+}
+// The latest draft template for a listing being reposted or renewed: the
+// variants (sizes, prices, SKUs), profiles and attributes a new Product Creator
+// draft of its artwork gets today, so a renewed listing does not keep old sizes
+// or prices. A listing the app did not make has no artwork to build them for:
+// it is copied as it is (null). Its shop section, materials and photos stay.
+async function repostTemplate({listing,inventory,properties},{style=''}={}){
+  let artworkId='',manifest=null;
+  try{artworkId=artworkIdFromInventory(inventory);if(artworkId)manifest=await loadArtworkManifest(artworkId)}catch{}
+  if(!manifest||manifest.status!=='ready')return null;
+  const session=await getEtsySession();
+  if(!batchDefaultsCache.value||Date.now()-batchDefaultsCache.at>10*60*1000)
+    batchDefaultsCache={at:Date.now(),value:await batchShopDefaults(session)};
+  const {preset,templates}=batchDefaultsCache.value,layout=listingLayoutForManifest(manifest);
+  const body=batchDraftBody({artworkId,layout,seo:{title:listing.title,description:'',tags:[]},preset,template:templates[layout]||{}});
+  const readiness=body.readiness_state_id||Number(listing.readiness_state_id)||null;
+  if(!readiness)throw Error('Choose the processing profile in Listings → Templates → '+LAYOUT_NAMES[layout]+' first.');
+  const variants=buildOwnSilviaInventory({artworkId,catalog:products,readinessStateId:readiness,defaultQuantity:999,orientation:layout});
+  // ChatGPT's style for a renewal, else the one the listing has.
+  const oldStyle=(properties?.results||[]).find(p=>String(p.property_name||'').toLowerCase()==='style')?.values?.[0];
+  const listingStyle=[style,oldStyle].find(value=>value&&canonicalWallArtStyle(value))||'';
+  return {
+    listing:{price:variants.minimumPrice,quantity:999,taxonomy_id:listingDefaults.taxonomyId,
+      shipping_profile_id:body.shipping_profile_id||listing.shipping_profile_id,readiness_state_id:readiness,
+      return_policy_id:body.return_policy_id||listing.return_policy_id,
+      production_partner_ids:body.production_partner_ids.length?body.production_partner_ids:listing.production_partner_ids||[],
+      who_made:body.who_made,when_made:body.when_made,is_supply:body.is_supply,should_auto_renew:body.should_auto_renew},
+    inventory:variants,
+    applyAttributes:listingStyle?async listingId=>{
+      const result=await applyAllListingAttributes({session,listingId,body:{listing_style:listingStyle},
+        properties:await getCachedTaxonomyProperties(session,listingDefaults.taxonomyId)});
+      const failed=result.results?.filter(item=>!item.applied&&!item.optional)||[];
+      if(failed.length)console.error('Renewed listing '+listingId+' attributes:',failed.map(item=>item.warning).join('; '));
+    }:null
+  };
 }
 function renewalDeps(){
   return {
@@ -1100,7 +1135,8 @@ function renewalDeps(){
       catch(error){if(isMissingR2Object(error))return null;throw error}
     },
     newSeo:renewalSeo,
-    prepare:async(id,input)=>prepareReplacement(await getEtsySession(),id,input,{automatic:true}),
+    prepare:async(id,input)=>prepareReplacement(await getEtsySession(),id,input,{automatic:true,
+      template:context=>repostTemplate(context,{style:input.style})}),
     finalize:async id=>finalizeReplacement(await getEtsySession(),id,'PUBLISH AND DELETE OLD',{deleteOld:true})
   };
 }
@@ -5177,7 +5213,7 @@ const server = http.createServer(async (req, res) => {
       if(action==='uploads/reserve')
         return sendJson(res,200,{ok:true,uploads:await reserveMockups(session,id,body.files)});
       if(action==='prepare')
-        return sendJson(res,200,{ok:true,...await prepareReplacement(session,id,body)});
+        return sendJson(res,200,{ok:true,...await prepareReplacement(session,id,body,{template:repostTemplate})});
       if(action==='finalize'){
         const result=await finalizeReplacement(session,id,body.confirm);
         // Preserve the converted listing's artwork ID linkage for the new Etsy listing.
