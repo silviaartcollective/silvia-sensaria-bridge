@@ -272,8 +272,8 @@ async function uploadOne(upload){
  }catch(error){upload.active=false;if(!upload.cancelled)upload.error=String(error.message||error);}
  showUploads();show();
 }
-el('bt-files').addEventListener('change',async()=>{
- const picked=[...el('bt-files').files];el('bt-files').value='';
+// Artworks come from the file picker or are dropped on New listings.
+async function addFiles(picked){
  if(!picked.length)return;
  // Only images; with more than the batch has room for, the first ones are taken.
  const images=picked.filter(file=>/^image\//.test(file.type)||/\.(jpe?g|png|webp|tiff?)$/i.test(file.name));
@@ -292,7 +292,32 @@ el('bt-files').addEventListener('change',async()=>{
  let next=0;
  await Promise.all(Array.from({length:Math.min(3,added.length)},async()=>{while(next<added.length)await uploadOne(added[next++]);}));
  void refresh();
+}
+el('bt-files').addEventListener('change',()=>{
+ const picked=[...el('bt-files').files];el('bt-files').value='';
+ void addFiles(picked);
 });
+// Drag and drop: files dropped anywhere on New listings are added like chosen
+// ones. Dropped anywhere else they are ignored, instead of opening in the tab.
+const hasFiles=event=>[...(event.dataTransfer?.types||[])].includes('Files');
+const dropBox=el('bt-drop'),dropArea=el('batch');
+let dragDepth=0;
+const dragOver=on=>dropBox.classList.toggle('over',on);
+dropArea.addEventListener('dragenter',event=>{if(!hasFiles(event))return;event.preventDefault();dragDepth++;dragOver(true);});
+dropArea.addEventListener('dragleave',event=>{if(!hasFiles(event))return;if(--dragDepth<=0){dragDepth=0;dragOver(false);}});
+dropArea.addEventListener('dragover',event=>{if(!hasFiles(event))return;event.preventDefault();event.dataTransfer.dropEffect='copy';});
+dropArea.addEventListener('drop',event=>{
+ if(!hasFiles(event))return;
+ event.preventDefault();dragDepth=0;dragOver(false);
+ if(uploads.some(u=>u.active)){notice('bt-status','The artworks being uploaded are added first; drop more when they are done.','warn');return;}
+ void addFiles([...event.dataTransfer.files]);
+});
+window.addEventListener('dragover',event=>{
+ if(!hasFiles(event))return;
+ event.preventDefault();
+ if(!dropArea.contains(event.target))event.dataTransfer.dropEffect='none';
+});
+window.addEventListener('drop',event=>{if(hasFiles(event))event.preventDefault();});
 const action=(id,path,body,ask)=>el(id).addEventListener('click',async()=>{
  if(ask&&!confirm(ask()))return;
  el(id).disabled=true;
