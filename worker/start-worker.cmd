@@ -25,8 +25,11 @@ if not exist "%~dp0node_modules\ag-psd" (
 
 rem Let image work from every render thread run at once (Node defaults to 4).
 set "UV_THREADPOOL_SIZE=16"
-set "LOG=%~dp0worker.log"
-echo [%date% %time%] Launch requested>>"%LOG%"
+rem A page asks for the worker while it is already running: nothing to do. (The
+rem running worker holds worker.log open, so this must not write to it.)
+powershell -NoProfile -WindowStyle Hidden -Command "$lock=Join-Path $env:TEMP 'pod-crop-worker.lock'; $id=(Get-Content $lock -ErrorAction SilentlyContinue | Select-Object -First 1); if($id -and (Get-Process -Id ([int]$id) -ErrorAction SilentlyContinue | Where-Object ProcessName -eq 'node')){exit 3}; exit 0"
+if "%errorlevel%"=="3" exit /b 0
+(echo [%date% %time%] Launch requested)>>"%~dp0launch.log" 2>nul
 rem supervise.mjs runs the worker and starts it again if it ever stops unexpectedly.
 powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','node supervise.mjs >> worker.log 2>&1' -WorkingDirectory '%~dp0' -WindowStyle Hidden"
 exit /b 0

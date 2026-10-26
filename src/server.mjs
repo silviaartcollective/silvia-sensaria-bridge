@@ -30,7 +30,7 @@ import { renderProductCreator } from './product-creator.mjs';
 import {getMockupJob,listMockupJobs,getPcMockupFolder,mockupFileKey,listMockupTemplates,getMockupTemplate,linkMockupArtwork} from './mockup-generator.mjs';
 import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verification.mjs';
 import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
-import {mockupObjectKey} from './production.mjs';
+import {mockupObjectKey,masterObjectKey} from './production.mjs';
 import { handleMockupAPI, mockupJobFromArtwork, mockupJobFromStaged } from './mockup-api.mjs';
 import { mockupOrientationOf } from './mockup-orientation.mjs';
 import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, resumeAfterRestart, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits, photoOrderKey, orderForArtwork } from './batch-poster.mjs';
@@ -111,7 +111,9 @@ import {
   generateArtworkFulfillmentRatios,
   loadArtworkManifest,
   saveArtworkManifest,
-  updateArtworkManifest
+  updateArtworkManifest,
+  artworkFileExtension,
+  artworkContentType
 } from './artwork-storage.mjs';
 import {
   buildOwnSilviaInventory,
@@ -5701,11 +5703,27 @@ const server = http.createServer(async (req, res) => {
         const previous=await loadArtworkManifest(existing.artworkId);
         if(Number(previous.sourceEtsyListingId)!==listingId)
           throw new Error('Prior artwork reservation belongs to another Etsy listing.');
-        if(String(previous.master?.originalFilename||'')!==String(body.master.filename||'') ||
-           Number(previous.master?.size||0)!==Number(body.master.size||0))
-          return sendJson(res,409,{ok:false,existingArtworkId:existing.artworkId,
-            error:'Listing is already reserved as '+existing.artworkId+
-              ' with another file. Select the original master to resume; no new ID was created.'});
+        const sameFile=String(previous.master?.originalFilename||'')===String(body.master.filename||'') &&
+          Number(previous.master?.size||0)===Number(body.master.size||0);
+        if(!sameFile){
+          // A conversion that never finished (an earlier try, perhaps with another
+          // file): the chosen master takes the reserved artwork ID's place. Its
+          // crops are made again; nothing on Etsy was converted yet.
+          const filename=String(body.master.filename);
+          const replaced=await updateArtworkManifest(existing.artworkId,current=>{
+            current.replacedReservedMasters=[...(current.replacedReservedMasters||[]),
+              {at:new Date().toISOString(),master:current.master}].slice(-10);
+            current.master={originalFilename:filename,key:masterObjectKey(existing.artworkId,artworkFileExtension(filename)),
+              contentType:artworkContentType(body.master.contentType,filename),size:Number(body.master.size||0)||null};
+            current.status='uploading';
+            for(const field of ['fulfillmentRatios','fulfillmentRatioInsufficient','fulfillmentRatiosReady','fulfillmentRatiosUpdatedAt',
+              'cropWorkerJobId','cropWorkerQueuedAt'])delete current[field];
+          });
+          return sendJson(res,200,{ok:true,resumed:true,replacedFile:true,listingId,
+            artworkId:existing.artworkId,orientation:replaced.orientation,uploadAlreadyPresent:false,cropJobId:null,
+            upload:{key:replaced.master.key,contentType:replaced.master.contentType,
+              uploadUrl:await signedArtworkUploadUrl(replaced.master.key,replaced.master.contentType)}});
+        }
         const uploadAlreadyPresent=await artworkObjectExists(previous.master.key);
         return sendJson(res,200,{ok:true,resumed:true,listingId,
           artworkId:existing.artworkId,orientation:previous.orientation,
