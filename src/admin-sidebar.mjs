@@ -5,6 +5,7 @@ export const ADMIN_LINKS = Object.freeze([
   { href:'/product-creator', label:'Product Creator' },
   { href:'/daily-listings', label:'Daily Listings' },
   { href:'/listing-reposter', label:'Listing Reposter' },
+  { href:'/listing-fees', label:'Listing Fees' },
   { href:'/listings', label:'Listings' },
   { href:'/shipping-profile', label:'Shipping Profile' },
   { href:'/international-shipping', label:'International Shipping Planner' },

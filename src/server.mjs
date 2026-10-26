@@ -8,6 +8,8 @@ import {workerUpdateBundle,latestWorkerVersion,heartbeatUpdate,workerUpdateText,
 import { renderReadinessPage } from './readiness-page.mjs';
 import { renderListingReposterPage } from './listing-reposter-page.mjs';
 import { renderRepostListingsPage } from './repost-listings-page.mjs';
+import { renderListingFeesPage } from './listing-fees-page.mjs';
+import { ledgerEntries, summarizeFees, MAX_RANGE_SECONDS } from './listing-fees.mjs';
 import { renderDailyListingsPage } from './daily-listings-page.mjs';
 import {
   cropOutputKeyForJob, isStagedRevisionJob, isStagedConverterCropJob, reserveArtworkRevision,
@@ -168,6 +170,7 @@ import {
   getShopReadinessStateDefinitions,
   getShopListings,
   getListing,
+  getShopLedgerEntries,
   getShopSections,
   getShopReturnPolicies,
   getShopProductionPartners,
@@ -1158,6 +1161,7 @@ async function refreshSeo(listingId){
 // Listing Reposter (listing-renewer.mjs). The mockup, draft and publish steps
 // are the Daily Listings batch's (batchDeps).
 const REPOST_PRESET_KEY='settings/listing-renewer/mockup-preset.json';
+const listingFeesCache=new Map(); // month range → the fees read from Etsy, for 10 minutes
 function renewalDeps(){
   const batch=batchDeps();
   const etsyArgs=async()=>{const s=await getEtsySession();return {keystring:s.keystring,sharedSecret:s.sharedSecret,accessToken:s.accessToken}};
@@ -5108,7 +5112,7 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/daily-listings'))return;
     return sendHtml(res,200,renderDailyListingsPage());
   }
-  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js'].includes(url.pathname)){
+  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js'].includes(url.pathname)){
     if(!requireAdminApi(req,res))return;
     const js=readFileSync(new URL('.'+url.pathname,import.meta.url),'utf8');
     res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
@@ -5269,6 +5273,30 @@ const server = http.createServer(async (req, res) => {
     }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
   }
 
+  // Listing Fees: a month's listing fees from the Etsy payment account ledger.
+  if (req.method === 'GET' && url.pathname === '/listing-fees') {
+    if (!requireAdminPage(req,res,'/listing-fees')) return;
+    return sendHtml(res,200,renderListingFeesPage());
+  }
+  if (req.method === 'GET' && url.pathname === '/api/listing-fees') {
+    if (!requireAdminApi(req,res)) return;
+    try{
+      const min=Number(url.searchParams.get('min')),max=Number(url.searchParams.get('max'));
+      if(!Number.isSafeInteger(min)||!Number.isSafeInteger(max)||min<=0||max<=min||max-min>MAX_RANGE_SECONDS)
+        return sendJson(res,400,{ok:false,error:'Choose a month.'});
+      const key=min+'-'+max,cached=listingFeesCache.get(key);
+      if(cached&&url.searchParams.get('fresh')!=='1'&&Date.now()-cached.at<10*60*1000)
+        return sendJson(res,200,{...cached.value,cached:true,ageSeconds:Math.round((Date.now()-cached.at)/1000)});
+      const session=await getEtsySession();
+      if(!String(session.scope||'').split(/\s+/).includes('transactions_r'))
+        return sendJson(res,403,{ok:false,error:'Reconnect Etsy first: reading fees needs permission to read your sales and payments.'});
+      const entries=await ledgerEntries(page=>getShopLedgerEntries({shopId:session.shop.shop_id,keystring:session.keystring,
+        sharedSecret:session.sharedSecret,accessToken:session.accessToken,...page}),{min,max});
+      const value={ok:true,...summarizeFees(entries,{min,max}),entries:entries.length};
+      listingFeesCache.set(key,{at:Date.now(),value});
+      return sendJson(res,200,value);
+    }catch(error){return sendJson(res,502,{ok:false,error:String(error?.message||error).slice(0,400)})}
+  }
   if (req.method === 'GET' && url.pathname === '/listing-reposter') {
     if (!requireAdminPage(req,res,'/listing-reposter')) return;
     return sendHtml(res,200,renderRepostListingsPage());

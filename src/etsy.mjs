@@ -423,6 +423,19 @@ export async function getShopListings({
   return response.json();
 }
 
+// The shop's payment account ledger between two times (Unix seconds): every
+// sale, fee, refund and deposit Etsy records. Needs the transactions_r scope.
+export async function getShopLedgerEntries({ shopId, keystring, sharedSecret, accessToken, minCreated, maxCreated, limit = 100, offset = 0 }) {
+  const params = new URLSearchParams({ min_created: String(minCreated), max_created: String(maxCreated),
+    limit: String(limit), offset: String(offset) });
+  const response = await fetch(
+    `${ETSY_API_BASE}/application/shops/${encodeURIComponent(shopId)}/payment-account/ledger-entries?${params}`,
+    { headers: apiHeaders({ keystring, sharedSecret, accessToken }) }
+  );
+  if (!response.ok) throw new Error(`Etsy ledger fetch failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
+  return response.json();
+}
+
 export async function getListing({listingId,keystring,sharedSecret,accessToken}){
  const response=await fetch(`${ETSY_API_BASE}/application/listings/${encodeURIComponent(listingId)}`,{
    headers:apiHeaders({keystring,sharedSecret,accessToken})
