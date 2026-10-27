@@ -1238,11 +1238,14 @@ async function refreshListingDetails({listingId,artworkId,seo,template:withTempl
 // reposts it took to get there (the count goes on from listing to listing, so
 // one artwork is reposted only as often as the rules allow). Lanes record at
 // the same time, so the writes take turns.
-const RENEWER_HISTORY_KEY='settings/listing-renewer/history.json',RENEWER_RULES_KEY='settings/listing-renewer/rules.json';
+const RENEWER_HISTORY_KEY='settings/listing-renewer/history.json',RENEWER_REFRESHED_KEY='settings/listing-renewer/refreshed.json',
+  RENEWER_RULES_KEY='settings/listing-renewer/rules.json';
 let historyWrites=Promise.resolve();
 async function loadRenewerHistory(){
   let saved=null;
   try{saved=await getJsonObject(RENEWER_HISTORY_KEY)}catch(error){if(!isMissingR2Object(error))throw error}
+  // Before this history, refreshed listings were kept in refreshed.json.
+  if(!saved)try{saved={refreshed:(await getJsonObject(RENEWER_REFRESHED_KEY))?.listings}}catch(error){if(!isMissingR2Object(error))throw error}
   return {refreshed:saved?.refreshed||{},reposted:saved?.reposted||{}};
 }
 function changeRenewerHistory(change){
