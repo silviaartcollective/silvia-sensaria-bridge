@@ -13,13 +13,14 @@ const iso = seconds => new Date(seconds * 1000).toISOString();
 const listing = (id, months, renewsIn) => ({ listing_id: id, title: 'Listing ' + id,
   original_creation_timestamp: Math.round(NOW + renewsIn * DAY - months * MONTH), ending_timestamp: NOW + renewsIn * DAY });
 
-// The shop: listings 1, 2, 5, 6, 7 and 8 have their artwork in the app, 3 and 4
-// do not. 2, 4 and 6 were refreshed before. A PC that makes one mockup per
-// poll, ChatGPT, Etsy.
-function shop({ holdMockups = false, soldDuring = 0, items, refreshed } = {}) {
+// The shop: listings 1, 2, 5, 6, 7, 8 and 9 have their artwork in the app, 3
+// and 4 do not. 2, 4, 6 and 9 were refreshed before; 9 replaced a listing
+// reposted earlier. A PC that makes one mockup per poll, ChatGPT, Etsy.
+function shop({ holdMockups = false, soldDuring = 0, soldWhileMockups = 0, items, refreshed } = {}) {
   const log = [], saved = {}, renders = new Map();
-  const listings = new Map([1, 2, 3, 4, 5, 6, 7, 8].map(id => [id, 'active']));
-  const store = { refreshed: refreshed || { 2: { at: iso(NOW - 8 * MONTH) }, 4: { at: iso(NOW - 8 * MONTH) }, 6: { at: iso(NOW - 2 * MONTH) } } };
+  const listings = new Map([1, 2, 3, 4, 5, 6, 7, 8, 9].map(id => [id, 'active']));
+  const store = { refreshed: refreshed || { 2: { at: iso(NOW - 8 * MONTH) }, 4: { at: iso(NOW - 8 * MONTH) }, 6: { at: iso(NOW - 2 * MONTH) },
+    9: { at: iso(NOW - 8 * MONTH) } }, reposted: { 9: { count: 1, fromListingId: 99 } } };
   let nextListing = 500;
   const deps = {
     newId: () => 'run-1',
@@ -35,13 +36,19 @@ function shop({ holdMockups = false, soldDuring = 0, items, refreshed } = {}) {
       listing(5, 4, 20),    // renews in 20 days: not this week
       listing(6, 12, 2),    // refreshed only 2 months ago: not yet
       listing(7, 2, 3),     // 2 months old: too young
-      listing(8, 4, 1)      // sold
+      listing(8, 4, 1),     // sold
+      listing(9, 12, 4)     // already reposted once: left as it is
     ],
     refreshedListings: async () => structuredClone(store.refreshed),
     markRefreshed: async (id, info) => { log.push('marked ' + id + ' ' + info.artworkId); store.refreshed[id] = { ...info, at: iso(NOW) }; },
-    forgetRefreshed: async id => { log.push('forget ' + id); delete store.refreshed[id]; },
-    salesCount: async id => (id === 8 || (id === soldDuring && log.some(line => line.startsWith('draft ' + id))) ? 1 : 0),
-    describe: async id => ([3, 4].includes(id) ? { artworkId: '', layout: '', photo: 'p' + id } : { artworkId: 'SAC' + id, layout: 'portrait', photo: 'p' + id }),
+    markReposted: async (oldId, newId, info) => {
+      log.push('reposted ' + oldId + ' as ' + newId + ', repost ' + info.count);
+      delete store.refreshed[oldId]; store.reposted[newId] = { ...info, fromListingId: oldId };
+    },
+    salesCount: async id => (id === 8 || (id === soldDuring && log.some(line => line.startsWith('draft ' + id))) ||
+      (id === soldWhileMockups && log.some(line => line.startsWith('seo ' + id))) ? 1 : 0),
+    describe: async id => ({ ...([3, 4].includes(id) ? { artworkId: '', layout: '', photo: 'p' + id } : { artworkId: 'SAC' + id, layout: 'portrait', photo: 'p' + id }),
+      reposts: store.reposted[id]?.count || 0 }),
     startMockups: async item => {
       log.push('mockups ' + item.artworkId + ' ' + item.orientation + ' ' + item.preset);
       renders.set('job-' + item.artworkId, 0);
@@ -55,7 +62,7 @@ function shop({ holdMockups = false, soldDuring = 0, items, refreshed } = {}) {
     refreshSeo: async id => { log.push('seo ' + id); return { title: 'New title ' + id, tags: ['a'], style: 'Minimalist', description: 'New', sectionId: '7' }; },
     // Refresh: the same listing.
     replacePhotos: async item => { log.push('photos ' + item.listingId + ' ' + item.artworkId + ' ' + item.preset + ' ' + item.templateIds.join(',')); },
-    updateDetails: async item => { log.push('details ' + item.listingId + ' ' + (item.artworkId || '-') + ' "' + item.seo.title + '"'); },
+    updateDetails: async item => { log.push('details ' + item.listingId + ' ' + (item.artworkId || '-') + ' "' + item.seo.title + '"' + (item.template ? ' with template' : '')); },
     // Repost: a new listing.
     prepareArtwork: async row => { log.push('prepare ' + row.artworkId); },
     attachMockups: async (artworkId, jobId, ids) => { log.push('attach ' + artworkId + ' ' + ids.join(',')); },
@@ -81,19 +88,21 @@ test('due this week: unsold listings at 4 months are refreshed in place, refresh
   await finished();
   const job = saved.job;
   assert.equal(job.status, 'done', job.error);
-  // The soonest renewal first; 5 (next month), 6 (refreshed lately), 7 (too young) and 8 (sold) are left alone.
+  // The soonest renewal first; 5 (next month), 6 (refreshed lately), 7 (too young), 8 (sold) and 9
+  // (reposted once already) are left alone.
   assert.deepEqual(job.results.map(row => [row.listingId, row.action, row.status]),
     [[2, 'repost', 'done'], [1, 'refresh', 'done'], [3, 'refresh', 'done'], [4, 'repost', 'done']]);
-  assert.equal(job.progress.due, 5);
+  assert.equal(job.progress.due, 6);
+  assert.equal(job.progress.atLimit, 1);
   assert.equal(job.results[1].renewsAt, iso(NOW + 3 * DAY));
   assert.equal(job.results[0].refreshedAt, iso(NOW - 8 * MONTH));
-  for (const id of [5, 6, 7, 8]) assert.deepEqual(stepsOf(log, id), [], 'listing ' + id);
+  for (const id of [5, 6, 7, 8, 9]) assert.deepEqual(stepsOf(log, id), [], 'listing ' + id);
 
   // Refreshed: the same listing gets the preset's mockups, new SEO and the template; nothing is published or deactivated.
   assert.deepEqual(stepsOf(log, 1), ['mockups', 'seo', 'photos', 'details', 'marked']);
   assert.ok(log.includes('mockups SAC1 portrait Preset 2'));
   assert.ok(log.includes('photos 1 SAC1 Preset 2 t0,t1,t2'));
-  assert.ok(log.includes('details 1 SAC1 "New title 1"'));
+  assert.ok(log.includes('details 1 SAC1 "New title 1" with template'));
   assert.equal(listings.get(1), 'active');
   assert.equal(job.results[1].step, 'Refreshed');
   assert.equal(job.results[1].newListingId, null);
@@ -103,17 +112,21 @@ test('due this week: unsold listings at 4 months are refreshed in place, refresh
   assert.match(job.results[2].note, /New title and tags; photos, description and variants kept/);
 
   // Reposted: a new listing, published before the old one is deactivated.
-  assert.deepEqual(stepsOf(log, 2), ['mockups', 'seo', 'prepare', 'attach', 'order', 'draft', 'deactivate', 'forget']);
+  assert.deepEqual(stepsOf(log, 2), ['mockups', 'seo', 'prepare', 'attach', 'order', 'draft', 'deactivate', 'reposted']);
   const row = job.results[0];
   assert.equal(row.step, 'Reposted');
   assert.ok(log.indexOf('publish ' + row.newListingId) < log.indexOf('deactivate 2 for ' + row.newListingId));
   assert.equal(listings.get(2), 'inactive');
-  assert.deepEqual(stepsOf(log, 4), ['seo', 'copy', 'publish', 'forget']);
+  assert.deepEqual(stepsOf(log, 4), ['seo', 'copy', 'publish', 'reposted']);
   assert.equal(job.results[3].newListingId, 904);
 
   // The record: 1 and 3 refreshed now; 2 and 4 are gone; 6 is still waiting for its repost.
-  assert.deepEqual(Object.keys(store.refreshed).sort(), ['1', '3', '6']);
+  assert.deepEqual(Object.keys(store.refreshed).sort(), ['1', '3', '6', '9']);
   assert.equal(store.refreshed[1].artworkId, 'SAC1');
+  // The new listings carry the count on: with the default of one repost, they are not reposted again.
+  assert.ok(log.includes('reposted 2 as ' + row.newListingId + ', repost 1'));
+  assert.deepEqual(store.reposted[row.newListingId], { artworkId: 'SAC2', count: 1, fromListingId: 2 });
+  assert.equal(store.reposted[904].count, 1);
 });
 
 test('the run takes at most the number asked for, the soonest renewals first', async () => {
@@ -148,8 +161,10 @@ test('when a listing is due: its age at its next renewal, within the window', ()
 });
 
 test('the rules: refresh before repost, sensible numbers', () => {
-  assert.deepEqual(checkRules({}), { refreshMonths: 4, repostMonths: 12, windowDays: 7 });
-  assert.deepEqual(checkRules({ refreshMonths: '4', repostMonths: '8', windowDays: '14' }), { refreshMonths: 4, repostMonths: 8, windowDays: 14 });
+  assert.deepEqual(checkRules({}), { refreshMonths: 4, repostMonths: 12, windowDays: 7, maxReposts: 1, refreshTemplate: true });
+  assert.deepEqual(checkRules({ refreshMonths: '4', repostMonths: '8', windowDays: '14', maxReposts: '0', refreshTemplate: false }),
+    { refreshMonths: 4, repostMonths: 8, windowDays: 14, maxReposts: 0, refreshTemplate: false });
+  assert.throws(() => checkRules({ maxReposts: 6 }), /0 to 5 times/);
   assert.throws(() => checkRules({ refreshMonths: 8, repostMonths: 8 }), /more months than the refresh/);
   assert.throws(() => checkRules({ refreshMonths: 0 }), /1 to 36 months/);
   assert.throws(() => checkRules({ windowDays: 0 }), /1 to 120 days/);
@@ -212,12 +227,31 @@ test('a listing that sells while it is reposted is kept and its new listing stay
   assert.ok(store.refreshed[2]);
 });
 
-test('a run saved before refreshing existed is resumed as reposts', async () => {
+test('a run of the earlier reposter is not resumed, so nothing is reposted without the rules', async () => {
   const { deps, log, saved } = shop();
   saved.job = { id: 'old', status: 'stopped', count: 1, preset: 'Preset 1', progress: { done: 0, total: 1 },
     results: [{ listingId: 1, title: 'Listing 1', status: 'waiting', step: 'Stopped', artworkId: 'SAC1', layout: 'portrait' }] };
-  await resumeRenewal(deps);
+  await assert.rejects(resumeRenewal(deps), /started by the earlier reposter, which only reposted\. Start a new run/);
+  assert.equal(renewalRunning(), false);
+  assert.deepEqual(log, []);
+});
+
+test('sales are checked again just before a listing is changed: one that sold while its mockups were made is left as it is', async () => {
+  const { deps, log, saved } = shop({ soldWhileMockups: 1, items: [listing(1, 4, 3)] });
+  await startRenewal(deps, { count: 1, preset: 'Preset 1' });
   await finished();
-  assert.equal(saved.job.results[0].status, 'done', saved.job.results[0].error);
-  assert.deepEqual(stepsOf(log, 1), ['mockups', 'seo', 'prepare', 'attach', 'order', 'draft', 'deactivate', 'forget']);
+  const row = saved.job.results[0];
+  assert.equal(row.status, 'failed');
+  assert.match(row.error, /sold while it was being refreshed, so it was left as it is/);
+  assert.ok(!log.some(line => /^(photos|details|marked)/.test(line)), log.join('\n'));
+});
+
+test('the template is applied on refresh only when chosen; with no reposts allowed, nothing is reposted', async () => {
+  const { deps, log, saved } = shop();
+  await startRenewal(deps, { count: 20, preset: 'Preset 1', rules: { refreshTemplate: false, maxReposts: 0 } });
+  await finished();
+  assert.deepEqual(saved.job.results.map(row => [row.listingId, row.action]), [[1, 'refresh'], [3, 'refresh']]);
+  assert.equal(saved.job.progress.atLimit, 3);
+  assert.ok(log.includes('details 1 SAC1 "New title 1"'));
+  assert.ok(!log.some(line => /^(draft|copy|deactivate)/.test(line)));
 });

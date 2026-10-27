@@ -26,16 +26,18 @@ function checks(){
   'No mockup preset chosen yet (see Mockup presets below).');
  const problem=rulesProblem();
  if(problem)line(false,problem);
- else if(state.refreshed)line(true,state.refreshed+' listing'+(state.refreshed===1?' has':'s have')+' been refreshed so far; each is reposted if it is still unsold at '+rules().repostMonths+' months.');
+ else if(state.refreshed)line(true,state.refreshed+' listing'+(state.refreshed===1?' has':'s have')+' been refreshed so far; '+
+  (rules().maxReposts?'each is reposted if it is still unsold at '+rules().repostMonths+' months.':'none is reposted while reposts are set to 0.'));
 }
 const count=()=>{const n=Math.round(Number(el('rp-count').value));return n>=1&&n<=state.max?n:0;};
 const rules=()=>({refreshMonths:Math.round(Number(el('rp-refresh').value)),repostMonths:Math.round(Number(el('rp-repost').value)),
- windowDays:Math.round(Number(el('rp-window').value))});
+ windowDays:Math.round(Number(el('rp-window').value)),maxReposts:Math.round(Number(el('rp-max').value)),refreshTemplate:el('rp-template').checked});
 function rulesProblem(){
  const r=rules();
  if(!(r.refreshMonths>=1&&r.refreshMonths<=36))return 'Refresh after 1 to 36 months.';
  if(!(r.repostMonths>r.refreshMonths&&r.repostMonths<=48))return 'Repost after more months than the refresh (up to 48).';
  if(!(r.windowDays>=1&&r.windowDays<=120))return 'Renewing within 1 to 120 days.';
+ if(!(r.maxReposts>=0&&r.maxReposts<=5))return 'Repost each listing 0 to 5 times.';
  return '';
 }
 function buttons(){
@@ -45,8 +47,9 @@ function buttons(){
  el('rp-start').textContent='Refresh and repost up to '+(n||'')+' listing'+(n===1?'':'s');
  el('rp-start').disabled=running||!n||Boolean(rulesProblem())||!state.chatGpt||!state.canEdit||!window.mockupPresets?.chosen;
  el('rp-stop').classList.toggle('hidden',!running);
- el('rp-resume').classList.toggle('hidden',running||!unfinished);
- el('rp-retry').classList.toggle('hidden',running||!failedRows);
+ // A run of the earlier reposter (no rules) is not resumed.
+ el('rp-resume').classList.toggle('hidden',running||!unfinished||!job?.rules);
+ el('rp-retry').classList.toggle('hidden',running||!failedRows||!job?.rules);
 }
 const label={waiting:'Waiting',failed:'Failed'};
 const actionOf=row=>row.action||'repost';
@@ -65,7 +68,9 @@ function show(){
  const texts={finding:'Finding the listings due: '+(p.due!=null?p.due+' renew'+(p.due===1?'s':'')+' soon at the right age, ':'')+
    (p.checked||0)+' checked for sales, '+rows.length+' picked…',
   renewing:'Working: '+done+' of '+rows.length+' done'+(job.preset?' · mockups from '+job.preset:'')+'…',
-  done:rows.length?'Finished: '+finished('refresh')+' refreshed, '+finished('repost')+' reposted'+(failed?'':'.'):none,
+  done:(rows.length?'Finished: '+finished('refresh')+' refreshed, '+finished('repost')+' reposted'+(failed?'':'.'):none)+
+   (p.atLimit?' '+p.atLimit+' unsold listing'+(p.atLimit===1?' was':'s were')+' reposted as often as allowed and left as '+(p.atLimit===1?'it is':'they are')+
+    ': keep or deactivate '+(p.atLimit===1?'it':'them')+' on Etsy.':''),
   stopped:'Stopped. Resume to go on where it stopped.',failed:'Stopped by an error: '+(job.error||'')};
  notice('rp-status',(texts[job.status]||job.status)+(failed&&['done','stopped'].includes(job.status)?(job.status==='done'?', ':' ')+failed+
   ' could not be done (see below); those listings are still as they were.':''),job.status==='failed'?'error':failed?'warn':'');
@@ -99,7 +104,8 @@ async function refresh(){
   if(!countSet){
    el('rp-count').value=String(data.count||20);el('rp-count').max=String(data.max||50);
    if(data.rules){el('rp-refresh').value=String(data.rules.refreshMonths);el('rp-repost').value=String(data.rules.repostMonths);
-    el('rp-window').value=String(data.rules.windowDays);}
+    el('rp-window').value=String(data.rules.windowDays);el('rp-max').value=String(data.rules.maxReposts);
+    el('rp-template').checked=data.rules.refreshTemplate!==false;}
    countSet=true;
   }
   show();
@@ -112,12 +118,14 @@ async function run(path,body){
  catch(error){notice('rp-status',String(error.message||error),'error');buttons();}
 }
 el('rp-count').addEventListener('input',buttons);
-for(const id of ['rp-refresh','rp-repost','rp-window'])el(id).addEventListener('input',()=>{checks();buttons();});
+for(const id of ['rp-refresh','rp-repost','rp-window','rp-max','rp-template'])el(id).addEventListener('input',()=>{checks();buttons();});
 el('rp-start').addEventListener('click',()=>{
  const n=count(),preset=window.mockupPresets?.chosen,r=rules();if(!n||state.running||!preset||rulesProblem())return;
  if(!confirm('Refresh and repost up to '+n+' listing'+(n===1?'':'s')+' on Etsy?\n\nUnsold listings that renew within '+r.windowDays+' days: '+
-  'those '+r.refreshMonths+' months old are refreshed (new SEO from ChatGPT, new mockups from '+preset.name+' made on the PC, and the current template, on the same listing, no fee); '+
-  'refreshed ones still unsold at '+r.repostMonths+' months are reposted as new listings ($0.20 each) and the old ones deactivated.'))return;
+  'those '+r.refreshMonths+' months old are refreshed on the same listing (new SEO from ChatGPT, new mockups from '+preset.name+' made on the PC'+
+  (r.refreshTemplate?', and the current template\'s sizes, prices, shipping and processing':'; sizes, prices and shipping stay as they are')+'); '+
+  (r.maxReposts?'refreshed ones still unsold at '+r.repostMonths+' months are reposted as new listings ($0.20 each, at most '+r.maxReposts+
+   ' time'+(r.maxReposts===1?'':'s')+' per listing) and the old ones deactivated.':'nothing is reposted.')))return;
  el('rp-start').disabled=true;
  void run('/api/renewer/start',{count:n,rules:r,confirm:CONFIRM});
 });

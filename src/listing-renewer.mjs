@@ -7,7 +7,11 @@
 //  - repost (by default at 12 months, only once refreshed and still unsold):
 //    posted again as a new listing like a Daily Listings draft, and the old one
 //    is deactivated once the new one is live. Done just before a renewal, its
-//    $0.20 listing fee takes the place of the renewal Etsy would charge.
+//    $0.20 listing fee takes the place of the renewal Etsy would charge. A
+//    listing is reposted at most maxReposts times, counted across the
+//    listings that replaced it; after that it is left as it is.
+// Sales are checked when listings are picked and again just before one is
+// changed: a listing that sold is never changed.
 // A listing whose artwork is not in the app gets new SEO only when refreshed,
 // and is copied with its own photos and video when reposted
 // (listing-reposter.mjs prepare/finalize). The job is kept in R2, so the page
@@ -28,16 +32,21 @@ const SETUP_POLL_MS = 3000;
 const SETUP_WAIT_MS = 20 * 60 * 1000;
 export const MAX_RENEWALS = 50;
 export const DEFAULT_RENEWALS = 20;
-export const DEFAULT_RULES = { refreshMonths: 4, repostMonths: 12, windowDays: 7 };
+// maxReposts: how many times one listing (and the listings that replaced it)
+// may be reposted; refreshTemplate: whether a refresh also applies the current
+// template's sizes, prices and profiles.
+export const DEFAULT_RULES = { refreshMonths: 4, repostMonths: 12, windowDays: 7, maxReposts: 1, refreshTemplate: true };
 
 export function checkRules(input = {}) {
   const rules = { ...DEFAULT_RULES };
-  for (const key of Object.keys(DEFAULT_RULES))
+  for (const key of ['refreshMonths', 'repostMonths', 'windowDays', 'maxReposts'])
     if (input?.[key] !== undefined && input[key] !== '') rules[key] = Math.round(Number(input[key]));
+  if (input?.refreshTemplate !== undefined) rules.refreshTemplate = ![false, 'false'].includes(input.refreshTemplate);
   if (!(rules.refreshMonths >= 1 && rules.refreshMonths <= 36)) throw Error('Refresh after 1 to 36 months without a sale.');
   if (!(rules.repostMonths > rules.refreshMonths && rules.repostMonths <= 48))
     throw Error('Repost after more months than the refresh (up to 48).');
   if (!(rules.windowDays >= 1 && rules.windowDays <= 120)) throw Error('Choose listings renewing within 1 to 120 days.');
+  if (!(rules.maxReposts >= 0 && rules.maxReposts <= 5)) throw Error('Repost each listing 0 to 5 times.');
   return rules;
 }
 
@@ -110,6 +119,9 @@ export async function resumeRenewal(deps, { retryFailed = false } = {}) {
   if (running) throw Error('The reposter is already running.');
   const job = await deps.loadJob();
   if (!job?.results?.length) throw Error('There is no run to resume. Start a new one.');
+  // A run of the earlier reposter only reposted: it is not resumed, so nothing
+  // is reposted without the rules. Its listings are picked again when due.
+  if (!job.rules) throw Error('This run was started by the earlier reposter, which only reposted. Start a new run: the listings it did not finish are picked again when they are due.');
   for (const row of job.results) {
     if (row.status === 'working' || (retryFailed && row.status === 'failed')) { row.status = 'waiting'; row.step = 'Waiting'; row.error = ''; }
   }
@@ -150,12 +162,18 @@ async function findDue(deps, job, control, save) {
         renewsAt: new Date(renews * 1000).toISOString(), refreshedAt: refreshed[String(item.listing_id)]?.at || null,
         status: 'waiting', step: 'Waiting', newListingId: null, newTitle: '', error: '' });
     });
-    // Whether its artwork is in the app (new mockups) or not (new SEO only, or its photos copied).
+    // Whether its artwork is in the app (new mockups) or not (new SEO only, or
+    // its photos copied), and how many times it was reposted before.
     await Promise.all(found.map(async row => {
       const about = await deps.describe(row.listingId).catch(() => null);
-      Object.assign(row, { artworkId: about?.artworkId || '', layout: about?.layout || '', photo: about?.photo || '' });
+      Object.assign(row, { artworkId: about?.artworkId || '', layout: about?.layout || '', photo: about?.photo || '',
+        reposts: Number(about?.reposts) || 0 });
     }));
-    job.results.push(...found);
+    // One reposted as often as allowed is not reposted again: it is left for
+    // you to keep or retire, and counted.
+    const kept = found.filter(row => row.action !== 'repost' || row.reposts < job.rules.maxReposts);
+    job.progress.atLimit = (job.progress.atLimit || 0) + found.length - kept.length;
+    job.results.push(...kept);
     await save();
   }
   if (job.results.some(row => row.artworkId) && !job.preset)
@@ -185,6 +203,11 @@ const failed = (row, error) => {
   row.error = String(error?.message || error).slice(0, 300);
 };
 const halt = row => { row.status = 'waiting'; row.step = 'Stopped'; };
+// Sales are checked again just before a listing is changed: one that sold
+// while its mockups and SEO were made is left as it is.
+async function stillUnsold(deps, row) {
+  if (await deps.salesCount(row.listingId) !== 0) throw Error('It sold while it was being refreshed, so it was left as it is.');
+}
 
 // New mockups from the preset, made on the PC, while ChatGPT writes the SEO.
 // Returns the mockups made, or null when stopped.
@@ -224,6 +247,7 @@ async function refreshInPlace(deps, job, row, control, save) {
   try {
     const mockups = await mockupsAndSeo(deps, job, row, control, save);
     if (!mockups || control.stop) return halt(row);
+    await stillUnsold(deps, row);
     if (!row.photosReplaced) {
       await step('Replacing the photos with the new mockups');
       await deps.replacePhotos({ listingId: row.listingId, artworkId: row.artworkId, orientation: row.layout, preset: job.preset,
@@ -232,8 +256,9 @@ async function refreshInPlace(deps, job, row, control, save) {
       await save();
     }
     if (control.stop) return halt(row);
-    await step('Updating the title, tags, description and variants');
-    await deps.updateDetails({ listingId: row.listingId, artworkId: row.artworkId, seo: row.seo });
+    const template = job.rules?.refreshTemplate !== false;
+    await step('Updating the title, tags and description' + (template ? ', and the variants from the template' : ''));
+    await deps.updateDetails({ listingId: row.listingId, artworkId: row.artworkId, seo: row.seo, template });
     await deps.markRefreshed(row.listingId, { artworkId: row.artworkId, title: row.seo.title });
     row.status = 'done'; row.step = 'Refreshed';
   } catch (error) { failed(row, error); }
@@ -251,8 +276,9 @@ async function refreshSeoOnly(deps, job, row, control, save) {
       await save();
     }
     if (control.stop) return halt(row);
+    await stillUnsold(deps, row);
     await step('Updating the title and tags');
-    await deps.updateDetails({ listingId: row.listingId, artworkId: '', seo: row.seo });
+    await deps.updateDetails({ listingId: row.listingId, artworkId: '', seo: row.seo, template: false });
     await deps.markRefreshed(row.listingId, { artworkId: '', title: row.seo.title });
     row.note = 'New title and tags; photos, description and variants kept: this listing\'s artwork is not in the app.';
     row.status = 'done'; row.step = 'Refreshed';
@@ -301,7 +327,7 @@ async function repostWithMockups(deps, job, row, control, save) {
     }
     await step('Deactivating the old listing');
     await deps.deactivate(row.listingId, row.newListingId);
-    await deps.forgetRefreshed(row.listingId).catch(() => {});
+    await deps.markReposted(row.listingId, row.newListingId, { artworkId: row.artworkId, count: (row.reposts || 0) + 1 }).catch(() => {});
     row.status = 'done'; row.step = 'Reposted';
   } catch (error) { failed(row, error); }
 }
@@ -342,7 +368,7 @@ async function repostCopy(deps, job, row, control, save) {
     await step('Publishing, then deactivating the old listing');
     const { record } = await deps.finalize(row.listingId);
     row.newListingId = Number(record.draftId) || null;
-    await deps.forgetRefreshed(row.listingId).catch(() => {});
+    await deps.markReposted(row.listingId, row.newListingId, { artworkId: '', count: (row.reposts || 0) + 1 }).catch(() => {});
     row.status = 'done'; row.step = 'Reposted';
   } catch (error) { failed(row, error); }
 }

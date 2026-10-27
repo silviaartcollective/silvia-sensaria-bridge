@@ -119,7 +119,7 @@ function deps({ saved, onPrepared = () => {}, template = null } = {}) {
     now: () => NOW * 1000,
     saveJob: async job => { saved.job = structuredClone(job); },
     refreshedListings: async () => Object.fromEntries([...etsy.listings.keys()].map(id => [id, { at: '2001-01-01T00:00:00.000Z' }])),
-    forgetRefreshed: async () => {},
+    markReposted: async () => {},
     listActive: async () => [...etsy.listings.values()].filter(item => item.state === 'active'),
     // These listings' artworks are not in the app: they are copied.
     describe: async () => null,
