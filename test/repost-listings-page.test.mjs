@@ -40,5 +40,12 @@ test('refresh first, repost later: the two ages and the renewal window are setti
  assert.match(server,/replacePhotos:refreshListingPhotos,\n    updateDetails:refreshListingDetails,/);
  assert.match(server,/const placed=await replaceListingPhotos\(\{session,listingId,photos,altText:manifest\.title\|\|''\}\);/);
  assert.match(server,/rank,overwrite:replace,altText,\.\.\.args\}\)/);
- assert.match(server,/forgetRefreshed:listingId=>changeRefreshed\(listings=>\{delete listings\[String\(listingId\)\]\}\),/);
+ // The repost count goes on from the old listing to the new one, and an artwork in the app counts its own reposts too.
+ assert.match(server,/reposted\[String\(newId\)\]=\{\.\.\.info,fromListingId:Number\(oldId\),at:new Date\(\)\.toISOString\(\)\};/);
+ assert.match(server,/reposts=Math\.max\(reposts,\(manifest\.repostHistory\|\|\[\]\)\.length\)/);
+ // The repost limit and the template choice are on the page and sent with Start.
+ assert.match(html,/Repost each listing at most <input type="number" id="rp-max" class="count" min="0" max="5" value="1"> time\(s\)/);
+ assert.match(html,/<input type="checkbox" id="rp-template" checked style="width:auto"> Refreshing also applies the current template/);
+ assert.match(client,/maxReposts:Math\.round\(Number\(el\('rp-max'\)\.value\)\),refreshTemplate:el\('rp-template'\)\.checked/);
+ assert.match(server,/if\(!withTemplate\)return write\(text\);/);
 });

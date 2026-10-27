@@ -1211,38 +1211,46 @@ async function refreshListingPhotos({listingId,artworkId,orientation,preset,mock
   return {photos:placed.length};
 }
 // Refresh in place: the listing's new title, tags and description and, for an
-// artwork in the app, the current template's variants, profiles and style. The
-// description is built as for a new draft (the orientation's template); a
-// listing whose artwork is not in the app keeps its description and variants.
-async function refreshListingDetails({listingId,artworkId,seo}){
+// artwork in the app when `template` is chosen, the current template's
+// variants, profiles and style. The description is built as for a new draft
+// (the orientation's template); a listing whose artwork is not in the app
+// keeps its description and variants.
+async function refreshListingDetails({listingId,artworkId,seo,template:withTemplate=true}){
   const session=await getEtsySession(),shopId=session.shop.shop_id;
   const args={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
   const write=listing=>withEtsyListingRetry(()=>updateListing({...args,shopId,listingId,listing}));
   if(!artworkId)return write({title:seo.title,tags:seo.tags});
   const [listing,inventory,properties,manifest]=await Promise.all([getListing({listingId,...args}),getListingInventory({listingId,...args}),
     getListingProperties({shopId,listingId,...args}),loadArtworkManifest(artworkId)]);
-  const template=await repostTemplate({listing,inventory,properties},{style:seo.style});
-  if(!template)throw Error('The artwork '+artworkId+' is not ready in the app any more; its title and variants were not changed.');
   const description=listingDescription((await loadListingTemplates().catch(()=>null))?.orientations?.[listingLayoutForManifest(manifest)]||null,
     listingDefaults.descriptionTemplate,{seoDescription:seo.description,shopSectionName:seo.sectionName||'',shopSectionUrl:seo.sectionUrl||''});
+  const text={title:seo.title,description,tags:seo.tags,shop_section_id:Number(seo.sectionId)||listing.shop_section_id||undefined};
+  if(!withTemplate)return write(text);
+  const template=await repostTemplate({listing,inventory,properties},{style:seo.style});
+  if(!template)throw Error('The artwork '+artworkId+' is not ready in the app any more; its title and variants were not changed.');
   const {price,quantity,readiness_state_id,...profiles}=template.listing;
-  await write({...profiles,title:seo.title,description,tags:seo.tags,shop_section_id:Number(seo.sectionId)||listing.shop_section_id||undefined});
+  await write({...profiles,...text});
   await withEtsyListingRetry(()=>updateListingInventory({listingId,inventory:template.inventory,...args}));
   if(template.applyAttributes)await template.applyAttributes(listingId);
 }
-// The listings the reposter refreshed, and when: one still unsold later is
-// reposted. Lanes record at the same time, so the writes take turns.
-const REFRESHED_KEY='settings/listing-renewer/refreshed.json',RENEWER_RULES_KEY='settings/listing-renewer/rules.json';
-let refreshedWrites=Promise.resolve();
-async function loadRefreshed(){
-  try{return (await getJsonObject(REFRESHED_KEY))?.listings||{}}catch(error){if(isMissingR2Object(error))return {};throw error}
+// What the reposter did, by listing: when it was refreshed (one still unsold
+// later is reposted), and for a listing that replaced another, how many
+// reposts it took to get there (the count goes on from listing to listing, so
+// one artwork is reposted only as often as the rules allow). Lanes record at
+// the same time, so the writes take turns.
+const RENEWER_HISTORY_KEY='settings/listing-renewer/history.json',RENEWER_RULES_KEY='settings/listing-renewer/rules.json';
+let historyWrites=Promise.resolve();
+async function loadRenewerHistory(){
+  let saved=null;
+  try{saved=await getJsonObject(RENEWER_HISTORY_KEY)}catch(error){if(!isMissingR2Object(error))throw error}
+  return {refreshed:saved?.refreshed||{},reposted:saved?.reposted||{}};
 }
-function changeRefreshed(change){
-  const run=refreshedWrites.then(async()=>{
-    const listings=await loadRefreshed();change(listings);
-    await putJsonObject(REFRESHED_KEY,{listings,updatedAt:new Date().toISOString()});
+function changeRenewerHistory(change){
+  const run=historyWrites.then(async()=>{
+    const history=await loadRenewerHistory();change(history);
+    await putJsonObject(RENEWER_HISTORY_KEY,{...history,updatedAt:new Date().toISOString()});
   });
-  refreshedWrites=run.catch(()=>{});
+  historyWrites=run.catch(()=>{});
   return run;
 }
 async function savedRenewalRules(){try{return checkRules(await getJsonObject(RENEWER_RULES_KEY))}catch{return {...DEFAULT_RULES}}}
@@ -1260,20 +1268,29 @@ function renewalDeps(){
     saveJob:job=>putJsonObject(RENEWER_JOB_KEY,job),
     pause:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
     listActive:async()=>allActiveListings(await getEtsySession()),
-    refreshedListings:loadRefreshed,
-    markRefreshed:(listingId,info)=>changeRefreshed(listings=>{listings[String(listingId)]={...info,at:new Date().toISOString()}}),
-    forgetRefreshed:listingId=>changeRefreshed(listings=>{delete listings[String(listingId)]}),
+    refreshedListings:async()=>(await loadRenewerHistory()).refreshed,
+    markRefreshed:(listingId,info)=>changeRenewerHistory(({refreshed})=>{refreshed[String(listingId)]={...info,at:new Date().toISOString()}}),
+    // The new listing carries the count on; the old one is inactive now.
+    markReposted:(oldId,newId,info)=>changeRenewerHistory(({refreshed,reposted})=>{
+      delete refreshed[String(oldId)];delete reposted[String(oldId)];
+      reposted[String(newId)]={...info,fromListingId:Number(oldId),at:new Date().toISOString()};
+    }),
     salesCount:async id=>listingSalesCount(await getEtsySession(),id),
-    // Whether the listing's artwork is in the app (it then gets new mockups), its shape and first photo.
+    // Whether the listing's artwork is in the app (it then gets new mockups), its
+    // shape and first photo, and how many times it was reposted: by the
+    // reposter's history, or for an artwork in the app by the artwork's own.
     describe:async listingId=>{
       const args=await etsyArgs();
-      const [inventory,[first]]=await Promise.all([getListingInventory({listingId,...args}),getEtsyListingImages({listingId,...args})]);
-      let artworkId='',layout='';
+      const [inventory,[first],history]=await Promise.all([getListingInventory({listingId,...args}),getEtsyListingImages({listingId,...args}),
+        loadRenewerHistory()]);
+      let artworkId='',layout='',reposts=Number(history.reposted[String(listingId)]?.count)||0;
       try{
         const id=artworkIdFromInventory(inventory),manifest=await loadArtworkManifest(id);
-        if(manifest?.status==='ready'&&manifest.master?.key&&await artworkObjectExists(manifest.master.key)){artworkId=id;layout=listingLayoutForManifest(manifest)}
+        if(manifest?.status==='ready'&&manifest.master?.key&&await artworkObjectExists(manifest.master.key)){
+          artworkId=id;layout=listingLayoutForManifest(manifest);reposts=Math.max(reposts,(manifest.repostHistory||[]).length);
+        }
       }catch{}
-      return {artworkId,layout,photo:first?.url_170x135||first?.url_570xN||''};
+      return {artworkId,layout,reposts,photo:first?.url_170x135||first?.url_570xN||''};
     },
     refreshSeo,
     startMockups:batch.startMockups,
@@ -5379,7 +5396,7 @@ const server = http.createServer(async (req, res) => {
         let scopes=new Set();
         try{scopes=new Set(String((await getEtsySession()).scope||'').split(/\s+/))}catch{}
         return sendJson(res,200,{ok:true,job,running:renewalRunning(),max:MAX_RENEWALS,count:DEFAULT_RENEWALS,
-          rules:await savedRenewalRules(),refreshed:Object.keys(await loadRefreshed().catch(()=>({}))).length,
+          rules:await savedRenewalRules(),refreshed:Object.keys((await loadRenewerHistory().catch(()=>({refreshed:{}}))).refreshed).length,
           chatGpt:aiSeoConfigured(),canEdit:['listings_r','listings_w','transactions_r'].every(scope=>scopes.has(scope))});
       }
       if(req.method!=='POST')return sendJson(res,405,{ok:false,error:'Method not allowed.'});
