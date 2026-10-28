@@ -18,7 +18,7 @@ import {
 import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement, listingSalesCount, getListingVideos } from './listing-reposter.mjs';
 import { startRenewal, resumeRenewal, stopRenewal, renewalRunning, checkRules, MAX_RENEWALS, DEFAULT_RENEWALS, DEFAULT_RULES } from './listing-renewer.mjs';
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
-import { decorateAdminHtml } from './admin-sidebar.mjs';
+import { decorateAdminHtml, withAdminTheme } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
 import {beginGmailAuthorization,finishGmailAuthorization,gmailConnectionStatus,disconnectGmail,gmailOAuthConfigured} from './gmail-oauth.mjs';
 import {scanSensariaGmail,gmailTrackingStatus,saveGmailTrackingSettings} from './sensaria-gmail-tracking.mjs';
@@ -608,7 +608,7 @@ const FAVICON_LINKS = [
   '<link rel="apple-touch-icon" href="/favicon.png?v=4" sizes="64x64">'
 ].join('');
 function sendHtml(res, status, html) {
-  const source = decorateAdminHtml(html);
+  const source = withAdminTheme(decorateAdminHtml(html));
   // Real PNG and ICO favicons work in Chrome tabs, mobile and bookmarks.
   // Remove any previously embedded favicon links instead of serving duplicates.
   const body = source
@@ -5704,10 +5704,10 @@ const server = http.createServer(async (req, res) => {
     if(url.searchParams.get('embedded')==='1'){
       // Same-origin converter tab reuses the complete, existing queue and UI,
       // but no nested admin sidebar or duplicate worker bootstrap.
-      const content=renderListingConverterPage().replace('</head>',
+      const content=withAdminTheme(renderListingConverterPage().replace('</head>',
         '<style>.app-shell{display:block!important;grid-template-columns:minmax(0,1fr)!important}'+
         '.app-sidebar{display:none!important}.shell{max-width:none!important;padding:12px 10px 30px!important}'+
-        '.top h1{font-size:30px!important}</style></head>');
+        '.top h1{font-size:30px!important}</style></head>'));
       res.writeHead(200,{'content-type':'text/html; charset=utf-8',
         'cache-control':'private, no-store','x-content-type-options':'nosniff'});
       return res.end(content);
