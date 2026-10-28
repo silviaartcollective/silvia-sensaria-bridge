@@ -1,4 +1,5 @@
 // One source of truth for the Silvia administrator sidebar.
+import { readFileSync } from 'node:fs';
 export const ADMIN_LINKS = Object.freeze([
   { href:'/', label:'Dashboard' },
   { href:'/readiness', label:'System Readiness' },
@@ -50,7 +51,7 @@ export function renderAdminSidebar(activePath='/') {
     '<div class="shared-admin-brand">Silvia<br>Fulfillment'+
     '<small>Etsy → Sensaria</small></div>'+
     '<nav class="shared-admin-nav" aria-label="All dashboard pages">'+nav+'</nav>'+
-    '<div class="shared-admin-foot">Silvia Art Collective<br>Private fulfillment service</div>'+
+    '<div class="shared-admin-foot"><button type="button" class="shared-theme-toggle" data-theme-toggle aria-pressed="false">☾ Dark mode</button>Silvia Art Collective<br>Private fulfillment service</div>'+
     '</aside>';
 }
 
@@ -64,6 +65,8 @@ const STYLE = [
   'aside.shared-admin-sidebar .shared-nav-link:hover,aside.shared-admin-sidebar .shared-nav-link:focus-visible,aside.shared-admin-sidebar .shared-nav-link.is-current{color:#fff!important;background:#373b33!important}',
   'aside.shared-admin-sidebar .shared-nav-link.is-current{font-weight:650!important}',
   'aside.shared-admin-sidebar .shared-admin-foot{flex:none;margin-top:25px;padding-top:18px;color:#aeb3a8;font:12px/1.5 system-ui,sans-serif}',
+  'aside.shared-admin-sidebar .shared-theme-toggle{display:block;width:100%;box-sizing:border-box;margin:0 0 14px;padding:9px 12px;border:1px solid #4a4f45;border-radius:9px;background:transparent;color:#e6e9e1;font:600 13px/1.2 system-ui,sans-serif;text-align:left;cursor:pointer}',
+  'aside.shared-admin-sidebar .shared-theme-toggle:hover,aside.shared-admin-sidebar .shared-theme-toggle:focus-visible{background:#373b33;color:#fff}',
   '.shared-sidebar-mobile-toggle,.shared-sidebar-backdrop{display:none}',
   '@media(max-width:800px){',
   'body>.shell,body>.app-shell{grid-template-columns:minmax(0,1fr)!important}',
@@ -100,6 +103,15 @@ const MOBILE_SCRIPT = '<script id="shared-sidebar-mobile-script">'+
   'document.addEventListener("keydown",e=>{if(e.key==="Escape")close();});'+
   'window.matchMedia("(min-width:801px)").addEventListener("change",e=>{if(e.matches)close();});'+
   '})();</script>';
+
+// Dark mode (admin-theme-client.js), on every page, sidebar or not: it runs at
+// the end of <head>, after the page's styles, so the page never shows light first.
+const THEME_SCRIPT='<script id="admin-theme-script">'+readFileSync(new URL('./admin-theme-client.js',import.meta.url),'utf8')+'</script>';
+export function withAdminTheme(html){
+  const source=String(html||'');
+  if(source.includes('id="admin-theme-script"')||!/<\/head>/i.test(source))return source;
+  return source.replace(/<\/head>/i,()=>THEME_SCRIPT+'</head>');
+}
 
 export function decorateAdminHtml(html) {
   const source=String(html||'');
