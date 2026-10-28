@@ -109,9 +109,10 @@ import {
   getArtworkObjectStream,
   downloadArtworkObjectToFile
 } from './r2.mjs';
-import { makeOriginal, renderOriginal, originalState } from './artwork-originals.mjs';
+import { makeOriginal, renderOriginal, originalState, thumbKey, renderThumb } from './artwork-originals.mjs';
 import { renderArtworkFilesPage } from './artwork-files-page.mjs';
-import { writeZip } from './zip-stream.mjs';
+import { renderArtworkLibraryPage } from './artwork-library-page.mjs';
+import { writeZip, zipName } from './zip-stream.mjs';
 import {
   reserveArtworkUpload,
   stageMasterUpload,
@@ -1083,13 +1084,17 @@ async function artworkInventory({fresh=false}={}){
       if(manifest?.status!=='ready'||!objects.has(manifest.master?.key))continue;
       rows.push({artworkId:String(manifest.artworkId),filename:String(manifest.master.originalFilename||''),
         master:objects.get(manifest.master.key),originalState:originalState(manifest,objects),
-        original:manifest.original?.key?objects.get(manifest.original.key)||null:null});
+        original:manifest.original?.key?objects.get(manifest.original.key)||null:null,
+        thumb:objects.get(thumbKey(String(manifest.artworkId)))||null});
     }
   }
   rows.sort((a,b)=>a.artworkId.localeCompare(b.artworkId,undefined,{numeric:true}));
   artworkFilesCache={at:Date.now(),value:rows};
   return rows;
 }
+// The library picture's address changes with the picture, so a browser keeps
+// it a day but never shows an old one.
+const libraryPicture=(artworkId,version)=>'/api/artwork-library/'+artworkId+'/picture?v='+encodeURIComponent(String(version||'').replace(/"/g,''));
 // "SAC0012 - Sage Sweep.jpeg": the artwork ID, then the master's own file name.
 function masterZipName(row){
   const ext=(row.master.key.match(/\.[a-z0-9]+$/i)||['.jpg'])[0];
@@ -1131,6 +1136,7 @@ function originalInTurn(artworkId){
 // Every new artwork gets its original straight away, in the background.
 function queueOriginal(artworkId){
   if(!artworkId)return;
+  artworkFilesCache.at=0; // the new artwork shows in the library at once
   void originalInTurn(artworkId).then(()=>{artworkFilesCache.at=0},
     error=>console.error('The original of '+artworkId+' could not be made:',error?.message||error));
 }
@@ -5355,7 +5361,7 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/daily-listings'))return;
     return sendHtml(res,200,renderDailyListingsPage());
   }
-  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js','/artwork-files-client.js'].includes(url.pathname)){
+  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js','/artwork-files-client.js','/artwork-library-client.js'].includes(url.pathname)){
     if(!requireAdminApi(req,res))return;
     const js=readFileSync(new URL('.'+url.pathname,import.meta.url),'utf8');
     res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
@@ -5520,6 +5526,56 @@ const server = http.createServer(async (req, res) => {
       await putJsonObject(RENEWER_RULES_KEY,{...rules,savedAt:new Date().toISOString()});
       const job=await startRenewal(renewalDeps(),{count:body.count,preset,rules});
       return sendJson(res,200,{ok:true,job,running:true});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
+  }
+
+  // Artwork Library: every artwork as a picture with its SKU; a click downloads
+  // its original, then its master, straight from R2.
+  if (req.method === 'GET' && url.pathname === '/artwork-library') {
+    if (!requireAdminPage(req,res,'/artwork-library')) return;
+    return sendHtml(res,200,renderArtworkLibraryPage());
+  }
+  if (url.pathname === '/api/artwork-library' || url.pathname.startsWith('/api/artwork-library/')) {
+    if (!requireAdminApi(req,res)) return;
+    if (req.method==='POST'&&crossSitePost(req)) return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    try{
+      if(req.method==='GET'&&url.pathname==='/api/artwork-library'){
+        const rows=await artworkInventory();
+        return sendJson(res,200,{ok:true,artworks:rows.map(row=>({artworkId:row.artworkId,
+          picture:row.thumb||row.original?libraryPicture(row.artworkId,(row.thumb||row.original).etag):''}))});
+      }
+      const match=url.pathname.match(/^\/api\/artwork-library\/([A-Z]{2,5}\d+)\/(picture|download)$/);
+      // The picture: the original made small, once, the first time it is shown.
+      if(req.method==='GET'&&match?.[2]==='picture'){
+        const id=match[1],key=thumbKey(id);
+        if(!await artworkObjectExists(key)){
+          const manifest=await loadArtworkManifest(id);
+          if(!manifest?.original?.key||!await artworkObjectExists(manifest.original.key))
+            return sendJson(res,404,{ok:false,error:'No original yet.'});
+          await putArtworkObject({key,body:await renderThumb((await getArtworkObject(manifest.original.key)).body),contentType:'image/jpeg'});
+        }
+        const object=await getArtworkObject(key);
+        res.writeHead(200,{'content-type':'image/jpeg','content-length':object.body.length,
+          'cache-control':'private, max-age=86400','x-content-type-options':'nosniff'});
+        return res.end(object.body);
+      }
+      // A click: the original (made first if it is missing or out of date), then the master.
+      if(req.method==='POST'&&match?.[2]==='download'){
+        const id=match[1];
+        let manifest=await loadArtworkManifest(id);
+        if(manifest?.status!=='ready'||!manifest.master?.key)return sendJson(res,404,{ok:false,error:'This artwork is not in the app.'});
+        const master=await artworkObjectInfo(manifest.master.key);
+        const fresh=manifest.original?.key&&await artworkObjectExists(manifest.original.key)&&
+          originalState(manifest,new Map([[manifest.master.key,master],[manifest.original.key,{}]]))==='made';
+        if(!fresh){await originalInTurn(id);manifest=await loadArtworkManifest(id);artworkFilesCache.at=0;}
+        if(!manifest.original?.key)throw Error('The original could not be made.');
+        const masterName=masterZipName({artworkId:id,filename:String(manifest.master.originalFilename||''),master:{key:manifest.master.key}});
+        return sendJson(res,200,{ok:true,
+          original:{name:id+'.jpg',url:await signedArtworkUrl(manifest.original.key,15*60,{filename:zipName(id+'.jpg')})},
+          master:{name:masterName,url:await signedArtworkUrl(manifest.master.key,60*60,{filename:zipName(masterName)})},
+          picture:libraryPicture(id,Date.parse(manifest.original.madeAt)||'')});
+      }
+      return sendJson(res,404,{ok:false,error:'Unknown artwork library action.'});
     }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
   }
 

@@ -105,6 +105,7 @@ test('an original is made when missing, kept while up to date, and made again wh
     objectInfo: async key => store.get(key),
     exists: async key => store.has(key),
     render: async (key, size) => { renders.push(size.join('x')); return Buffer.from('jpg'); },
+    thumb: async () => Buffer.from('small'),
     put: async ({ key, body }) => store.set(key, { size: body.length, etag: '"o"' }),
     updateManifest: async (id, change) => change(manifests[id])
   };
@@ -113,6 +114,9 @@ test('an original is made when missing, kept while up to date, and made again wh
   assert.equal(first.made.layout, 'panoramic');
   assert.deepEqual(renders, ['1536x768']);
   assert.equal(manifests.SAC0001.original.masterEtag, '"a"');
+  // With its picture for the Artwork Library.
+  assert.equal(manifests.SAC0001.original.thumbKey, 'artworks/SAC0001/original/SAC0001-thumb.jpg');
+  assert.ok(store.has('artworks/SAC0001/original/SAC0001-thumb.jpg'));
   assert.equal(originalState(manifests.SAC0001, store), 'made');
   assert.equal((await makeOriginal('SAC0001', deps)).skipped, 'up to date');
   store.set('artworks/SAC0001/source/SAC0001-master.jpg', { size: 950, etag: '"b"' });

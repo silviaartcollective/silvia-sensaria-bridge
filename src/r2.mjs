@@ -91,12 +91,14 @@ export async function putArtworkFile({ key, filePath, contentType }) {
   return { bucket: config.bucket, key, size: stat.size };
 }
 
-export async function signedArtworkUrl(key, expiresIn = 60 * 60) {
+// `filename`: the browser saves the file under that name instead of showing it.
+export async function signedArtworkUrl(key, expiresIn = 60 * 60, { filename = '' } = {}) {
   const config = r2Config();
   const client = r2Client();
   return getSignedUrl(
     client,
-    new GetObjectCommand({ Bucket: config.bucket, Key: key }),
+    new GetObjectCommand({ Bucket: config.bucket, Key: key,
+      ...(filename ? { ResponseContentDisposition: 'attachment; filename="' + String(filename).replace(/["\\\r\n]/g, '_') + '"' } : {}) }),
     { expiresIn }
   );
 }

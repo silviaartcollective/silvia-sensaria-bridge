@@ -66,7 +66,7 @@ h1,h2{font-family:Georgia,serif;font-weight:500}h1{font-size:38px;margin:0 0 7px
     <a class="nav" href="/test-order">Test Order</a>
     <a class="nav" href="/orders">All Orders</a>
     <a class="nav" href="/fulfillment-review">Fulfillment Review</a>
-    <a class="nav" href="/#artworks">Artwork Library</a>
+    <a class="nav" href="/artwork-library">Artwork Library</a>
     <a class="nav" href="/#mappings">Product SKUs</a>
     <a class="nav" href="/etsy/status" target="_blank">Etsy Status</a>
     <a class="nav" href="/r2/status" target="_blank">R2 Status</a>

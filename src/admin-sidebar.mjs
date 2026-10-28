@@ -19,7 +19,7 @@ export const ADMIN_LINKS = Object.freeze([
   { href:'/test-order', label:'Test Order' },
   { href:'/orders', label:'All Orders' },
   { href:'/fulfillment-review', label:'Fulfillment Review' },
-  { href:'/#artworks', label:'Artwork Library' },
+  { href:'/artwork-library', label:'Artwork Library' },
   { href:'/#mappings', label:'Product SKUs' },
   { href:'/etsy/status', label:'Etsy Status' },
   { href:'/r2/status', label:'R2 Status' },
