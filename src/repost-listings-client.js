@@ -90,6 +90,7 @@ function show(){
   text.append(sub);
   if(row.newTitle&&row.status!=='done')text.append(make('div','muted','New title: '+row.newTitle));
   if(row.note)text.append(make('div','muted',row.note));
+  if(row.warning)text.append(make('div','warnline',row.warning));
   if(row.error)text.append(make('div','muted',row.error));
   item.append(pic,text,make('span','badge '+row.status,row.status==='working'?row.step:row.status==='done'?(refresh?'Refreshed':'Reposted'):
    label[row.status]||row.step||row.status));

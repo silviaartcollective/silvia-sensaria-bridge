@@ -203,6 +203,8 @@ const failed = (row, error) => {
   row.error = String(error?.message || error).slice(0, 300);
 };
 const halt = row => { row.status = 'waiting'; row.step = 'Stopped'; };
+// ChatGPT gave fewer than 13 usable tags even when asked again: the rest are added by hand.
+const tagWarning = seo => (seo?.tags?.length < 13 ? 'Only ' + seo.tags.length + ' of 13 tags: add ' + (13 - seo.tags.length) + ' more on Etsy.' : '');
 // Sales are checked again just before a listing is changed: one that sold
 // while its mockups and SEO were made is left as it is.
 async function stillUnsold(deps, row) {
@@ -234,6 +236,7 @@ async function mockupsAndSeo(deps, job, row, control, save) {
     await step('Writing the SEO with ChatGPT');
     row.seo = await seo;
     row.newTitle = row.seo.title;
+    row.warning = tagWarning(row.seo);
     await save();
   }
   return mockups;
@@ -273,6 +276,7 @@ async function refreshSeoOnly(deps, job, row, control, save) {
       await step('Writing new SEO with ChatGPT');
       row.seo = await deps.newSeo(row.listingId);
       row.newTitle = row.seo.title;
+      row.warning = tagWarning(row.seo);
       await save();
     }
     if (control.stop) return halt(row);
@@ -358,6 +362,7 @@ async function repostCopy(deps, job, row, control, save) {
       if (seo.descriptionKept) row.note = 'Photos, description and variants kept: this listing\'s artwork is not in the app.';
     }
     row.newTitle = seo.title;
+    row.warning = tagWarning(seo);
     if (control.stop) return halt(row);
     if (!earlier || earlier.status === 'building') {
       await step('Copying to a new listing');

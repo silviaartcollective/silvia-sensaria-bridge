@@ -13,7 +13,7 @@ button,.button{padding:10px 14px;border:1px solid var(--line);background:#fff;co
 button.primary{background:var(--green);color:white;border-color:var(--green)}button:disabled{opacity:.55;cursor:default}
 input,textarea{width:100%;border:1px solid #ccc9c0;background:white;border-radius:7px;padding:10px;color:var(--ink);font:inherit}
 textarea{min-height:300px;resize:vertical;font-size:13px}label{font-size:12px;font-weight:650;display:grid;gap:6px;margin:12px 0}
-.muted{color:var(--muted);font-size:12px;font-weight:400}.notice{white-space:pre-wrap;overflow-wrap:anywhere;padding:11px 13px;background:#e8efe8;color:#35513c;border-radius:8px;margin:12px 0}
+.muted{color:var(--muted);font-size:12px;font-weight:400}.warnline{color:#8a5a1f;font-size:12px;font-weight:600}.notice{white-space:pre-wrap;overflow-wrap:anywhere;padding:11px 13px;background:#e8efe8;color:#35513c;border-radius:8px;margin:12px 0}
 .notice.error{background:#ffebe6;color:#953c32}.notice.warn{background:#fff7e8;color:#625235}
 .checks{display:grid;gap:6px;margin:10px 0}.check{display:flex;gap:9px;align-items:center}.check b{width:18px;text-align:center}
 .bar{height:6px;border-radius:99px;background:#ebe8e1;overflow:hidden;margin:10px 0}.bar>div{height:100%;background:#546f59;width:0;transition:width .4s}

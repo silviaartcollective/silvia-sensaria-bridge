@@ -51,6 +51,9 @@ function show(){
   text.append(make('div','t',item.seo?.title||item.filename));
   text.append(make('div','muted',[item.filename,item.artworkId,NAMES[item.orientation]].filter(Boolean).join(' · ')));
   if(item.seo?.tags?.length)text.append(make('div','tags',item.seo.tags.join(', ')));
+  // ChatGPT gave fewer than 13 usable tags even when asked again: the rest are added by hand.
+  if(item.seo?.tags?.length<13)text.append(make('div','warnline','Only '+item.seo.tags.length+' of 13 tags: add '+
+   (13-item.seo.tags.length)+' more in the listing on Etsy.'));
   if(item.mockups&&item.status==='working'&&item.mockups.total){
    const bar=make('div','mini'),fill=make('div');fill.style.width=Math.round(100*item.mockups.done/item.mockups.total)+'%';bar.append(fill);text.append(bar);
   }

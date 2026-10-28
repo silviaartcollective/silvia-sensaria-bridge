@@ -24,9 +24,11 @@ Description: exactly 2 sentences for the "About this artwork" part of the listin
 - Sentence 2 says the mood it creates (calm, grounded, contemplative…).
 - No sizes, prices, frames, shipping, rooms or sales phrases ("perfect for…").
 
-Tags: exactly 13, all lowercase, 2 or 3 words each, at most 20 characters each including spaces.
+Tags: exactly 13, all lowercase, 2 or 3 words each.
+- Every tag is 20 characters or fewer, counting the spaces. Etsy refuses longer tags, so count each one and use shorter words: "modern wall art" (15), not "contemporary wall art" (21); "neutral decor" (13), not "neutral home decoration" (23).
+- 13 different tags: no repeats, no single words, no tag that copies the title.
 - Mix: the subject (neutral landscape, abstract shoreline), colour with subject (beige coastal art, brown wall art), mood (moody landscape, calm neutral art), texture (textured wall art), style (minimalist art) and decor phrases (coastal wall decor, earth tone decor).
-- No repeats, no single words, no tag that copies the title.
+- Before answering, check the tags again: 13 of them, all different, every one 20 characters or fewer.
 
 Style: the one Etsy style from the list that fits best.
 
@@ -79,14 +81,17 @@ export function cleanEtsyTitle(value) {
   return title;
 }
 
-// Etsy tags: letters, numbers, spaces and - ' ™ © ®; 20 characters; 13 at most.
-export function cleanEtsyTags(values) {
+// Etsy tags: letters, numbers, spaces and - ' ™ © ®; 20 characters; 13 at
+// most. `rejected` collects the ones that could not be used, and why.
+export function cleanEtsyTags(values, { rejected = [] } = {}) {
   const seen = new Set(), tags = [];
   for (const value of Array.isArray(values) ? values : []) {
     const tag = String(value ?? '').replace(/^#/, '').replace(/[^\p{L}\p{N} '’™©®-]/gu, ' ')
       .replace(/\s+/g, ' ').trim();
     const id = tag.toLocaleLowerCase('en');
-    if (!tag || tag.length > 20 || seen.has(id)) continue;
+    if (!tag) continue;
+    if (tag.length > 20) { rejected.push('"' + tag + '" (' + tag.length + ' characters)'); continue; }
+    if (seen.has(id)) { rejected.push('"' + tag + '" (a repeat)'); continue; }
     seen.add(id); tags.push(tag);
     if (tags.length === 13) break;
   }
@@ -97,11 +102,13 @@ export const sectionUrl = (shopName, sectionId) =>
   'https://www.etsy.com/shop/' + encodeURIComponent(String(shopName || '')) + '?section_id=' + encodeURIComponent(String(sectionId));
 
 // The reply checked and cleaned the way Etsy needs it; problems are what
-// cleaning could not fix.
+// cleaning could not fix. Fewer than 13 tags is said in tagProblem: a listing
+// can still be made, and the missing tags added by hand.
 export function checkAiSeo(reply, { sections = [], shopName = '' } = {}) {
   const title = cleanEtsyTitle(reply?.title);
   const description = String(reply?.description ?? '').trim().slice(0, 4000);
-  const tags = cleanEtsyTags(reply?.tags);
+  const rejected = [];
+  const tags = cleanEtsyTags(reply?.tags, { rejected });
   const style = canonicalWallArtStyle(reply?.style) || '';
   const name = clean(reply?.shop_section, 120).toLocaleLowerCase('en');
   const section = name && name !== NO_SECTION.toLocaleLowerCase('en')
@@ -109,8 +116,9 @@ export function checkAiSeo(reply, { sections = [], shopName = '' } = {}) {
   const problems = [];
   if (!title) problems.push('no title');
   if (!description) problems.push('no description');
-  if (tags.length < 13) problems.push('only ' + tags.length + ' usable tags (each must be at most 20 characters, no repeats)');
   if (!style) problems.push('no Etsy style from the list');
+  const tagProblem = tags.length < 13 ? 'only ' + tags.length + ' usable tags of the 13 needed' +
+    (rejected.length ? '; Etsy refuses ' + rejected.join(', ') : '') + '; each tag must be 20 characters or fewer counting spaces, all different' : '';
   return {
     seo: {
       title, description, tags, style,
@@ -118,7 +126,7 @@ export function checkAiSeo(reply, { sections = [], shopName = '' } = {}) {
       sectionName: section ? clean(section.title, 120) : '',
       sectionUrl: section && shopName ? sectionUrl(shopName, section.shop_section_id) : ''
     },
-    problems
+    problems, tagProblem
   };
 }
 
@@ -192,6 +200,9 @@ export async function generateEtsySeo({
   const names = sections.map(item => clean(item.title, 120)).filter(Boolean);
   const lines = [
     orientation ? 'Artwork orientation: ' + orientation + '.' : '',
+    // Etsy's limits, whatever the instructions say.
+    'Etsy limits, checked before the SEO is used: a title of 140 characters at most; exactly 13 tags, all different, ' +
+      'each 20 characters or fewer counting spaces (count them: "contemporary wall art" is 21 and is refused).',
     'Etsy styles (choose one): ' + ETSY_WALL_ART_STYLES.join('; ') + '.',
     'Shop sections (choose one): ' + (names.length ? names.join('; ') : 'none') + '.'
   ];
@@ -212,7 +223,7 @@ export async function generateEtsySeo({
   // Reasoning models think a little: enough to follow the title pattern closely.
   if (/^(gpt-5|o\d)/i.test(options.model)) request.reasoning = { effort: 'medium' };
 
-  let problems = [], usage = { input_tokens: 0, output_tokens: 0 };
+  let problems = [], earlierTags = [], usage = { input_tokens: 0, output_tokens: 0 };
   for (let attempt = 1; attempt <= 2; attempt++) {
     const response = await fetchImpl(OPENAI_RESPONSES_URL, {
       method: 'POST',
@@ -229,8 +240,14 @@ export async function generateEtsySeo({
     try { reply = JSON.parse(replyText(data)); }
     catch (error) { if (attempt === 2) throw error; problems = [String(error.message || error)]; continue; }
     const checked = checkAiSeo(reply, { sections, shopName });
-    if (!checked.problems.length) return { ...checked.seo, model: options.model, usage };
-    problems = checked.problems;
+    // Good tags of the first answer make up for ones the second loses.
+    const tags = cleanEtsyTags([...checked.seo.tags, ...earlierTags]);
+    // Fewer than 13 tags after a second try still make a listing: missingTags
+    // says how many to add by hand.
+    if (!checked.problems.length && (tags.length === 13 || (attempt === 2 && tags.length)))
+      return { ...checked.seo, tags, ...(tags.length < 13 ? { missingTags: 13 - tags.length } : {}), model: options.model, usage };
+    earlierTags = checked.seo.tags;
+    problems = [...checked.problems, ...(checked.tagProblem ? [checked.tagProblem] : [])];
     // One more try, saying what was wrong.
     request.input = [...request.input,
       { role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(reply) }] },
