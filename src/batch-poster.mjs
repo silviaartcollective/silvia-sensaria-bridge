@@ -131,6 +131,20 @@ export async function resumeAfterRestart(deps) {
   return Boolean(control);
 }
 
+// One failed artwork is tried again from the step it reached, also while the
+// others are being worked on (it joins them).
+export async function retryItem(deps, n) {
+  if (!await current(deps)) throw Error('There is no batch.');
+  if (control?.stop) throw Error('The batch is still stopping; try again in a moment.');
+  const item = job.items.find(entry => entry.n === Number(n));
+  if (item?.status !== 'failed') throw Error('That artwork has not failed: refresh the page.');
+  item.status = 'waiting'; item.error = ''; item.step = 'Waiting';
+  job.paused = false;
+  await save(deps);
+  run(deps);
+  return job;
+}
+
 export async function resumeBatch(deps, { retryFailed = false } = {}) {
   if (!await current(deps)) throw Error('There is no batch to resume.');
   if (control?.stop) throw Error('The batch is still stopping; try again in a moment.');
