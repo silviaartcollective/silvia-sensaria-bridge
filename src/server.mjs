@@ -1,6 +1,9 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import sharp from 'sharp';
 import {getFaviconAssets} from './favicon-assets.mjs';
 import { renderDashboard } from './dashboard.mjs';
@@ -101,8 +104,14 @@ import {
   putJsonObject,
   putArtworkObject,
   deleteArtworkObject,
-  isMissingR2Object
+  isMissingR2Object,
+  listArtworkObjects,
+  getArtworkObjectStream,
+  downloadArtworkObjectToFile
 } from './r2.mjs';
+import { makeOriginal, renderOriginal, originalState } from './artwork-originals.mjs';
+import { renderArtworkFilesPage } from './artwork-files-page.mjs';
+import { writeZip } from './zip-stream.mjs';
 import {
   reserveArtworkUpload,
   stageMasterUpload,
@@ -966,6 +975,7 @@ function batchDeps(){
       const reservation=await reserveArtworkUpload({title:'',orientation:'auto',
         master:{filename:item.filename,contentType:item.contentType,size:item.size},mockups:[],stagedMaster:{stageId:item.stageId}});
       const manifest=await completeArtworkUpload(reservation.artworkId);
+      queueOriginal(reservation.artworkId);
       return {artworkId:reservation.artworkId,orientation:listingLayoutForManifest(manifest)};
     },
     // From the staged master (no artwork ID yet), or from the artwork when it has one.
@@ -1057,6 +1067,89 @@ function batchDeps(){
       if(listing.state!=='active')throw Error('Etsy kept the listing as '+listing.state+'.');
     }
   };
+}
+// ---------------------------------------------------------------- artwork files
+// Every artwork whose master is in R2, with its original, from one listing of
+// the artworks folder and each manifest (kept for half a minute).
+let artworkFilesCache={at:0,value:null};
+async function artworkInventory({fresh=false}={}){
+  if(!fresh&&artworkFilesCache.value&&Date.now()-artworkFilesCache.at<30000)return artworkFilesCache.value;
+  const objects=new Map((await listArtworkObjects('artworks/')).map(item=>[item.key,item]));
+  const manifestKeys=[...objects.keys()].filter(key=>/^artworks\/[A-Z]{2,5}\d+\/manifest\.json$/.test(key));
+  const rows=[];
+  for(let i=0;i<manifestKeys.length;i+=12){
+    const page=await Promise.all(manifestKeys.slice(i,i+12).map(key=>getJsonObject(key).catch(()=>null)));
+    for(const manifest of page){
+      if(manifest?.status!=='ready'||!objects.has(manifest.master?.key))continue;
+      rows.push({artworkId:String(manifest.artworkId),filename:String(manifest.master.originalFilename||''),
+        master:objects.get(manifest.master.key),originalState:originalState(manifest,objects),
+        original:manifest.original?.key?objects.get(manifest.original.key)||null:null});
+    }
+  }
+  rows.sort((a,b)=>a.artworkId.localeCompare(b.artworkId,undefined,{numeric:true}));
+  artworkFilesCache={at:Date.now(),value:rows};
+  return rows;
+}
+// "SAC0012 - Sage Sweep.jpeg": the artwork ID, then the master's own file name.
+function masterZipName(row){
+  const ext=(row.master.key.match(/\.[a-z0-9]+$/i)||['.jpg'])[0];
+  const name=row.filename.replace(/[\\/]/g,'_').trim();
+  return row.artworkId+(name?' - '+name+(/\.[a-z0-9]{2,5}$/i.test(name)?'':ext):ext);
+}
+function artworkFilesStatus(rows){
+  const count=state=>rows.filter(row=>row.originalState===state).length;
+  const made=rows.filter(row=>row.originalState==='made');
+  return {masters:{count:rows.length,bytes:rows.reduce((sum,row)=>sum+row.master.size,0)},
+    originals:{count:made.length,bytes:made.reduce((sum,row)=>sum+(row.original?.size||0),0),missing:count('missing'),outdated:count('outdated')},
+    job:originalsJob};
+}
+// Originals (artwork-originals.mjs) are made one at a time: a large master
+// keeps the server busy for a few seconds. The master is read from a file, so
+// it is never held in memory.
+const originalsJob={running:false,total:0,done:0,made:0,failed:[],current:'',startedAt:null,finishedAt:null};
+let originalsTail=Promise.resolve();
+const originalDeps={
+  loadManifest:loadArtworkManifest,
+  objectInfo:artworkObjectInfo,
+  exists:artworkObjectExists,
+  render:async(masterKey,size)=>{
+    const dir=await mkdtemp(path.join(os.tmpdir(),'original-'));
+    try{
+      const file=path.join(dir,'master');
+      await downloadArtworkObjectToFile(masterKey,file);
+      return await renderOriginal(file,size);
+    }finally{await rm(dir,{recursive:true,force:true}).catch(()=>{})}
+  },
+  put:putArtworkObject,
+  updateManifest:updateArtworkManifest
+};
+function originalInTurn(artworkId){
+  const run=originalsTail.then(()=>makeOriginal(artworkId,originalDeps));
+  originalsTail=run.catch(()=>{});
+  return run;
+}
+// Every new artwork gets its original straight away, in the background.
+function queueOriginal(artworkId){
+  if(!artworkId)return;
+  void originalInTurn(artworkId).then(()=>{artworkFilesCache.at=0},
+    error=>console.error('The original of '+artworkId+' could not be made:',error?.message||error));
+}
+// Generate: every missing or out-of-date original, in the background.
+async function generateOriginals(){
+  if(originalsJob.running)throw Error('Originals are already being made.');
+  const todo=(await artworkInventory({fresh:true})).filter(row=>row.originalState!=='made');
+  Object.assign(originalsJob,{running:true,total:todo.length,done:0,made:0,failed:[],current:'',
+    startedAt:new Date().toISOString(),finishedAt:null});
+  void (async()=>{
+    for(const row of todo){
+      originalsJob.current=row.artworkId;
+      try{if((await originalInTurn(row.artworkId)).made)originalsJob.made++}
+      catch(error){originalsJob.failed.push({artworkId:row.artworkId,error:String(error?.message||error).slice(0,200)})}
+      originalsJob.done++;
+    }
+    Object.assign(originalsJob,{running:false,current:'',finishedAt:new Date().toISOString()});
+    artworkFilesCache.at=0;
+  })();
 }
 // Renew listings (listing-renewer.mjs): the job is kept in R2.
 const RENEWER_JOB_KEY='settings/listing-renewer/job.json';
@@ -5262,7 +5355,7 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/daily-listings'))return;
     return sendHtml(res,200,renderDailyListingsPage());
   }
-  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js'].includes(url.pathname)){
+  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js','/artwork-files-client.js'].includes(url.pathname)){
     if(!requireAdminApi(req,res))return;
     const js=readFileSync(new URL('.'+url.pathname,import.meta.url),'utf8');
     res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
@@ -5428,6 +5521,43 @@ const server = http.createServer(async (req, res) => {
       const job=await startRenewal(renewalDeps(),{count:body.count,preset,rules});
       return sendJson(res,200,{ok:true,job,running:true});
     }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
+  }
+
+  // Artwork Files: the masters or the originals as one zip, and Generate.
+  if (req.method === 'GET' && url.pathname === '/artwork-files') {
+    if (!requireAdminPage(req,res,'/artwork-files')) return;
+    return sendHtml(res,200,renderArtworkFilesPage());
+  }
+  if (url.pathname === '/api/artwork-files' || url.pathname.startsWith('/api/artwork-files/')) {
+    if (!requireAdminApi(req,res)) return;
+    if (req.method==='POST'&&crossSitePost(req)) return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+    try{
+      if(req.method==='GET'&&url.pathname==='/api/artwork-files')
+        return sendJson(res,200,{ok:true,...artworkFilesStatus(await artworkInventory())});
+      if(req.method==='POST'&&url.pathname==='/api/artwork-files/originals/generate'){
+        await generateOriginals();
+        return sendJson(res,200,{ok:true,...artworkFilesStatus(await artworkInventory())});
+      }
+      const zip=url.pathname.match(/^\/api\/artwork-files\/(masters|originals)\.zip$/);
+      if(req.method==='GET'&&zip){
+        const rows=await artworkInventory({fresh:true}),masters=zip[1]==='masters';
+        const entries=masters
+          ?rows.map(row=>({name:masterZipName(row),size:row.master.size,date:row.master.lastModified,open:()=>getArtworkObjectStream(row.master.key)}))
+          :rows.filter(row=>row.originalState==='made').map(row=>({name:row.artworkId+'.jpg',size:row.original.size,
+            date:row.original.lastModified,open:()=>getArtworkObjectStream(row.original.key)}));
+        if(!entries.length)return sendJson(res,404,{ok:false,error:masters?'There are no master artworks yet.':'No originals have been made yet: press Generate first.'});
+        res.writeHead(200,{'content-type':'application/zip','cache-control':'no-store','x-content-type-options':'nosniff',
+          'content-disposition':'attachment; filename="'+(masters?'Master':'Original')+' artworks '+new Date().toISOString().slice(0,10)+'.zip"'});
+        // Sent as it is made; a file that cannot be read stops the download (the browser shows it failed).
+        try{await writeZip(res,entries);res.end();}
+        catch(error){console.error('Artwork zip stopped:',error?.message||error);res.destroy(error);}
+        return;
+      }
+      return sendJson(res,404,{ok:false,error:'Unknown artwork files action.'});
+    }catch(error){
+      if(res.headersSent){res.destroy(error);return;}
+      return sendJson(res,400,{ok:false,error:String(error?.message||error)});
+    }
   }
 
   // Listing Fees: a month's listing fees from the Etsy payment account ledger.
@@ -5839,6 +5969,8 @@ const server = http.createServer(async (req, res) => {
        entry.artworkReplacementCount=Number(entry.artworkReplacementCount||0)+1;
        await saveListingConverterMap(latestMap);
       }
+      // The replaced master gets a new original.
+      if(!activated.alreadyActive)queueOriginal(artworkId);
       return sendJson(res,200,{ok:true,...activated});
      }
      const queued=await startConverterArtworkCrop({
@@ -6304,6 +6436,7 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdminApi(req, res)) return;
     try {
       const manifest = await completeArtworkUpload(artworkCompleteMatch[1].toUpperCase());
+      queueOriginal(manifest.artworkId);
       return sendJson(res, 200, { ok: true, artworkId: manifest.artworkId, manifest });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error?.message || String(error) });

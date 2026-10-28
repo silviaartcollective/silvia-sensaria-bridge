@@ -157,7 +157,7 @@ export function isMissingR2Object(error) {
 export async function artworkObjectInfo(key) {
   const client=r2Client(),config=r2Config();
   const response=await client.send(new HeadObjectCommand({Bucket:config.bucket,Key:String(key)}));
-  return {size:Number(response.ContentLength||0),contentType:String(response.ContentType||'')};
+  return {size:Number(response.ContentLength||0),contentType:String(response.ContentType||''),etag:response.ETag||null};
 }
 
 export async function artworkObjectExists(key) {
@@ -197,6 +197,13 @@ export async function signedArtworkUploadUrl(key, contentType, expiresIn = 15 * 
     }),
     { expiresIn }
   );
+}
+
+// An object as a stream, for sending on without holding it in memory.
+export async function getArtworkObjectStream(key) {
+  const config = r2Config();
+  const result = await r2Client().send(new GetObjectCommand({ Bucket: config.bucket, Key: key }));
+  return result.Body;
 }
 
 export async function listArtworkManifestKeys() {
@@ -275,7 +282,8 @@ export async function listArtworkObjects(prefix) {
     }));
     for(const item of batch.Contents||[])
       if(item.Key?.startsWith(normalized))
-        objects.push({key:item.Key,lastModified:item.LastModified?new Date(item.LastModified):null});
+        objects.push({key:item.Key,lastModified:item.LastModified?new Date(item.LastModified):null,
+          size:Number(item.Size||0),etag:item.ETag||null});
     continuationToken=batch.IsTruncated?batch.NextContinuationToken:undefined;
   }while(continuationToken);
   return objects;
