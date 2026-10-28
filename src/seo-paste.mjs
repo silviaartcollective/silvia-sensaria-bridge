@@ -113,7 +113,8 @@ export function parseSeoPaste(text) {
   if (tags.length > 13) {
     notes.push(tags.length + ' tags were pasted; Etsy allows 13, so the first 13 are used.');
     tags = tags.slice(0, 13);
-  } else if (tags.length && tags.length < 13) notes.push('Only ' + tags.length + ' of 13 tags were found.');
+  } else if (tags.length && tags.length < 13) notes.push('Only ' + tags.length + ' of 13 tags were found: add ' +
+    (13 - tags.length) + ' more in SEO tags.');
 
   const found = [], missing = [];
   const check = (ok, name) => (ok ? found : missing).push(name);

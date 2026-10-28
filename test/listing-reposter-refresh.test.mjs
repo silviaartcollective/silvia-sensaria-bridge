@@ -105,6 +105,8 @@ test('due this week: unsold listings at 4 months are refreshed in place, refresh
   assert.ok(log.includes('details 1 SAC1 "New title 1" with template'));
   assert.equal(listings.get(1), 'active');
   assert.equal(job.results[1].step, 'Refreshed');
+  // ChatGPT's SEO here has 1 tag: it is used, and the row says how many to add.
+  assert.equal(job.results[1].warning, 'Only 1 of 13 tags: add 12 more on Etsy.');
   assert.equal(job.results[1].newListingId, null);
   // Not in the app: new title and tags only.
   assert.deepEqual(stepsOf(log, 3), ['seo', 'details', 'marked']);

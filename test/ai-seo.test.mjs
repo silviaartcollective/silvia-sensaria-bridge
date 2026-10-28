@@ -57,10 +57,34 @@ test('an answer Etsy would refuse is sent back once with what to fix', async () 
   const { calls, fetchImpl } = fakeOpenAi([short, good]);
   const seo = await generateEtsySeo({ image, sections, settings, apiKey: 'k', fetchImpl });
   assert.equal(calls.length, 2);
-  assert.match(calls[1].body.input.at(-1).content[0].text, /only 1 usable tags/);
+  // Each refused tag is named with the reason.
+  assert.equal(calls[1].body.input.at(-1).content[0].text, 'Please fix: only 1 usable tags of the 13 needed; Etsy refuses ' +
+    '"this tag is far too long for etsy" (33 characters), "wall art" (a repeat); each tag must be 20 characters or fewer counting spaces, all different.');
   assert.equal(seo.tags.length, 13);
-  const { fetchImpl: again } = fakeOpenAi([short, short]);
-  await assert.rejects(generateEtsySeo({ image, sections, settings, apiKey: 'k', fetchImpl: again }), /could not be used: only 1 usable tags/);
+  assert.equal(seo.missingTags, undefined);
+  // Etsy's limits are said whatever the instructions are.
+  assert.match(calls[0].body.input[0].content[0].text, /exactly 13 tags, all different, each 20 characters or fewer counting spaces/);
+  const { fetchImpl: noTags } = fakeOpenAi([{ ...good, tags: [] }, { ...good, tags: ['x'.repeat(30)] }]);
+  await assert.rejects(generateEtsySeo({ image, sections, settings, apiKey: 'k', fetchImpl: noTags }), /could not be used: only 0 usable tags/);
+});
+
+test('still short of 13 tags after the second try: the SEO is used and says how many to add by hand', async () => {
+  const twelve = { ...good, tags: [...tags13.slice(0, 12), 'contemporary wall art'] };
+  const { calls, fetchImpl } = fakeOpenAi([twelve, twelve]);
+  const seo = await generateEtsySeo({ image, sections, settings, apiKey: 'k', fetchImpl });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(seo.tags, tags13.slice(0, 12));
+  assert.equal(seo.missingTags, 1);
+  assert.equal(seo.title, good.title);
+  assert.match(parseSeoPaste(seoPasteText(seo)).notes.join(' '), /Only 12 of 13 tags were found: add 1 more in SEO tags\./);
+  // Good tags of the first answer make up for ones the second loses.
+  const { fetchImpl: topUp } = fakeOpenAi([{ ...good, tags: tags13.slice(0, 11) }, { ...good, tags: tags13.slice(2) }]);
+  const full = await generateEtsySeo({ image, sections, settings, apiKey: 'k', fetchImpl: topUp });
+  assert.equal(full.tags.length, 13);
+  assert.equal(full.missingTags, undefined);
+  // Other problems still stop it.
+  const { fetchImpl: noStyle } = fakeOpenAi([{ ...twelve, style: 'Nope' }, { ...twelve, style: 'Nope' }]);
+  await assert.rejects(generateEtsySeo({ image, sections, settings, apiKey: 'k', fetchImpl: noStyle }), /no Etsy style from the list/);
 });
 
 test('a renewal asks for SEO different from the listing\'s current one', async () => {
@@ -128,4 +152,12 @@ test('the artwork sent to ChatGPT is a small JPEG', async () => {
   assert.equal(info.format, 'jpeg');
   assert.equal(info.width, 1024);
   assert.equal(info.height, 683);
+});
+
+test('rows made with fewer than 13 tags say how many to add on Etsy (Daily Listings, Listing Reposter)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+  assert.match(read('src/daily-batch-client.js'), /if\(item\.seo\?\.tags\?\.length<13\)text\.append\(make\('div','warnline','Only '\+item\.seo\.tags\.length\+' of 13 tags: add '/);
+  assert.match(read('src/repost-listings-client.js'), /if\(row\.warning\)text\.append\(make\('div','warnline',row\.warning\)\);/);
+  assert.match(read('src/daily-listings-page.mjs'), /\.warnline\{color:#8a5a1f;/);
 });
