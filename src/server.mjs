@@ -109,7 +109,7 @@ import {
   getArtworkObjectStream,
   downloadArtworkObjectToFile
 } from './r2.mjs';
-import { makeOriginal, renderOriginal, originalState, thumbKey, renderThumb } from './artwork-originals.mjs';
+import { makeOriginal, makePreviews, originalState, previewState } from './artwork-originals.mjs';
 import { renderArtworkFilesPage } from './artwork-files-page.mjs';
 import { renderArtworkLibraryPage } from './artwork-library-page.mjs';
 import { writeZip, zipName } from './zip-stream.mjs';
@@ -1070,8 +1070,9 @@ function batchDeps(){
   };
 }
 // ---------------------------------------------------------------- artwork files
-// Every artwork whose master is in R2, with its original, from one listing of
-// the artworks folder and each manifest (kept for half a minute).
+// Every artwork whose master is in R2, with its original and library pictures,
+// from one listing of the artworks folder and each manifest (kept for half a
+// minute).
 let artworkFilesCache={at:0,value:null};
 async function artworkInventory({fresh=false}={}){
   if(!fresh&&artworkFilesCache.value&&Date.now()-artworkFilesCache.at<30000)return artworkFilesCache.value;
@@ -1085,16 +1086,24 @@ async function artworkInventory({fresh=false}={}){
       rows.push({artworkId:String(manifest.artworkId),filename:String(manifest.master.originalFilename||''),
         master:objects.get(manifest.master.key),originalState:originalState(manifest,objects),
         original:manifest.original?.key?objects.get(manifest.original.key)||null:null,
-        thumb:objects.get(thumbKey(String(manifest.artworkId)))||null});
+        ...libraryPictures(manifest,objects)});
     }
   }
   rows.sort((a,b)=>a.artworkId.localeCompare(b.artworkId,undefined,{numeric:true}));
   artworkFilesCache={at:Date.now(),value:rows};
   return rows;
 }
-// The library picture's address changes with the picture, so a browser keeps
-// it a day but never shows an old one.
-const libraryPicture=(artworkId,version)=>'/api/artwork-library/'+artworkId+'/picture?v='+encodeURIComponent(String(version||'').replace(/"/g,''));
+// The artwork's shape (from its pictures, or its master until they are made)
+// and whether its library pictures are made.
+function libraryPictures(manifest,objects){
+  const made=manifest.preview,state=previewState(manifest,objects);
+  const [width,height]=made?.width&&made?.height?[made.width,made.height]:[manifest.master.width,manifest.master.height];
+  return {preview:state,previewMadeAt:state==='made'?String(made.madeAt||''):'',
+    width:Number(width)||4,height:Number(height)||5};
+}
+// A library picture's address changes with the picture, so a browser keeps it
+// a day but never shows an old one.
+const libraryPicture=(artworkId,size,madeAt)=>'/api/artwork-library/'+artworkId+'/'+size+'?v='+encodeURIComponent(madeAt||'');
 // "SAC0012 - Sage Sweep.jpeg": the artwork ID, then the master's own file name.
 function masterZipName(row){
   const ext=(row.master.key.match(/\.[a-z0-9]+$/i)||['.jpg'])[0];
@@ -1108,30 +1117,53 @@ function artworkFilesStatus(rows){
     originals:{count:made.length,bytes:made.reduce((sum,row)=>sum+(row.original?.size||0),0),missing:count('missing'),outdated:count('outdated')},
     job:originalsJob};
 }
-// Originals (artwork-originals.mjs) are made one at a time: a large master
-// keeps the server busy for a few seconds. The master is read from a file, so
-// it is never held in memory.
+// Originals and library pictures (artwork-originals.mjs) are made from one
+// master at a time: a large master keeps the server busy for a few seconds.
+// The master is read from a file, so it is never held in memory.
 const originalsJob={running:false,total:0,done:0,made:0,failed:[],current:'',startedAt:null,finishedAt:null};
 let originalsTail=Promise.resolve();
 const originalDeps={
   loadManifest:loadArtworkManifest,
   objectInfo:artworkObjectInfo,
   exists:artworkObjectExists,
-  render:async(masterKey,size)=>{
-    const dir=await mkdtemp(path.join(os.tmpdir(),'original-'));
+  withMaster:async(masterKey,use)=>{
+    const dir=await mkdtemp(path.join(os.tmpdir(),'master-'));
     try{
       const file=path.join(dir,'master');
       await downloadArtworkObjectToFile(masterKey,file);
-      return await renderOriginal(file,size);
+      await use(file);
     }finally{await rm(dir,{recursive:true,force:true}).catch(()=>{})}
   },
   put:putArtworkObject,
   updateManifest:updateArtworkManifest
 };
-function originalInTurn(artworkId){
-  const run=originalsTail.then(()=>makeOriginal(artworkId,originalDeps));
+function inTurn(work){
+  const run=originalsTail.then(work);
   originalsTail=run.catch(()=>{});
   return run;
+}
+const originalInTurn=artworkId=>inTurn(()=>makeOriginal(artworkId,originalDeps));
+// The library's missing pictures, made in the background one artwork at a
+// time; an original asked for meanwhile waits for one artwork at most.
+const previewsQueue=new Set(),previewsFailed=new Map();
+let previewsWorker=null;
+function queuePreviews(artworkIds){
+  for(const id of artworkIds)if(!previewsFailed.has(id))previewsQueue.add(id);
+  if(previewsWorker||!previewsQueue.size)return;
+  previewsWorker=(async()=>{
+    while(previewsQueue.size){
+      const id=previewsQueue.values().next().value;
+      try{
+        const result=await inTurn(()=>makePreviews(id,originalDeps));
+        const row=artworkFilesCache.value?.find(item=>item.artworkId===id);
+        if(result.made&&row)Object.assign(row,{preview:'made',previewMadeAt:result.made.madeAt,width:result.made.width,height:result.made.height});
+      }catch(error){
+        previewsFailed.set(id,String(error?.message||error).slice(0,200));
+        console.error('The library pictures of '+id+' could not be made:',error?.message||error);
+      }
+      previewsQueue.delete(id);
+    }
+  })().finally(()=>{previewsWorker=null});
 }
 // Every new artwork gets its original straight away, in the background.
 function queueOriginal(artworkId){
@@ -5529,8 +5561,8 @@ const server = http.createServer(async (req, res) => {
     }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
   }
 
-  // Artwork Library: every artwork as a picture with its SKU; a click downloads
-  // its original, then its master, straight from R2.
+  // Artwork Library: every artwork as its whole picture, with its SKU; a click
+  // opens it larger, with its original and master to download from R2.
   if (req.method === 'GET' && url.pathname === '/artwork-library') {
     if (!requireAdminPage(req,res,'/artwork-library')) return;
     return sendHtml(res,200,renderArtworkLibraryPage());
@@ -5539,41 +5571,50 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdminApi(req,res)) return;
     if (req.method==='POST'&&crossSitePost(req)) return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
     try{
+      // The list, polled while pictures are being made; opening the page tries failed ones again.
       if(req.method==='GET'&&url.pathname==='/api/artwork-library'){
+        if(!url.searchParams.has('poll'))previewsFailed.clear();
         const rows=await artworkInventory();
-        return sendJson(res,200,{ok:true,artworks:rows.map(row=>({artworkId:row.artworkId,
-          picture:row.thumb||row.original?libraryPicture(row.artworkId,(row.thumb||row.original).etag):''}))});
+        queuePreviews(rows.filter(row=>row.preview!=='made').map(row=>row.artworkId));
+        return sendJson(res,200,{ok:true,artworks:rows.map(row=>({artworkId:row.artworkId,filename:row.filename,
+          width:row.width,height:row.height,
+          gallery:row.preview==='made'?libraryPicture(row.artworkId,'gallery',row.previewMadeAt):'',
+          view:row.preview==='made'?libraryPicture(row.artworkId,'view',row.previewMadeAt):'',
+          making:row.preview!=='made'&&!previewsFailed.has(row.artworkId),
+          error:previewsFailed.get(row.artworkId)||''}))});
       }
-      const match=url.pathname.match(/^\/api\/artwork-library\/([A-Z]{2,5}\d+)\/(picture|download)$/);
-      // The picture: the original made small, once, the first time it is shown.
-      if(req.method==='GET'&&match?.[2]==='picture'){
-        const id=match[1],key=thumbKey(id);
-        if(!await artworkObjectExists(key)){
-          const manifest=await loadArtworkManifest(id);
-          if(!manifest?.original?.key||!await artworkObjectExists(manifest.original.key))
-            return sendJson(res,404,{ok:false,error:'No original yet.'});
-          await putArtworkObject({key,body:await renderThumb((await getArtworkObject(manifest.original.key)).body),contentType:'image/jpeg'});
-        }
+      const match=url.pathname.match(/^\/api\/artwork-library\/([A-Z]{2,5}\d+)\/(gallery|view|download)$/);
+      if(req.method==='GET'&&(match?.[2]==='gallery'||match?.[2]==='view')){
+        const manifest=await loadArtworkManifest(match[1]);
+        const key=manifest?.preview?.[match[2]+'Key'];
+        if(!key||!await artworkObjectExists(key))return sendJson(res,404,{ok:false,error:'No picture yet.'});
         const object=await getArtworkObject(key);
         res.writeHead(200,{'content-type':'image/jpeg','content-length':object.body.length,
           'cache-control':'private, max-age=86400','x-content-type-options':'nosniff'});
         return res.end(object.body);
       }
-      // A click: the original (made first if it is missing or out of date), then the master.
+      // The window's buttons: the original (made first if it is missing or out
+      // of date), the master, or both, saved under their names.
       if(req.method==='POST'&&match?.[2]==='download'){
-        const id=match[1];
+        const id=match[1],input=await readJsonBody(req);
+        const files=['original','master'].filter(file=>!Array.isArray(input?.files)||input.files.includes(file));
+        if(!files.length)return sendJson(res,400,{ok:false,error:'Choose the original, the master or both.'});
         let manifest=await loadArtworkManifest(id);
         if(manifest?.status!=='ready'||!manifest.master?.key)return sendJson(res,404,{ok:false,error:'This artwork is not in the app.'});
-        const master=await artworkObjectInfo(manifest.master.key);
-        const fresh=manifest.original?.key&&await artworkObjectExists(manifest.original.key)&&
-          originalState(manifest,new Map([[manifest.master.key,master],[manifest.original.key,{}]]))==='made';
-        if(!fresh){await originalInTurn(id);manifest=await loadArtworkManifest(id);artworkFilesCache.at=0;}
-        if(!manifest.original?.key)throw Error('The original could not be made.');
-        const masterName=masterZipName({artworkId:id,filename:String(manifest.master.originalFilename||''),master:{key:manifest.master.key}});
-        return sendJson(res,200,{ok:true,
-          original:{name:id+'.jpg',url:await signedArtworkUrl(manifest.original.key,15*60,{filename:zipName(id+'.jpg')})},
-          master:{name:masterName,url:await signedArtworkUrl(manifest.master.key,60*60,{filename:zipName(masterName)})},
-          picture:libraryPicture(id,Date.parse(manifest.original.madeAt)||'')});
+        const result={ok:true};
+        if(files.includes('original')){
+          const master=await artworkObjectInfo(manifest.master.key);
+          const fresh=manifest.original?.key&&await artworkObjectExists(manifest.original.key)&&
+            originalState(manifest,new Map([[manifest.master.key,master],[manifest.original.key,{}]]))==='made';
+          if(!fresh){await originalInTurn(id);manifest=await loadArtworkManifest(id);artworkFilesCache.at=0;}
+          if(!manifest.original?.key)throw Error('The original could not be made.');
+          result.original={name:id+'.jpg',url:await signedArtworkUrl(manifest.original.key,15*60,{filename:zipName(id+'.jpg')})};
+        }
+        if(files.includes('master')){
+          const masterName=masterZipName({artworkId:id,filename:String(manifest.master.originalFilename||''),master:{key:manifest.master.key}});
+          result.master={name:masterName,url:await signedArtworkUrl(manifest.master.key,60*60,{filename:zipName(masterName)})};
+        }
+        return sendJson(res,200,result);
       }
       return sendJson(res,404,{ok:false,error:'Unknown artwork library action.'});
     }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
