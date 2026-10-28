@@ -40,6 +40,7 @@ function show(){
  const parts=[ready&&ready+' draft'+(ready===1?'':'s')+' ready',published&&published+' published',working&&working+' being made',
   waiting&&waiting+' waiting',failed&&failed+' failed'].filter(Boolean);
  notice('bt-status',items.length+' artwork'+(items.length===1?'':'s')+' in this batch: '+parts.join(', ')+'.'+
+  (failed&&!job.stopping?' Press Try again on a failed one to go on from where it stopped.':'')+
   (job.stopping?' Stopping: the artworks being worked on stop after their current step.'
    :!state.running&&(waiting||working)?' Stopped: press Resume to go on, or Start over.':''),failed?'warn':'');
  el('bt-updated').textContent=job.updatedAt?'Updated '+new Date(job.updatedAt).toLocaleTimeString():'';
@@ -66,6 +67,16 @@ function show(){
    a.href=item.status==='published'?'https://www.etsy.com/listing/'+item.listingId:'https://www.etsy.com/your/shops/me/listing-editor/edit/'+item.listingId;
    a.target='_blank';a.rel='noopener noreferrer';side.append(a);
   }
+  // A failed artwork goes on from where it stopped, also while the others are worked on.
+  if(item.status==='failed'&&!job.stopping){
+   const again=make('button','','Try again');again.type='button';
+   again.addEventListener('click',async()=>{
+    again.disabled=true;
+    try{state={...state,...await request('/api/batch/retry',{n:item.n})};show();clearTimeout(timer);timer=setTimeout(refresh,1500);}
+    catch(error){notice('bt-status',String(error.message||error),'error');again.disabled=false;}
+   });
+   side.append(again);
+  }
   if(item.status==='ready'){
    const label=make('label'),box=make('input');box.type='checkbox';box.checked=item.publish!==false;
    box.addEventListener('change',async()=>{
@@ -81,7 +92,7 @@ function show(){
  el('bt-publish').disabled=!ticked||state.running;
  el('bt-stop').classList.toggle('hidden',!state.running||job.stopping);
  el('bt-resume').classList.toggle('hidden',state.running||!(waiting||working));
- el('bt-retry').classList.toggle('hidden',state.running||!failed);
+ el('bt-retry').classList.toggle('hidden',!failed||Boolean(job.stopping));
  el('bt-start-over').classList.toggle('hidden',!items.length);
 }
 async function refresh(){

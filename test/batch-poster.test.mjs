@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, resumeAfterRestart, setPublish, publishBatch, closeBatch, startOver,
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, retryItem, resumeAfterRestart, setPublish, publishBatch, closeBatch, startOver,
   layoutOfPixels, resetBatchMemory, MAX_BATCH } from '../src/batch-poster.mjs';
 
 const stage = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
@@ -392,4 +392,45 @@ test('the photo order goes on the artwork after its mockups and before its draft
   assert.equal(item.status, 'ready');
   const at = prefix => shop.log.findIndex(line => line.startsWith(prefix));
   assert.ok(at('attach') < at('order ' + item.artworkId + ' Preset 1 portrait 4') && at('order') < at('draft'), shop.log.join('\n'));
+});
+
+test('one failed artwork is tried again on its own, while the others are worked on, from the step it reached', async () => {
+  resetBatchMemory();
+  const shop = fakeShop();
+  let seoFails = true, releaseTwo = false;
+  const { writeSeo, mockupStatus } = shop.deps;
+  shop.deps.writeSeo = async item => {
+    if (item.filename === 'one.jpg' && seoFails) { seoFails = false; throw Error('ChatGPT is busy'); }
+    return writeSeo(item);
+  };
+  shop.deps.mockupStatus = async jobId => (jobId === 'job-two.jpg' && !releaseTwo
+    ? { total: 4, done: 0, failed: 0, finished: false, completedIds: [] } : mockupStatus(jobId));
+  await addToBatch(shop.deps, art(1, 'one.jpg'));
+  await addToBatch(shop.deps, art(2, 'two.jpg'));
+  const until = async check => { for (let i = 0; i < 4000 && !check(await batchStatus(shop.deps)); i++) await tick(); };
+  await until(batch => batch.items[0].status === 'failed');
+  let batch = await batchStatus(shop.deps);
+  assert.match(batch.items[0].error, /ChatGPT is busy/);
+  assert.equal(batch.items[1].status, 'working');
+  await assert.rejects(retryItem(shop.deps, 2), /has not failed/);
+  await retryItem(shop.deps, 1);
+  await until(batch => batch.items[0].status === 'ready');
+  batch = await batchStatus(shop.deps);
+  assert.equal(batch.items[0].status, 'ready', batch.items[0].error);
+  assert.equal(batch.items[1].status, 'working');
+  // Its mockups were not made again.
+  assert.equal(shop.log.filter(line => line.startsWith('mockups one.jpg')).length, 1);
+  releaseTwo = true;
+  await idle();
+  assert.deepEqual((await batchStatus(shop.deps)).items.map(item => item.status), ['ready', 'ready']);
+});
+
+test('the page offers Try again on each failed artwork, and Try the failed ones again also while the batch runs', async () => {
+  const { readFileSync } = await import('node:fs');
+  const client = readFileSync(new URL('../src/daily-batch-client.js', import.meta.url), 'utf8');
+  assert.match(client, /if\(item\.status==='failed'&&!job\.stopping\)\{\n   const again=make\('button','','Try again'\)/);
+  assert.match(client, /request\('\/api\/batch\/retry',\{n:item\.n\}\)/);
+  assert.match(client, /el\('bt-retry'\)\.classList\.toggle\('hidden',!failed\|\|Boolean\(job\.stopping\)\);/);
+  const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
+  assert.match(server, /if\(action==='\/retry'\)\{\n        await retryItem\(deps,body\.n\);/);
 });

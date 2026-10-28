@@ -35,7 +35,7 @@ import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uplo
 import {mockupObjectKey,masterObjectKey} from './production.mjs';
 import { handleMockupAPI, mockupJobFromArtwork, mockupJobFromStaged } from './mockup-api.mjs';
 import { mockupOrientationOf } from './mockup-orientation.mjs';
-import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, resumeAfterRestart, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits, photoOrderKey, orderForArtwork } from './batch-poster.mjs';
+import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, retryItem, resumeAfterRestart, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits, photoOrderKey, orderForArtwork } from './batch-poster.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
 import { generateEtsySeo, loadAiSeoSettings, saveAiSeoSettings, aiSeoConfigured, seoImage, seoPasteText, sectionUrl, DEFAULT_AI_SEO_INSTRUCTIONS, DEFAULT_AI_SEO_MODEL } from './ai-seo.mjs';
@@ -5359,6 +5359,10 @@ const server = http.createServer(async (req, res) => {
       }
       if(action==='/resume'){
         await resumeBatch(deps,{retryFailed:body.retryFailed===true});
+        return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
+      }
+      if(action==='/retry'){
+        await retryItem(deps,body.n);
         return sendJson(res,200,{ok:true,job:await batchStatus(deps),running:batchRunning()});
       }
       if(action==='/stop'){
