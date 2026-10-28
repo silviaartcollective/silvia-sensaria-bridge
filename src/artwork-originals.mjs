@@ -12,6 +12,12 @@ export const ORIGINAL_SIZES = Object.freeze({
 export const ORIGINAL_QUALITY = 70;
 export const originalKey = artworkId => 'artworks/' + artworkId + '/original/' + artworkId + '-original.jpg';
 export const originalSize = layout => ORIGINAL_SIZES[layout] || ORIGINAL_SIZES.portrait;
+// The Artwork Library's picture of an artwork: its original, small (about 20 KB).
+export const thumbKey = artworkId => 'artworks/' + artworkId + '/original/' + artworkId + '-thumb.jpg';
+export function renderThumb(original) {
+  return sharp(original, { failOn: 'none' }).resize(360, 360, { fit: 'inside' })
+    .jpeg({ quality: ORIGINAL_QUALITY, mozjpeg: true }).toBuffer();
+}
 
 // The original from a master file on disk (a file, so even a very large
 // master is read as it goes rather than held in memory).
@@ -35,8 +41,9 @@ export function originalState(manifest, objects) {
   return 'made';
 }
 
-// Makes the original of one artwork unless it is up to date.
-// deps: loadManifest, objectInfo (size, etag), exists, render(masterKey, size), put, updateManifest.
+// Makes the original of one artwork (and its library picture) unless it is up
+// to date. deps: loadManifest, objectInfo (size, etag), exists,
+// render(masterKey, size), put, updateManifest; thumb (renderThumb) optional.
 export async function makeOriginal(artworkId, deps) {
   const manifest = await deps.loadManifest(artworkId);
   if (manifest?.status !== 'ready' || !manifest.master?.key) return { artworkId, skipped: 'the artwork is not ready' };
@@ -48,9 +55,10 @@ export async function makeOriginal(artworkId, deps) {
     return { artworkId, skipped: 'up to date' };
   const size = originalSize(layout);
   const body = await deps.render(manifest.master.key, size);
-  const key = originalKey(artworkId);
+  const key = originalKey(artworkId), thumb = await (deps.thumb || renderThumb)(body);
   await deps.put({ key, body, contentType: 'image/jpeg' });
-  const record = { key, width: size[0], height: size[1], bytes: body.length, layout, masterKey: manifest.master.key,
+  await deps.put({ key: thumbKey(artworkId), body: thumb, contentType: 'image/jpeg' });
+  const record = { key, thumbKey: thumbKey(artworkId), width: size[0], height: size[1], bytes: body.length, layout, masterKey: manifest.master.key,
     masterEtag: master?.etag || null, masterBytes: master?.size || null, madeAt: new Date().toISOString() };
   await deps.updateManifest(artworkId, current => { current.original = record; });
   return { artworkId, made: record };
