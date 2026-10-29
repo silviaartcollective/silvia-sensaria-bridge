@@ -403,7 +403,8 @@ export async function getShopListings({
   accessToken,
   state = 'active',
   limit = 100,
-  offset = 0
+  offset = 0,
+  includes = ''
 }) {
   const params = new URLSearchParams({
     state,
@@ -413,6 +414,8 @@ export async function getShopListings({
     sort_order: 'desc',
     legacy: 'false'
   });
+  // For example 'Images': each listing then carries its photos.
+  if (includes) params.set('includes', includes);
   const response = await fetch(
     `${ETSY_API_BASE}/application/shops/${encodeURIComponent(shopId)}/listings?${params}`,
     { headers: apiHeaders({ keystring, sharedSecret, accessToken }) }

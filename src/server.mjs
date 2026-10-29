@@ -112,6 +112,8 @@ import {
 import { makeOriginal, makePreviews, originalState, previewState } from './artwork-originals.mjs';
 import { renderArtworkFilesPage } from './artwork-files-page.mjs';
 import { renderArtworkLibraryPage } from './artwork-library-page.mjs';
+import { shopData } from './shop-data.mjs';
+import { renderShopDataPage } from './shop-data-page.mjs';
 import { writeZip, zipName } from './zip-stream.mjs';
 import {
   reserveArtworkUpload,
@@ -216,6 +218,9 @@ const unresolvedSizes = Object.entries(sizeMatrix)
   .map(([size, item]) => `${size} — ${item.status}`);
 
 let etsySessionCache = null;
+// Shop Data: the Etsy listings as a CSV and a ChatGPT audit prompt (shop-data.mjs).
+const shopDataStore = shopData({ session: () => getEtsySession(), renderPage: renderShopDataPage,
+  sells: 'wall art as fine art prints, canvas and framed canvas in many sizes' });
 const taxonomyCache = new Map();
 const mockupReferenceCache = new Map();
 const inflightDraftSetups = new Set();
@@ -5393,7 +5398,7 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/daily-listings'))return;
     return sendHtml(res,200,renderDailyListingsPage());
   }
-  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js','/artwork-files-client.js','/artwork-library-client.js'].includes(url.pathname)){
+  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js','/artwork-files-client.js','/artwork-library-client.js','/shop-data-client.js'].includes(url.pathname)){
     if(!requireAdminApi(req,res))return;
     const js=readFileSync(new URL('.'+url.pathname,import.meta.url),'utf8');
     res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
@@ -5561,6 +5566,11 @@ const server = http.createServer(async (req, res) => {
     }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error)})}
   }
 
+  // Shop Data: every listing as a CSV, with a ChatGPT audit prompt.
+  if (url.pathname === '/shop-data' || url.pathname === '/api/shop-data' || url.pathname.startsWith('/api/shop-data/')) {
+    if (url.pathname === '/shop-data' ? !requireAdminPage(req,res,'/shop-data') : !requireAdminApi(req,res)) return;
+    if (await shopDataStore.handle(req,res,url,{sendJson,sendHtml})) return;
+  }
   // Artwork Library: every artwork as its whole picture, with its SKU; a click
   // opens it larger, with its original and master to download from R2.
   if (req.method === 'GET' && url.pathname === '/artwork-library') {
