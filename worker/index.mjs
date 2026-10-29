@@ -183,8 +183,10 @@ async function processJob(app, job) {
     masterPath = await downloadToFile(job.masterDownloadUrl, extension);
     const master = await inspectMaster(masterPath, job.orientation);
 
+    // Arté Antica asks for crops at exactly their target size.
+    const exact = job.exactTargets === true;
     for (const ratio of job.ratios) {
-      validateRatioSource(master, ratio, job.targets?.[ratio]);
+      validateRatioSource(master, ratio, job.targets?.[ratio], { exact });
     }
 
     const completedRatios = [];
@@ -212,7 +214,8 @@ async function processJob(app, job) {
         outputPath,
         master,
         ratio,
-        target: job.targets?.[ratio]
+        target: job.targets?.[ratio],
+        exact
       });
 
       await api.updateProgress(job.id, {
