@@ -216,11 +216,11 @@ test('new Product Creator listings are linked by their SKUs, not shown as "Not l
  assert.ok(client.includes('data?.artworkEditable'));
  const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
  assert.ok(server.includes('artworkId:mapping?.artworkId||artworkIdFromSkus(x.skus)'));
- // Artwork edits still require a verified link: converter map or the artwork's
- // own manifest recording this Etsy listing ID.
+ // Artwork edits still require a verified link (listing-converter-link.mjs),
+ // and a refusal says what is missing.
  assert.ok(server.includes('async function resolveListingArtwork({listingId,listing,map})'));
- assert.ok(server.includes('manifest?.etsyDraftListingId,manifest?.etsyConfiguration?.listingId,manifest?.sourceEtsyListingId'));
- assert.ok(server.includes("error:'Artwork ownership could not be verified for this listing.'"));
+ assert.ok(server.includes('return linkedListingArtwork({listingId,listing,map,loadManifest:loadArtworkManifest});'));
+ assert.ok(server.includes('error:await unlinkedListingReason({listingId,listing:etsyListing,map,loadManifest:loadArtworkManifest})'));
 });
 
 test('crop completion treats .reconvert staging jobs as staged, not as a changed master', async()=>{

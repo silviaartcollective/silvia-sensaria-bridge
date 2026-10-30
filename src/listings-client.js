@@ -124,7 +124,11 @@ function renderList(){
   const etsy=document.createElement('a');etsy.className='btn';etsy.href='https://www.etsy.com/listing/'+id;
   etsy.target='_blank';etsy.rel='noopener noreferrer';etsy.textContent='View on Etsy ↗';
   actions.append(edit,etsy);body.append(actions);
-  if(row.artworkId)body.append(artworkArea(row));
+  if(row.artworkId&&row.conversionUnfinished){
+   const note=document.createElement('div');note.className='muted card-artwork';
+   note.textContent='Converting this listing to '+row.artworkId+' was never finished, so its Etsy variants still have their old SKUs. Finish it in the Gelato → Silvia Converter tab before replacing the artwork.';
+   body.append(note);
+  }else if(row.artworkId)body.append(artworkArea(row));
   card.append(preview,body);
   card.addEventListener('click',event=>{if(!event.target.closest('a,.card-artwork'))chooseListing(id,row.title);});
   box.append(card);
