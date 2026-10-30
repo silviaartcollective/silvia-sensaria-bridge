@@ -7,7 +7,7 @@ import {
   getPrintfulProductPrices, getPrintfulShippingRates
 } from './printful.mjs';
 import { mapLimit, statusForError, ProviderApiError } from './provider-http.mjs';
-import { parseDimensions, sameSize, sizeLabel, shapeOf, finishFamily, wallArtFamily, rowKey, amount, quoteRecord, toUsd, PRODUCT_LABELS } from './supplier-catalog-match.mjs';
+import { parseDimensions, sameSize, sizeLabel, shapeOf, finishFamily, wallArtFamily, rowKey, amount, quoteRecord, toUsd, PRODUCT_LABELS, FRAMED } from './supplier-catalog-match.mjs';
 import { referenceAddress, describeReferenceAddress } from './quote-destinations.mjs';
 
 const PROVIDER = 'Printful';
@@ -42,7 +42,7 @@ export async function loadPrintfulCatalog({ fresh = false, deps = {} } = {}) {
         for (const variant of await api.listPrintfulVariants(product.id)) {
           const size = parseDimensions(variant?.size) || parseDimensions(variant?.name);
           if (!size) continue;
-          entries.push({ family, product, variant, size, finish: family === 'FC' ? finishFamily(variant?.color || variant?.name) : 'none' });
+          entries.push({ family, product, variant, size, finish: FRAMED.has(family) ? finishFamily(variant?.color || variant?.name) : 'none' });
         }
       } catch (error) { failures.push({ productId: product.id, message: error?.message || String(error) }); }
     });
@@ -114,7 +114,7 @@ export async function scanPrintfulComparisonRows({ rows = [], countryCode, keyOf
     const finish = finishFamily(row?.finish);
     const family = loaded.entries.filter(e => e.family === row?.productCode);
     const sized = family.filter(e => sameSize(e.size, target));
-    const matches = row?.productCode === 'FC' ? sized.filter(e => e.finish === finish) : sized;
+    const matches = FRAMED.has(row?.productCode) ? sized.filter(e => e.finish === finish) : sized;
     if (!matches.length) {
       const nearest = [...new Set(family.map(e => sizeLabel(e.size)))].slice(0, 40);
       const finishes = [...new Set(sized.map(e => e.finish))];
@@ -123,7 +123,7 @@ export async function scanPrintfulComparisonRows({ rows = [], countryCode, keyOf
         reason: !family.length
           ? (loaded.failures.length ? `Printful variants could not be read for ${loaded.failures.length} product(s): ${loaded.failures[0].message}`
             : `Printful's catalog has no ${PRODUCT_LABELS[row?.productCode] || row?.productCode} product.`)
-          : sized.length ? `Printful has ${row?.size} ${PRODUCT_LABELS.FC.toLowerCase()} only in ${finishes.join(', ')}, not ${finish}.`
+          : sized.length ? `Printful has ${row?.size} ${String(PRODUCT_LABELS[row?.productCode] || '').toLowerCase()} only in ${finishes.join(', ')}, not ${finish}.`
           : `Printful does not offer ${row?.size} in this product (it offers ${nearest.slice(0, 12).join(', ') || 'no parsed sizes'}).`,
         meta: { availableSizes: nearest, availableFinishes: finishes } }));
       return;
@@ -146,7 +146,7 @@ export async function scanPrintfulComparisonRows({ rows = [], countryCode, keyOf
       basis: `Live Printful catalog price (${best.price.technique || 'print'}) + ${best.rate.name || best.rate.id} shipping rate to ${describeReferenceAddress(best.address)}.`,
       meta: { productId: best.entry.product.id, productName: best.entry.product.name || '', variantId: best.entry.variant.id,
         variantName: best.entry.variant.name || '', size: sizeLabel(best.entry.size), shape: shapeOf(best.entry.size),
-        frameColor: row?.productCode === 'FC' ? best.entry.variant.color || best.entry.finish : '',
+        frameColor: FRAMED.has(row?.productCode) ? best.entry.variant.color || best.entry.finish : '',
         material: best.entry.product.name || '', shippingMethod: best.rate.id, shippingMethodName: best.rate.name,
         deliveryDays: best.rate.minDays != null ? { min: best.rate.minDays, max: best.rate.maxDays } : null,
         quotedTo: describeReferenceAddress(best.address), fx: best.usd.fx,

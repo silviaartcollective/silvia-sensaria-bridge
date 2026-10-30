@@ -7,7 +7,7 @@ import {
   getLumaprintsProductPrice, getLumaprintsShippingPrice, lumaprintsCurrency, listOf
 } from './lumaprints.mjs';
 import { mapLimit, statusForError } from './provider-http.mjs';
-import { parseDimensions, shapeOf, sizeLabel, finishFamily, wallArtFamily, rowKey, amount, quoteRecord, toUsd, PRODUCT_LABELS } from './supplier-catalog-match.mjs';
+import { parseDimensions, shapeOf, sizeLabel, finishFamily, wallArtFamily, rowKey, amount, quoteRecord, toUsd, PRODUCT_LABELS, FRAMED } from './supplier-catalog-match.mjs';
 import { referenceAddress, describeReferenceAddress } from './quote-destinations.mjs';
 
 const PROVIDER = 'Lumaprints';
@@ -34,7 +34,7 @@ export function lumaprintsSubcategory(category, sub) {
   const thickness = /(\d+(?:\.\d+)?)\s*(?:in\b|"|″|inch)/i.exec(name)?.[1];
   return { id: sub?.subcategoryId ?? sub?.id, name, family, categoryName: String(category?.name || category?.categoryName || ''),
     limits: { minWidth: field(sub, /^min.*width$/i), maxWidth: field(sub, /^max.*width$/i), minHeight: field(sub, /^min.*height$/i), maxHeight: field(sub, /^max.*height$/i) },
-    thickness: thickness && family !== 'P' ? Number(thickness) : null, dpi: field(sub, /dpi/i) };
+    thickness: thickness && (family === 'C' || family === 'FC') ? Number(thickness) : null, dpi: field(sub, /dpi/i) };
 }
 
 export function fitsLimits(limits, size) {
@@ -62,8 +62,8 @@ export function chooseOptions(family, options, finish) {
   const chosen = [];
   const wrap = options.filter(o => /border|wrap|edge/i.test(o.group) || /wrap/i.test(o.name));
   const pick = wrap.find(o => /image wrap/i.test(o.name)) || wrap.find(o => /mirror/i.test(o.name));
-  if (pick && family !== 'P') chosen.push(pick);
-  if (family === 'FC') {
+  if (pick && (family === 'C' || family === 'FC')) chosen.push(pick);
+  if (FRAMED.has(family)) {
     const frames = options.filter(o => /frame/i.test(o.group) || /frame/i.test(o.name));
     const frame = frames.find(o => finishFamily(o.name) === finish);
     return { chosen: frame ? [...chosen, frame] : chosen, frame, frameColors: [...new Set(frames.map(o => finishFamily(o.name)))] };
@@ -143,7 +143,7 @@ export async function scanLumaprintsComparisonRows({ rows = [], countryCode, key
       try {
         const options = flattenOptions(await cached(optionCache, String(sub.id), () => api.listLumaprintsOptions(sub.id)));
         const { chosen, frame, frameColors } = chooseOptions(sub.family, options, finish);
-        if (sub.family === 'FC' && !frame) return { sub, status: 'finish-no-match',
+        if (FRAMED.has(sub.family) && !frame) return { sub, status: 'finish-no-match',
           reason: `Lumaprints ${sub.name} has no ${finish} frame option (frame colours: ${frameColors.join(', ') || 'none listed'}).` };
         const optionIds = chosen.map(o => o.id);
         const quoteKey = `${sub.id}|${size.width}x${size.height}|${optionIds.join(',')}|${address.countryCode}`;

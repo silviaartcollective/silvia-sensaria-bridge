@@ -75,7 +75,8 @@ test('sizes match exactly in either orientation, whatever the formatting', () =>
   assert.equal(wallArtFamily('Canvas (in)'), 'C');
   assert.equal(wallArtFamily('0.75in Stretched Canvas'), 'C');
   assert.equal(wallArtFamily('Enhanced Matte Paper Poster (in)'), 'P');
-  assert.equal(wallArtFamily('Enhanced Matte Paper Framed Poster (in)'), '', 'a framed poster is not one of our products');
+  assert.equal(wallArtFamily('Enhanced Matte Paper Framed Poster (in)'), 'FP', 'a framed poster is never a poster');
+  assert.equal(wallArtFamily('Framed Prints'), 'FP');
   assert.equal(wallArtFamily('Metal Print'), '');
   assert.equal(finishFamily('Oak'), 'natural');
   assert.equal(finishFamily('Walnut'), 'brown');

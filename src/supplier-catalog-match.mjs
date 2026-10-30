@@ -1,9 +1,11 @@
 // Matching a supplier's catalog to the app's own products (P poster / fine art
-// print, C stretched canvas, FC framed canvas) and sizes, for the suppliers
+// print, FP framed poster, C stretched canvas, FC framed canvas) and sizes, for the suppliers
 // added after the first six. The sizes come from the comparison rows (the
 // app's size ladder); this only reads a supplier's sizes to compare with them.
 
-export const PRODUCT_LABELS = Object.freeze({ P: 'Poster / fine art print', C: 'Stretched canvas', FC: 'Framed canvas' });
+export const PRODUCT_LABELS = Object.freeze({ P: 'Poster / fine art print', FP: 'Framed poster', C: 'Stretched canvas', FC: 'Framed canvas' });
+// Products whose frame colour must match the row's finish.
+export const FRAMED = new Set(['FC', 'FP']);
 
 const clean = value => String(value ?? '').toLowerCase()
   .replace(/[″”“]/g, '"').replace(/[′’‘]/g, "'").replace(/[×✕]/g, 'x').replace(/\s+/g, ' ').trim();
@@ -53,7 +55,8 @@ export function finishFamily(value) {
 }
 
 // A supplier product's family from its name/category. Framed canvas is never
-// regular canvas; a framed poster, metal, acrylic or wood print is none of ours.
+// regular canvas, and a framed poster never a poster; metal, acrylic or wood
+// prints are none of ours.
 export function wallArtFamily(text) {
   const t = clean(text);
   if (!t) return '';
@@ -61,7 +64,7 @@ export function wallArtFamily(text) {
   const canvas = /canvas|gallery wrap|stretched/.test(t);
   const framed = /framed|float(ing)? frame|with frame|frame/.test(t);
   if (canvas) return framed && !/unframed|no frame|stretcher/.test(t.replace(/canvas frame/g, '')) ? 'FC' : 'C';
-  if (/poster|fine art|art print|photo paper|paper print|giclee|matte paper|archival|print\b/.test(t)) return framed && !/unframed/.test(t) ? '' : 'P';
+  if (/poster|fine art|art print|photo paper|paper print|giclee|matte paper|archival|prints?\b/.test(t)) return framed && !/unframed/.test(t) ? 'FP' : 'P';
   return '';
 }
 

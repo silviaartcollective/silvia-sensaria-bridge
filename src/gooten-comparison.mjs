@@ -5,7 +5,7 @@
 // price and shipped with the shippingprices endpoint to the reference address.
 import { gootenConfigStatus, listGootenProducts, listGootenVariants, getGootenShippingOptions } from './gooten.mjs';
 import { mapLimit, statusForError } from './provider-http.mjs';
-import { parseDimensions, sameSize, sizeLabel, shapeOf, finishFamily, wallArtFamily, rowKey, amount, quoteRecord, toUsd, PRODUCT_LABELS } from './supplier-catalog-match.mjs';
+import { parseDimensions, sameSize, sizeLabel, shapeOf, finishFamily, wallArtFamily, rowKey, amount, quoteRecord, toUsd, PRODUCT_LABELS, FRAMED } from './supplier-catalog-match.mjs';
 import { referenceAddress, describeReferenceAddress } from './quote-destinations.mjs';
 
 const PROVIDER = 'Gooten';
@@ -81,7 +81,7 @@ export async function scanGootenComparisonRows({ rows = [], countryCode, keyOf =
     const finish = finishFamily(row?.finish);
     const family = loaded.entries.filter(e => e.family === row?.productCode);
     const sized = family.filter(e => sameSize(e.size, target));
-    let matches = row?.productCode === 'FC' ? sized.filter(e => e.finish === finish) : sized;
+    let matches = FRAMED.has(row?.productCode) ? sized.filter(e => e.finish === finish) : sized;
     if (row?.productCode === 'C') {
       const imageWrap = matches.filter(e => /image|photo|mirror/i.test(e.wrap));
       if (imageWrap.length) matches = imageWrap;
