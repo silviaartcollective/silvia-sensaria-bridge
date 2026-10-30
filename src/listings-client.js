@@ -124,11 +124,8 @@ function renderList(){
   const etsy=document.createElement('a');etsy.className='btn';etsy.href='https://www.etsy.com/listing/'+id;
   etsy.target='_blank';etsy.rel='noopener noreferrer';etsy.textContent='View on Etsy ↗';
   actions.append(edit,etsy);body.append(actions);
-  if(row.artworkId&&row.conversionUnfinished){
-   const note=document.createElement('div');note.className='muted card-artwork';
-   note.textContent='Converting this listing to '+row.artworkId+' was never finished, so its Etsy variants still have their old SKUs. Finish it in the Gelato → Silvia Converter tab before replacing the artwork.';
-   body.append(note);
-  }else if(row.artworkId)body.append(artworkArea(row));
+  if(row.artworkId&&row.conversionUnfinished)body.append(finishArea(row));
+  else if(row.artworkId)body.append(artworkArea(row));
   card.append(preview,body);
   card.addEventListener('click',event=>{if(!event.target.closest('a,.card-artwork'))chooseListing(id,row.title);});
   box.append(card);
@@ -355,6 +352,55 @@ function artworkArea(row){
  wrap.addEventListener('click',event=>event.stopPropagation());
  fillArtworkArea(wrap,id,String(row.artworkId));
  return wrap;
+}
+// A conversion reserved in the converter but never applied on Etsy: finished
+// here with the artwork already saved, through the converter's own queue
+// (the same checks as its Retry Etsy conversion).
+const finishing=new Map();
+function fillFinishArea(wrap,row){
+ const id=Number(row.listingId),state=finishing.get(id);
+ const note=document.createElement('div');note.className='muted';
+ note.textContent='Converting this listing to '+row.artworkId+' was never finished, so its Etsy variants still have their old SKUs. Finish it with the artwork already saved as '+row.artworkId+'.';
+ const go=document.createElement('button');go.type='button';go.className='go';
+ go.textContent=state?.busy?'Converting…':'Finish conversion';go.disabled=Boolean(state?.busy);
+ go.addEventListener('click',()=>finishConversion(row));
+ const status=document.createElement('div');status.className='muted artwork-status'+(state?.error?' error':'');
+ status.textContent=state?.message||'';status.setAttribute('role','status');
+ wrap.replaceChildren(note,go,status);
+}
+function finishArea(row){
+ const wrap=document.createElement('div');
+ wrap.className='card-artwork';wrap.dataset.finish=String(row.listingId);
+ wrap.addEventListener('click',event=>event.stopPropagation());
+ fillFinishArea(wrap,row);
+ return wrap;
+}
+function setFinishing(row,state){
+ finishing.set(Number(row.listingId),state);
+ const wrap=el('listing-items').querySelector('[data-finish="'+Number(row.listingId)+'"]');
+ if(wrap)fillFinishArea(wrap,row);
+}
+async function finishConversion(row){
+ const id=Number(row.listingId);
+ if(finishing.get(id)?.busy)return;
+ if(!confirm('Finish converting listing #'+id+' to '+row.artworkId+'?\n\nThe master and crops already saved for '+row.artworkId+' are used. The listing\'s Etsy variants, SKUs and prices are switched to Silvia\'s and verified; its description and shop section are kept.'))return;
+ setFinishing(row,{busy:true,message:'Queuing the Etsy conversion…'});
+ try{
+  let job=(await request('/api/listing-converter/convert',{listingId:id,artworkId:row.artworkId})).job;
+  while(job&&['queued','running'].includes(job.status)){
+   setFinishing(row,{busy:true,message:job.status==='queued'?'Waiting in the conversion queue'+(job.position>1?' ('+(job.position-1)+' ahead)':'')+'…':
+    job.progress||'Applying Etsy variants and verifying prices…'});
+   await new Promise(resolve=>setTimeout(resolve,4000));
+   job=(await request('/api/listing-converter/queue/'+encodeURIComponent(job.id))).job;
+  }
+  if(job?.status!=='completed')throw Error(job?.error||'The conversion did not finish.');
+  finishing.delete(id);
+  Object.assign(row,{conversionUnfinished:false,converted:true});
+  renderList();
+ }catch(error){
+  setFinishing(row,{error:true,message:'Not converted: '+String(error?.message||error)+
+   ' If '+row.artworkId+'\'s saved artwork is incomplete, choose its master again in the Gelato → Silvia Converter tab.'});
+ }
 }
 function paintDrawer(){
  if(!current?.artworkId||el('artwork-section').classList.contains('hidden'))return;
