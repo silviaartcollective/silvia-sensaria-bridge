@@ -11,6 +11,16 @@ import {
 import { scanPrintifyComparisonRows } from './printify-comparison.mjs';
 import { scanGelatoComparisonRows } from './gelato-comparison.mjs';
 import { getArteloUnframedPosterCost } from './artelo.mjs';
+import { scanPrintfulComparisonRows } from './printful-comparison.mjs';
+import { scanLumaprintsComparisonRows } from './lumaprints-comparison.mjs';
+import { scanGootenComparisonRows } from './gooten-comparison.mjs';
+import { withSupplierProfits } from './retail-margin.mjs';
+
+// Statuses that mean a supplier's price could not be checked (not that it
+// does not offer the product): a row with one of these has no overall winner,
+// only a cheapest verified supplier.
+const LOOKUP_FAILED = new Set(['error', 'quote-error', 'catalog-scan-error', 'timed-out', 'rate-limited',
+  'api-unavailable', 'invalid-credentials', 'shipping-error', 'price-unavailable', 'fx-unavailable', 'currency-unverified']);
 
 const FX_TTL_MS = 6 * 60 * 60 * 1000;
 let gbpUsdCache = null;
@@ -263,9 +273,15 @@ function printShrimpRecord(row, pricing, fx) {
   });
 }
 
+const missingRecord = provider => supplierRecord({
+  provider, eligible: false, status: 'unavailable',
+  reason: `No ${provider} comparison record was returned for this variant.`
+});
+
 export function mergeSupplierComparisonRows({
   prodigiRows = [], printShrimpPricing = null, gbpUsd = null,
-  printifyRows = new Map(), gelatoRows = new Map(), arteloRows = new Map(), riskPolicy = null
+  printifyRows = new Map(), gelatoRows = new Map(), arteloRows = new Map(), riskPolicy = null,
+  printfulRows = new Map(), lumaprintsRows = new Map(), gootenRows = new Map()
 } = {}) {
   return (prodigiRows || []).map(row => {
     const rawSuppliers = {
@@ -280,7 +296,10 @@ export function mergeSupplierComparisonRows({
       gelato: gelatoRows.get(comparisonKey(row)) || supplierRecord({
         provider: 'Gelato', eligible: false, status: 'unavailable',
         reason: 'No Gelato comparison record was returned for this variant.'
-      })
+      }),
+      printful: printfulRows.get(comparisonKey(row)) || missingRecord('Printful'),
+      lumaprints: lumaprintsRows.get(comparisonKey(row)) || missingRecord('Lumaprints'),
+      gooten: gootenRows.get(comparisonKey(row)) || missingRecord('Gooten')
     };
 
     const suppliers = riskPolicy
@@ -296,6 +315,8 @@ export function mergeSupplierComparisonRows({
     const winner = eligible[0] || null;
     const runner = eligible[1] || null;
     const winnerCost = winner ? (winner.modeledLandedUsd ?? winner.totalUsd) : null;
+    const missingProviders = Object.values(suppliers).filter(item => LOOKUP_FAILED.has(item?.status)).map(item => item.provider);
+    const notConfiguredProviders = Object.values(suppliers).filter(item => item?.status === 'not-configured').map(item => item.provider);
 
     return {
       countryCode: row.countryCode,
@@ -314,7 +335,11 @@ export function mergeSupplierComparisonRows({
         ? roundMoney((runner.modeledLandedUsd ?? runner.totalUsd) - winnerCost)
         : null,
       eligibleSupplierCount: eligible.length,
-      comparisonStatus: eligible.length ? 'ready' : 'no-eligible-supplier'
+      // The cheapest VERIFIED supplier; with a failed lookup it is not the overall cheapest.
+      winnerIsOverallCheapest: Boolean(winner) && missingProviders.length === 0,
+      missingProviders,
+      notConfiguredProviders,
+      comparisonStatus: !eligible.length ? 'no-eligible-supplier' : missingProviders.length ? 'partial' : 'ready'
     };
   });
 }
@@ -363,7 +388,11 @@ export async function scanSupplierComparison({
     let printifyError = '';
     let gelatoError = '';
     let arteloError = '';
-    const [printifyRows, gelatoRows, arteloRows] = await Promise.all([
+    let printfulError = '';
+    let lumaprintsError = '';
+    let gootenError = '';
+    // Each supplier is scanned on its own: one supplier's outage only marks its own column.
+    const [printifyRows, gelatoRows, arteloRows, printfulRows, lumaprintsRows, gootenRows] = await Promise.all([
       scanPrintifyComparisonRows({ rows: baseRows, countryCode }).catch(error => {
         printifyError = error?.message || String(error);
         return providerFailureMap('Printify', baseRows, error);
@@ -377,7 +406,19 @@ export async function scanSupplierComparison({
             arteloError = error?.message || String(error);
             return providerFailureMap('Artelo', baseRows, error);
           })
-        : Promise.resolve(new Map())
+        : Promise.resolve(new Map()),
+      scanPrintfulComparisonRows({ rows: baseRows, countryCode, keyOf: comparisonKey }).catch(error => {
+        printfulError = error?.message || String(error);
+        return providerFailureMap('Printful', baseRows, error);
+      }),
+      scanLumaprintsComparisonRows({ rows: baseRows, countryCode, keyOf: comparisonKey }).catch(error => {
+        lumaprintsError = error?.message || String(error);
+        return providerFailureMap('Lumaprints', baseRows, error);
+      }),
+      scanGootenComparisonRows({ rows: baseRows, countryCode, keyOf: comparisonKey }).catch(error => {
+        gootenError = error?.message || String(error);
+        return providerFailureMap('Gooten', baseRows, error);
+      })
     ]);
 
     const merged = mergeSupplierComparisonRows({
@@ -387,16 +428,22 @@ export async function scanSupplierComparison({
       printifyRows,
       gelatoRows,
       arteloRows,
+      printfulRows,
+      lumaprintsRows,
+      gootenRows,
       riskPolicy: landedCostPolicy()
     });
 
-    rows.push(...merged.map(row => withEstimatedMargin(row, retailLookup, marginPolicy)));
+    rows.push(...merged.map(row => withSupplierProfits(withEstimatedMargin(row, retailLookup, marginPolicy), retailLookup, marginPolicy)));
     countryMeta.push({
       countryCode,
       printShrimpError: printShrimpResult?.error || '',
       printifyError,
       gelatoError,
       arteloError,
+      printfulError,
+      lumaprintsError,
+      gootenError,
       fxError: fxResult?.error || '',
       gbpToUsd: numeric(fxResult?.rate),
       fxDate: fxResult?.date || null,
@@ -417,7 +464,7 @@ export async function scanSupplierComparison({
       marginPolicy,
       shippingMethod: shippingMethod || 'cheapest available'
     },
-    note: 'Winner uses the lowest eligible risk-adjusted single-item supplier estimate in USD across Sensaria, Prodigi, PrintShrimp, Printify, Gelato and compatible Artelo poster routes. Scans are planning-only and never submit an order or change live fulfillment.',
+    note: 'Winner uses the lowest eligible risk-adjusted single-item supplier estimate in USD across Sensaria, Prodigi, PrintShrimp, Printify, Gelato, Printful, Lumaprints, Gooten and compatible Artelo poster routes. A row with a failed supplier lookup is "partial": its winner is only the cheapest verified supplier. Scans are planning-only and never submit an order or change live fulfillment.',
     countryMeta,
     rows
   };

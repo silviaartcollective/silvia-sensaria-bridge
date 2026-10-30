@@ -4950,7 +4950,10 @@ const server = http.createServer(async (req, res) => {
         printshrimp: Boolean(providers?.PrintShrimp?.ready),
         printify: Boolean(providers?.Printify?.ready),
         gelato: Boolean(providers?.Gelato?.ready),
-        artelo: Boolean(providers?.Artelo?.ready)
+        artelo: Boolean(providers?.Artelo?.ready),
+        printful: Boolean(providers?.Printful?.ready),
+        lumaprints: Boolean(providers?.Lumaprints?.ready),
+        gooten: Boolean(providers?.Gooten?.ready)
       }
     }));
   }

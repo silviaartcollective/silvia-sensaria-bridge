@@ -58,6 +58,28 @@ services:
         sync: false
       - key: PRINTSHRIMP_API_KEY
         sync: false
+      # Printful, Lumaprints and Gooten: comparison quotes need only the keys;
+      # their order submission stays off until verified.
+      - key: PRINTFUL_API_TOKEN
+        sync: false
+      - key: PRINTFUL_STORE_ID
+        sync: false
+      - key: PRINTFUL_FULFILLMENT_ENABLED
+        value: "false"
+      - key: LUMAPRINTS_API_KEY
+        sync: false
+      - key: LUMAPRINTS_API_SECRET
+        sync: false
+      - key: LUMAPRINTS_STORE_ID
+        sync: false
+      - key: LUMAPRINTS_FULFILLMENT_ENABLED
+        value: "false"
+      - key: GOOTEN_RECIPE_ID
+        sync: false
+      - key: GOOTEN_PARTNER_BILLING_KEY
+        sync: false
+      - key: GOOTEN_FULFILLMENT_ENABLED
+        value: "false"
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ACCESS_KEY_ID

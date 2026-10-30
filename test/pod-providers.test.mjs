@@ -4,7 +4,7 @@ import { podProviderStatus, testPodProvider } from '../src/pod-providers.mjs';
 
 test('POD provider registry exposes all Silvia providers without secrets', () => {
   const status = podProviderStatus();
-  assert.deepEqual(Object.keys(status), ['Sensaria', 'Prodigi', 'Artelo', 'PrintShrimp', 'Printify', 'Gelato']);
+  assert.deepEqual(Object.keys(status), ['Sensaria', 'Prodigi', 'Artelo', 'PrintShrimp', 'Printify', 'Gelato', 'Printful', 'Lumaprints', 'Gooten']);
   assert.equal(status.Sensaria.integration, 'Sensaria GO / CSV');
   assert.equal(status.Sensaria.apiCredentialRequired, false);
   assert.equal(typeof status.Prodigi.ready, 'boolean');
@@ -12,6 +12,10 @@ test('POD provider registry exposes all Silvia providers without secrets', () =>
   assert.equal(typeof status.PrintShrimp.ready, 'boolean');
   assert.equal(typeof status.Printify.ready, 'boolean');
   assert.equal(typeof status.Gelato.ready, 'boolean');
+  for (const name of ['Printful', 'Lumaprints', 'Gooten']) {
+    assert.equal(typeof status[name].ready, 'boolean');
+    assert.equal(status[name].orderSubmissionWorkflowConnected, false);
+  }
 });
 
 test('Sensaria provider test is local and read-only', async () => {

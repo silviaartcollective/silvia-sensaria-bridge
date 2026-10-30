@@ -4,7 +4,7 @@ import { profitScenarioPolicy } from './retail-margin.mjs';
 import { loadArtworkManifest } from './artwork-storage.mjs';
 import { artworkObjectExists } from './r2.mjs';
 
-const suppliers = new Set(['sensaria', 'prodigi', 'artelo', 'printshrimp', 'printify', 'gelato']);
+const suppliers = new Set(['sensaria', 'prodigi', 'artelo', 'printshrimp', 'printify', 'gelato', 'printful', 'lumaprints', 'gooten']);
 const round = number => Math.round((Number(number) + Number.EPSILON) * 100) / 100;
 const words = value => String(value ?? '').trim();
 function costNumber(value, name, positive = false) {
