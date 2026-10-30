@@ -2897,6 +2897,8 @@ async function runPendingListingConversions(){
    try{
     const result=await performListingConversion(job.request);
     await updateConversionJob(job.id,{status:'completed',progress:'Etsy conversion verified',result});
+    // The Listings page shows the listing as converted on its next refresh.
+    masterListingPageCache.clear();
    }catch(error){
     console.error('[Etsy converter queue] listing '+job.request.listingId+': '+error.message);
     await updateConversionJob(job.id,{status:'failed',progress:'Conversion requires attention',error:error.message});

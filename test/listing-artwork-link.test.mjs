@@ -46,5 +46,16 @@ test('the re-upload route reads the Etsy listing when the converter map does not
   assert.match(server, /if\(req\.method==='POST'&&body\.artworkId&&String\(body\.artworkId\)\.toUpperCase\(\)!==artworkId\)/);
   assert.match(server, /conversionUnfinished:mapping\?\.status==='reserved'&&!artworkIdFromSkus\(x\.skus\)/);
   const client = readFileSync(new URL('../src/listings-client.js', import.meta.url), 'utf8');
-  assert.match(client, /if\(row\.artworkId&&row\.conversionUnfinished\)\{/);
+  assert.match(client, /if\(row\.artworkId&&row\.conversionUnfinished\)body\.append\(finishArea\(row\)\);/);
+});
+
+test('an unfinished conversion is finished from its card through the converter queue, with the saved artwork', () => {
+  const client = readFileSync(new URL('../src/listings-client.js', import.meta.url), 'utf8');
+  const finish = client.slice(client.indexOf('async function finishConversion(row){'), client.indexOf('function paintDrawer(){'));
+  assert.match(finish, /if\(!confirm\('Finish converting listing #'\+id\+' to '\+row\.artworkId/);
+  assert.match(finish, /request\('\/api\/listing-converter\/convert',\{listingId:id,artworkId:row\.artworkId\}\)/);
+  assert.match(finish, /request\('\/api\/listing-converter\/queue\/'\+encodeURIComponent\(job\.id\)\)/);
+  assert.match(finish, /if\(job\?\.status!=='completed'\)throw Error/);
+  const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
+  assert.match(server, /status:'completed',progress:'Etsy conversion verified',result\}\);\n    \/\/ The Listings page shows the listing as converted on its next refresh\.\n    masterListingPageCache\.clear\(\);/);
 });
