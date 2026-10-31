@@ -65,7 +65,8 @@ and `fulfilled_elsewhere`.
 
 ## Submitting one approved Artelo order
 
-1. Fulfillment Review → enter the receipt → **Diagnose this order**.
+1. All Orders → select the order (or Fulfillment Review → enter the receipt)
+   → **Diagnose this order**. Both pages show the same supplier-order panel.
 2. **Preview Artelo order**: the exact product (IndividualArtPrint, Matte
    Poster, unframed, size, orientation), artwork, shipping address and Artelo's
    own price check (production, shipping, tax, total). No order is created.
@@ -77,6 +78,14 @@ and `fulfilled_elsewhere`.
 5. Tick the dashboard check, type `SUBMIT <receipt> TO ARTELO`, press
    **Submit this order to Artelo**.
 6. Afterwards set the two switches back to false and clear the receipt list.
+
+## The order's supplier on All Orders
+
+All Orders names the supplier each order's recommendation chose, and offers
+that supplier's ordering step: Sensaria's CSV download, the Artelo panel
+(Preview, Check status, Submit), or, for Prodigi, Gelato, Printify and
+PrintShrimp, a note to place the order in that supplier's dashboard, since the
+app has no order submission for them. Diagnose works for every order.
 
 Artelo's order API needs a state/region; Etsy omits it for some countries,
 which blocks the submission (order those by hand). Square artwork is held for

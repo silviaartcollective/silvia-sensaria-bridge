@@ -40,14 +40,8 @@ table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:9px;bord
 </section>
 <section class="card"><h2>Order status</h2>
 <p class="sub">Where this order is: imported, paid, recommended supplier, approval, supplier submission and supplier order ID. Diagnose and Preview only read.</p>
-<div class="row"><button id="diagnose">Diagnose this order</button><button id="artelo-preview">Preview Artelo order</button><button id="artelo-verify">Check Artelo status</button></div>
-<pre id="diagnosis" hidden style="white-space:pre-wrap;background:#f6f5f0;padding:12px;border-radius:8px;font-size:13px"></pre>
-<div id="artelo-submit-box" hidden>
-<p class="note">Sends this ONE order to Artelo for production and payment. It needs FULFILLMENT_LIVE_SUBMISSION_ENABLED and ARTELO_FULFILLMENT_ENABLED set to true and this receipt listed in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS in Render. No other order is sent, and a failed or uncertain submission is never repeated on its own.</p>
-<div class="checks"><label><input type="checkbox" id="artelo-dashboard"> I checked the Artelo dashboard and it has no order for this receipt.</label></div>
-<div class="row"><input id="artelo-confirm" type="text" autocomplete="off" aria-label="Confirmation"><button id="artelo-submit" class="primary">Submit this order to Artelo</button></div>
-</div>
-</section></main></div><script>
+<div id="supplier-order-panel"></div>
+</section></main></div><script src="/supplier-order-client.js"></script><script>
 (()=>{
 const $=id=>document.getElementById(id),set=(id,v)=>$(id).textContent=String(v??'');
 const report=(v,err)=>{$('message').textContent=v;$('message').className=err?'error':'';};
@@ -60,7 +54,7 @@ async function api(path,body){
 }
 async function run(fn){if(busy)return;busy=true;for(const x of document.querySelectorAll('button'))x.disabled=true;
  try{await fn()}catch(e){report(e.message||String(e),true)}finally{busy=false;for(const x of document.querySelectorAll('button'))x.disabled=false}}
-function id(){const v=$('receipt').value.trim();if(!/^[1-9]\d{0,19}$/.test(v))throw Error('Enter a numeric Etsy receipt ID');return v}
+function id(){const v=$('receipt').value.trim().replace(/^#/,'');if(!/^[1-9][0-9]{0,19}$/.test(v))throw Error('Enter a numeric Etsy receipt ID');return v}
 function show(p){
  plan=p;$('details').hidden=!p;if(!p)return;
  const box=$('plan');box.replaceChildren();
@@ -112,55 +106,10 @@ $('approve').addEventListener('click',()=>run(async()=>{
  await api('/api/fulfillment-review/'+id()+'/approve',{confirm:'APPROVE FOR REVIEW',
  addressVerified:checks[0],artworkVerified:checks[1],variantVerified:checks[2],priceVerified:checks[3]});
  report('Approved for manual supplier placement. Nothing was purchased.');}));
-// Order status: plain lines for the diagnosis and the Artelo preview.
-const line=(label,value)=>label+': '+(value===''||value==null?'—':value);
-function showDiagnosis(d){
- const s=d.submission;
- $('diagnosis').hidden=false;
- $('diagnosis').textContent=[
-  line('Imported',d.imported?'yes · '+(d.importedAt||'')+' · '+(d.importSource||''):'no · '+(d.error||'')),
-  line('Paid on Etsy',d.paid?'yes':'no'),line('Shipped / canceled',(d.shipped?'shipped':'not shipped')+' · '+(d.canceled?'canceled':'not canceled')),
-  line('Listing / SKU',(d.listingId||'')+' · '+(d.sku||'')),line('Variations',(d.variations||[]).join('; ')),
-  line('Product',d.product?d.product.productCode+' '+d.product.size+(d.product.frame?' '+d.product.frame:''):''),
-  line('Artwork',d.artwork?d.artwork.key+' ('+d.artwork.width+'×'+d.artwork.height+', '+d.artwork.orientation+')':''),
-  line('Destination',d.destination),line('Review status',d.reviewStatus),
-  line('Selected supplier',d.plan?d.plan.provider+' · quote $'+d.plan.quotedTotalUsd:''),
-  line('Approval',d.approval?(d.approval.method||'')+' · supplier order submitted: '+(d.approval.supplierOrderSubmitted?'yes':'no'):'none'),
-  line('Supplier submission',s?s.provider+' · '+s.state+(s.lastError?' · '+s.lastError:''):'none (never sent to any supplier)'),
-  line('Supplier order ID',d.supplierOrderId),
-  line('Live submission',(d.liveSubmission.masterEnabled?'master on':'master off')+' · '+(d.liveSubmission.arteloEnabled?'Artelo on':'Artelo off')+' · '+(d.liveSubmission.receiptAuthorized?'receipt authorized':'receipt not authorized')+(d.liveSubmission.ignoredVariables.length?' · ignored: '+d.liveSubmission.ignoredVariables.join(', '):'')),
-  d.liveSubmission.note,
-  ...(d.problems.length?['Problems:',...d.problems.map(p=>' • '+p)]:['No problems found.'])
- ].join('\\n');
-}
-function showPreview(p){
- const a=p.payload?.customerAddress||{},item=p.payload?.items?.[0]?.productInfo||{},c=p.expectedCost||{},pc=c.arteloPriceCheck;
- $('diagnosis').hidden=false;
- $('diagnosis').textContent=[
-  line('Artelo order reference',p.payload?.orderId),
-  line('Product',[item.catalogProductId,item.paperType,item.frameStyle,item.size,item.orientation].filter(Boolean).join(' · ')),
-  line('Artwork',p.artwork?p.artwork.key+' ('+p.artwork.width+'×'+p.artwork.height+')':''),
-  line('Ship to',[a.name,a.street1,a.street2,a.city,a.state,a.zipcode,a.country].filter(Boolean).join(', ')),
-  line('Approved quote','$'+c.approvedQuoteUsd+' (with reserve $'+c.approvedModeledUsd+')'),
-  line('Artelo price check',pc?'$'+pc.total+' '+pc.currency+' = production $'+pc.productionCost+' + shipping $'+pc.shippingCost+' + tax $'+pc.taxes:'not run'),
-  line('Submission record',p.submission?p.submission.provider+' · '+p.submission.state:'none'),
-  ...(p.blockers.length?['Blocked:',...p.blockers.map(b=>' • '+b)]:['No blockers.']),
-  ...(p.switches.length?['Not authorized yet:',...p.switches.map(b=>' • '+b)]:['Authorized for this one order.'])
- ].join('\\n');
- $('artelo-submit-box').hidden=Boolean(p.blockers.length);
- $('artelo-confirm').placeholder='Type '+p.confirmation;
-}
-$('diagnose').addEventListener('click',()=>run(async()=>{const d=await api('/api/fulfillment-review/'+id()+'/diagnose');showDiagnosis(d.diagnosis);report('Diagnosis loaded. Nothing was changed.');}));
-$('artelo-preview').addEventListener('click',()=>run(async()=>{report('Checking the order and asking Artelo for its price (no order is created)…');const d=await api('/api/fulfillment-review/'+id()+'/artelo-preview');showPreview(d.preview);report(d.preview.ready?'Ready to submit this one order.':'Not ready to submit; see the list below. Nothing was sent.',!d.preview.ready&&d.preview.blockers.length>0);}));
-$('artelo-verify').addEventListener('click',()=>run(async()=>{const d=await api('/api/fulfillment-review/'+id()+'/artelo-verify',{});report(d.found?'Artelo has this order ('+d.record.supplierOrderId+'): '+d.record.state+'.':(d.note||'Artelo has no order with the recorded ID.'));}));
-$('artelo-submit').addEventListener('click',()=>run(async()=>{
- if(!$('artelo-dashboard').checked)throw Error('Check the Artelo dashboard first and tick the box.');
- if(!window.confirm('Send receipt '+id()+' to Artelo for production now? This places a real, paid order.'))return;
- const d=await api('/api/fulfillment-review/'+id()+'/artelo-submit',{confirm:$('artelo-confirm').value.trim(),arteloDashboardChecked:true});
- report('Submitted to Artelo: order '+(d.submission.supplierOrderId||'(no ID returned: check the dashboard)')+' · '+d.submission.state+'.');
- $('artelo-submit-box').hidden=true;}));
+// Order status: the shared supplier-order panel (supplier-order-client.js).
+window.SupplierOrderPanel?.mount($('supplier-order-panel'),{receipt:id,report});
 const preset=new URLSearchParams(location.search).get('receipt');
-if(preset&&/^[1-9]\d{0,19}$/.test(preset)){
+if(preset&&/^[1-9][0-9]{0,19}$/.test(preset)){
  $('receipt').value=preset;$('load').click();
  let attempts=0;const tick=setInterval(async()=>{
    if(++attempts>12||plan){clearInterval(tick);return;}

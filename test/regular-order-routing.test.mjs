@@ -43,9 +43,8 @@ test('review page is readable, shows checks and never submits orders automatical
  assert.ok(html.includes('No supplier order is ever placed automatically'));
  assert.ok(html.includes('APPROVE FOR REVIEW'));
  assert.ok(!html.includes('submit-supplier-order'));
- // The one way to send an order: Artelo, one receipt, typed confirmation and the dashboard check.
- assert.equal((html.match(/\/artelo-submit'/g)||[]).length,1);
- assert.ok(html.includes("{confirm:$('artelo-confirm').value.trim(),arteloDashboardChecked:true}"));
+ // The one way to send an order is the shared supplier-order panel (test/supplier-order-panel.test.mjs).
+ assert.ok(html.includes('<script src="/supplier-order-client.js"></script>'));
  const m=html.match(/<script>([\s\S]*?)<\/script>/);
  assert.ok(m);assert.doesNotThrow(()=>new vm.Script(m[1]));
 });

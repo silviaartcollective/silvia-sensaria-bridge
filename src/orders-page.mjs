@@ -56,7 +56,7 @@ pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 <div id="empty">Select an order to view its details, shipment status, and tracking.</div>
 <div id="details" class="hidden">
 <h2 id="buyer"></h2><div id="order-meta" class="small"></div>
-<div id="supplier-banner" class="supplier-banner hidden"><span class="eyebrow">Recommended fulfillment supplier</span><strong id="supplier-name">SENSARIA</strong><span class="small">Manual supplier order · Check artwork, variant and shipping before submitting</span></div>
+<div id="supplier-banner" class="supplier-banner hidden"><span class="eyebrow">Recommended fulfillment supplier</span><strong id="supplier-name"></strong><span class="small" id="supplier-note"></span></div>
 <div class="detailrow"><strong>Artwork / items</strong><pre id="items"></pre></div>
 <div class="detailrow"><strong>Shipping address</strong><pre id="address"></pre></div>
 <div class="detailrow"><strong>Shipping status &amp; tracking</strong><pre id="shipment"></pre></div>
@@ -66,6 +66,7 @@ pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
 <a class="btn" id="review-regular" href="/fulfillment-review">View Supplier Recommendation</a>
 <button type="button" id="sensaria-csv" class="hidden">Download Sensaria CSV</button></div>
 <div class="hidden" id="sensaria-csv-status" role="status" aria-live="polite"></div>
+<div class="detailrow hidden" id="supplier-order-row"><strong>Supplier order</strong><div id="supplier-order-panel"></div></div>
 </div></section></div>
-</main></div><script src="/orders-client.js" defer></script></body></html>`;
+</main></div><script src="/supplier-order-client.js" defer></script><script src="/orders-client.js" defer></script></body></html>`;
 }
