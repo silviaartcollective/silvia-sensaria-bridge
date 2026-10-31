@@ -162,7 +162,10 @@ async function processItem(deps, item, mine) {
   const stopped = () => { if (!mine.stop) return false; item.status = 'waiting'; item.step = 'Stopped'; return true; };
   const saveArtwork = async () => {
     await step('Saving the artwork');
-    Object.assign(item, await deps.reserveArtwork(item));
+    // The artwork ID is kept as soon as it exists: a retry after a failure
+    // finishes that artwork (the upload already moved into it) instead of
+    // reserving another one with no upload.
+    Object.assign(item, await deps.reserveArtwork(item, async artworkId => { item.reservedArtworkId = artworkId; await save(deps); }));
     await save(deps);
   };
   try {
