@@ -960,12 +960,23 @@ function batchDeps(){
     loadJob:async()=>{try{return await getJsonObject(BATCH_JOB_KEY)}catch(error){if(isMissingR2Object(error))return null;throw error}},
     saveJob:job=>putJsonObject(BATCH_JOB_KEY,job),
     pause:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
-    reserveArtwork:async item=>{
-      const reservation=await reserveArtworkUpload({title:'',orientation:'auto',
-        master:{filename:item.filename,contentType:item.contentType,size:item.size},mockups:[],stagedMaster:{stageId:item.stageId}});
-      const manifest=await completeArtworkUpload(reservation.artworkId);
-      queueOriginal(reservation.artworkId);
-      return {artworkId:reservation.artworkId,orientation:listingLayoutForManifest(manifest)};
+    // onReserved keeps the new ID with the batch item, so a retry finishes that
+    // artwork: reserving moves the upload out of temporary storage into it.
+    reserveArtwork:async(item,onReserved=async()=>{})=>{
+      let artworkId=item.reservedArtworkId||'';
+      if(!artworkId){
+        const staged=stagedMasterObjectKey(item.stageId,item.filename);
+        const info=await artworkObjectInfo(staged).catch(()=>null);
+        if(!info)throw Error('The uploaded file is no longer in temporary storage (kept 3 days). Start over and add this artwork again.');
+        if(item.size&&Number(info.size)!==Number(item.size))
+          throw Error('The upload of this file did not finish ('+Math.round(Number(info.size)/1048576)+' of '+Math.round(Number(item.size)/1048576)+' MB arrived). Start over and add this artwork again.');
+        artworkId=(await reserveArtworkUpload({title:'',orientation:'auto',
+          master:{filename:item.filename,contentType:item.contentType,size:item.size},mockups:[],stagedMaster:{stageId:item.stageId}})).artworkId;
+        await onReserved(artworkId);
+      }
+      const manifest=await completeArtworkUpload(artworkId);
+      queueOriginal(artworkId);
+      return {artworkId,orientation:listingLayoutForManifest(manifest)};
     },
     // From the staged master (no artwork ID yet), or from the artwork when it has one.
     startMockups:async item=>{
@@ -2194,7 +2205,8 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
     accessToken:session.accessToken
   });
-  const initialRemoteIds=receivedEtsyImageIds(await readRemoteImages());
+  const initialRemote=await readRemoteImages();
+  const initialRemoteIds=receivedEtsyImageIds(initialRemote);
   const photos=[];
   imageItems.forEach(({item,rank},index)=>{
     const previous=existingImages.get(item.key);
@@ -2210,6 +2222,12 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
         return {...object,contentType:object.contentType||item.contentType||'image/jpeg'};
       }});
   });
+  // Etsy keeps 20 photos: a draft set up again after an interruption may
+  // already be full, and then the preset photos that do not fit stay off
+  // instead of failing the setup.
+  const presetPhotosNotAdded=photos.splice(Math.max(0,ETSY_PHOTO_LIMIT-initialRemote.length)).length;
+  if(presetPhotosNotAdded)console.warn('[draft setup] '+manifest.artworkId+': listing '+listingId+' already has '+initialRemote.length+
+    ' photos; '+presetPhotosNotAdded+' preset photo(s) not added.');
   const {parallel}=await uploadPhotosToListing({session,listingId,altText:manifest.title||'',photos,
     onUploaded:async(photo,listingImageId)=>{
       const receipt={listingImageId,key:photo.item.key,filename:photo.filename,rank:photo.rank};
@@ -2252,6 +2270,7 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     verifiedImageCount: confirmed.verified,
     verificationRemoteCount: confirmed.remoteCount,
     missingPresetRoles:plan.missingPresetRoles||[],
+    presetPhotosNotAdded,
     videoUploaded: Boolean(manifest.etsyMedia.video?.videoId),
     uploadMs: Date.now() - uploadStartedAt,
     originalImageBytes,

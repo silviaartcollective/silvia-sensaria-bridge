@@ -434,3 +434,38 @@ test('the page offers Try again on each failed artwork, and Try the failed ones 
   const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
   assert.match(server, /if\(action==='\/retry'\)\{\n        await retryItem\(deps,body\.n\);/);
 });
+
+test('a retry after saving the artwork failed finishes the artwork already reserved, not a new one', async () => {
+  resetBatchMemory();
+  const shop = fakeShop();
+  let failOnce = true;
+  const reserved = [];
+  shop.deps.reserveArtwork = async (item, onReserved) => {
+    const artworkId = item.reservedArtworkId || 'SAC' + (900 + reserved.length);
+    if (!item.reservedArtworkId) { reserved.push(artworkId); await onReserved(artworkId); }
+    if (failOnce) { failOnce = false; throw Error('Master artwork has not finished uploading to R2'); }
+    return { artworkId, orientation: 'portrait' };
+  };
+  await addToBatch(shop.deps, art(1, 'sage tall.jpg'));
+  await idle();
+  assert.equal(shop.saved.job.items[0].status, 'failed');
+  assert.equal(shop.saved.job.items[0].reservedArtworkId, 'SAC900', 'the reserved ID is kept with the item');
+  await retryItem(shop.deps, 1);
+  await idle();
+  assert.deepEqual(reserved, ['SAC900'], 'no second artwork is reserved');
+  assert.equal(shop.saved.job.items[0].artworkId, 'SAC900');
+  assert.equal(shop.saved.job.items[0].status, 'ready');
+});
+
+test('a draft set up again when already full keeps its photos instead of failing on Etsy\'s 20', async () => {
+  const { readFileSync } = await import('node:fs');
+  const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
+  const start = server.indexOf('async function uploadPreparedMediaToEtsy(');
+  const body = server.slice(start, server.indexOf('\n}\n', start));
+  assert.match(body, /const presetPhotosNotAdded=photos\.splice\(Math\.max\(0,ETSY_PHOTO_LIMIT-initialRemote\.length\)\)\.length;/);
+  assert.ok(body.indexOf('photos.splice(') < body.indexOf('uploadPhotosToListing('), 'capped before uploading');
+  // A missing or unfinished upload says so, before any artwork ID is reserved.
+  const reserve = server.slice(server.indexOf('reserveArtwork:async(item,onReserved'), server.indexOf('startMockups:async item'));
+  assert.ok(reserve.indexOf('artworkObjectInfo(staged)') < reserve.indexOf('reserveArtworkUpload('));
+  assert.match(reserve, /The upload of this file did not finish/);
+});
