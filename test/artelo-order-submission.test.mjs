@@ -103,7 +103,7 @@ test('live submission enabled and this receipt authorized: the one order is sent
   assert.deepEqual(payload.customerAddress, { name: 'Ada Buyer', street1: '12 Rue Example', city: 'Toronto', state: 'ON', zipcode: 'M5H 2N2', country: 'CA', countryCode: 'CA' });
   const info = payload.items[0].productInfo;
   assert.deepEqual([info.catalogProductId, info.paperType, info.frameStyle, info.frameColor, info.size, info.orientation],
-    ['IndividualArtPrint', 'MattePoster', 'Unframed', null, 'x30x40', 'Vertical']);
+    ['IndividualArtPrint', 'MattePoster', 'Unframed', 'NaturalOak', 'x30x40', 'Vertical']);
   assert.equal(info.designs[0].sourceImage.url, asset.url);
   assert.equal(payload.items[0].unitPrice, 99);
   assert.equal(w.state.review.status, 'supplier_submitted');
@@ -252,6 +252,8 @@ test('an Artelo error names each rejected field, with long value lists cut short
     // Artelo's validation answer (receipt 4217901308): one issue per field.
     { message: 'Invalid Input', data: { issues: [{ code: 'invalid_value', values: countries, path: ['customerAddress', 'country'],
       message: 'Invalid option: expected one of ' + countries.map(c => '"' + c + '"').join('|') }] } },
+    { message: 'Invalid Input', data: { issues: [{ code: 'invalid_value', values: ['NaturalOak', 'BlackOak', 'WhiteOak'], path: ['items', 0, 'productInfo', 'frameColor'],
+      message: 'Invalid option: expected one of "NaturalOak"|"BlackOak"|"WhiteOak"' }] } },
     { message: 'Invalid Input', errors: [{ field: 'items.0.productInfo.size', message: 'Required' }] },
     { message: 'Invalid Input', detail: { list: countries } }
   ];
@@ -263,6 +265,7 @@ test('an Artelo error names each rejected field, with long value lists cut short
     const { payload } = buildArteloPayload({ receipt: receipt(), plan: plan(), asset });
     await assert.rejects(validateArteloOrderPriceCheck(payload), error => error.status === 400 &&
       error.message === 'Artelo API 400: Invalid Input: customerAddress.country: Invalid option (one of US, AD, AE, AF … 249 values)');
+    await assert.rejects(validateArteloOrderPriceCheck(payload), { message: 'Artelo API 400: Invalid Input: items.0.productInfo.frameColor: Invalid option (one of NaturalOak, BlackOak, WhiteOak)' });
     await assert.rejects(validateArteloOrderPriceCheck(payload), { message: 'Artelo API 400: Invalid Input: items.0.productInfo.size: Required' });
     await assert.rejects(validateArteloOrderPriceCheck(payload), { message: 'Artelo API 400: Invalid Input {"detail":{"list":["US","AD","AE","AF","… 249 values"]}}' });
     assert.match(sent.url, /\/orders\/price-check$/);

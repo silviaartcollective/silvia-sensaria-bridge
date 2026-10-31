@@ -53,13 +53,14 @@ export function arteloConfigStatus() {
 const shortLists = (key, value) => Array.isArray(value) && value.length > 8 ? [...value.slice(0, 4), `… ${value.length} values`] : value;
 
 // "customerAddress.country: Invalid option (one of US, AD, AE, AF … 249 values)"
-// for each rejected field; an enum's allowed values are cut to a few.
+// for each rejected field; an enum's allowed values are listed in full up to 20.
 function describeIssues(issues) {
   return issues.slice(0, 6).map(issue => {
     const where = Array.isArray(issue?.path) ? issue.path.join('.') : String(issue?.path || issue?.field || '');
     const said = String(issue?.message || issue?.code || 'invalid').replace(/:\s*expected one of[\s\S]*$/i, '').slice(0, 160);
-    const values = Array.isArray(issue?.values) && issue.values.length
-      ? ` (one of ${issue.values.slice(0, 4).join(', ')}${issue.values.length > 4 ? ` … ${issue.values.length} values` : ''})` : '';
+    const list = Array.isArray(issue?.values) ? issue.values : [];
+    const values = !list.length ? '' : list.length <= 20 ? ` (one of ${list.join(', ')})`
+      : ` (one of ${list.slice(0, 4).join(', ')} … ${list.length} values)`;
     return `${where || 'request'}: ${said}${values}`;
   }).join('; ');
 }
