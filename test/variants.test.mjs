@@ -53,13 +53,13 @@ test('includes mapped 8x10 poster with exact converted USD retail price', () => 
   assert.equal(eightByTen.sku, 'SAC0042-P-810');
   assert.equal(eightByTen.offerings[0].is_enabled, true);
   assert.equal(eightByTen.offerings[0].quantity, 999);
-  assert.equal(eightByTen.offerings[0].price, 34.50);
+  assert.equal(eightByTen.offerings[0].price, 36.80);
 });
 
 test('poster prices rise with size despite supplier cost anomalies', () => {
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_CAD.P['8x10'], 51.26);
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10'], 34.50);
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'], 37.21);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_CAD.P['8x10'], 54.68);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10'], 36.80);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'], 39.69);
   assert.ok(
     SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'] >
     SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10']
@@ -111,8 +111,9 @@ test('framed canvas colours share one exact converted USD customer price per siz
   assert.equal(black.offerings[0].price, 136.65);
 });
 
-test('poster prices match the old Gelato listings, and squares and panoramics follow by area', () => {
-  const shown = size => Math.round(SILVIA_RETAIL_PRICE_LADDER_USD.P[size] * 0.8 * 100) / 100;
+test('after Silvia\'s 25% sale, posters show Japandi\'s prices (the old Gelato listings), squares and panoramics by area', () => {
+  const shown = size => Math.round(SILVIA_RETAIL_PRICE_LADDER_USD.P[size] * (1 - SILVIA_SALE_DISCOUNT_PERCENT / 100) * 100) / 100;
+  assert.equal(SILVIA_SALE_DISCOUNT_PERCENT, 25);
   const old = { '11x14': 29.77, '12x16': 30.41, '12x18': 31.05, '16x20': 32.94, '16x24': 34.22, '18x24': 35.16, '24x36': 51.07, '30x40': 57.43 };
   for (const [size, price] of Object.entries(old)) assert.equal(shown(size), price, size);
   for (const sequence of [['5x7', '8x10', '8x12', '11x14', '12x16', '12x18', '16x20', '16x24', '18x24', '20x30', '24x36', '30x40'],
