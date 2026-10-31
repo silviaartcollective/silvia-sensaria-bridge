@@ -304,27 +304,16 @@ export async function validateArteloOrderPriceCheck(payload = {}) {
   }
   if (!items.length) throw new Error('Artelo validation requires at least one item');
 
-  // Price validation only needs the product configuration and destination.
-  // Do not send artwork source URLs here: Artelo may attempt to process/fetch
-  // the design during price-check, which is unnecessary for cost validation
-  // and can fail on temporary TEST-only signed artwork URLs.
-  const priceCheckItems = items.map(item => ({
-    ...item,
-    productInfo: item?.productInfo
-      ? {
-          ...item.productInfo,
-          designs: []
-        }
-      : item?.productInfo
-  }));
-
+  // Artelo validates the price check like the order itself, so each item goes
+  // as it would be ordered: its one design included (an empty designs list is
+  // refused with "Expected 1 designs but received 0").
   const raw = await arteloRequest('/orders/price-check', {
     method: 'POST',
     body: {
       orderId,
       currency,
       customerAddress,
-      items: priceCheckItems
+      items
     }
   });
 
