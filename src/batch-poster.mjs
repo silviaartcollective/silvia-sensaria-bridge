@@ -221,8 +221,10 @@ async function processItem(deps, item, mine) {
     }
     if (stopped()) return;
     // A draft whose setup was cut short (a restart) is set up again; Etsy keeps the one draft.
+    // A draft whose setup failed is set up again too (Try again): its old
+    // "failed" would otherwise be read back at once and nothing redone.
     for (let attempt = 1; ; attempt++) {
-      if (!item.listingId || attempt > 1) {
+      if (!item.listingId || attempt > 1 || (await deps.draftSetup(item.artworkId)).status === 'failed') {
         await step('Creating the Etsy draft');
         item.listingId = await deps.createDraft(item);
         await save(deps);

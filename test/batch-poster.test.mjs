@@ -469,3 +469,22 @@ test('a draft set up again when already full keeps its photos instead of failing
   assert.ok(reserve.indexOf('artworkObjectInfo(staged)') < reserve.indexOf('reserveArtworkUpload('));
   assert.match(reserve, /The upload of this file did not finish/);
 });
+
+test('Try again on a draft whose setup failed sets the same draft up again', async () => {
+  resetBatchMemory();
+  const shop = fakeShop();
+  const setups = new Map();
+  let drafts = 0;
+  shop.deps.createDraft = async item => { drafts++; setups.set(item.artworkId, drafts === 1 ? 'failed' : 'completed'); return 5000; };
+  shop.deps.draftSetup = async artworkId => setups.get(artworkId) === 'failed'
+    ? { status: 'failed', error: 'Etsy image upload failed (400): Listings are only allowed 20 images.' } : { status: setups.get(artworkId) || 'not_started' };
+  await addToBatch(shop.deps, art(1, 'sage tall.jpg'));
+  await idle();
+  assert.equal(shop.saved.job.items[0].status, 'failed');
+  assert.match(shop.saved.job.items[0].error, /only allowed 20 images/);
+  await retryItem(shop.deps, 1);
+  await idle();
+  assert.equal(drafts, 2, 'the setup is run again on Try again');
+  assert.equal(shop.saved.job.items[0].listingId, 5000, 'on the same draft');
+  assert.equal(shop.saved.job.items[0].status, 'ready');
+});
