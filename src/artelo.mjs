@@ -50,18 +50,43 @@ export function arteloConfigStatus() {
   };
 }
 
+const shortLists = (key, value) => Array.isArray(value) && value.length > 8 ? [...value.slice(0, 4), `… ${value.length} values`] : value;
+
+// "customerAddress.country: Invalid option (one of US, AD, AE, AF … 249 values)"
+// for each rejected field; an enum's allowed values are listed in full up to 20.
+function describeIssues(issues) {
+  return issues.slice(0, 6).map(issue => {
+    const where = Array.isArray(issue?.path) ? issue.path.join('.') : String(issue?.path || issue?.field || '');
+    const said = String(issue?.message || issue?.code || 'invalid').replace(/:\s*expected one of[\s\S]*$/i, '').slice(0, 160);
+    const list = Array.isArray(issue?.values) ? issue.values : [];
+    const values = !list.length ? '' : list.length <= 20 ? ` (one of ${list.join(', ')})`
+      : ` (one of ${list.slice(0, 4).join(', ')} … ${list.length} values)`;
+    return `${where || 'request'}: ${said}${values}`;
+  }).join('; ');
+}
+
 function cleanErrorBody(text) {
   const value = String(text || '').trim();
   if (!value) return '';
   try {
     const parsed = JSON.parse(value);
-    return parsed?.error_description || parsed?.error || parsed?.message || value;
+    const message = parsed?.error_description || parsed?.error || parsed?.message;
+    if (!message) return value.slice(0, 800);
+    const text = typeof message === 'string' ? message : JSON.stringify(message);
+    // Validation errors name each rejected field.
+    const issues = [parsed?.data?.issues, parsed?.issues, parsed?.errors].find(list => Array.isArray(list) && list.length);
+    if (issues) return `${text}: ${describeIssues(issues)}`;
+    // Keep whatever else Artelo sent after its message, long lists cut short.
+    const { error_description, error, message: _message, status, statusCode, ...rest } = parsed;
+    return Object.keys(rest).length ? `${text} ${JSON.stringify(rest, shortLists).slice(0, 600)}` : text;
   } catch {
     return value.slice(0, 800);
   }
 }
 
-async function arteloRequest(pathname, { method = 'GET', body } = {}) {
+// timeoutMs (optional) aborts a request that has not answered; the caller
+// then cannot know whether Artelo acted on it.
+async function arteloRequest(pathname, { method = 'GET', body, timeoutMs } = {}) {
   const apiToken = token();
   if (!apiToken) throw new Error('ARTELO_API_KEY is not configured');
 
@@ -69,21 +94,30 @@ async function arteloRequest(pathname, { method = 'GET', body } = {}) {
     ? pathname
     : `${ARTELO_API_BASE}${pathname.startsWith('/') ? '' : '/'}${pathname}`;
 
-  const response = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${apiToken}`,
-      'User-Agent': 'Silvia-Art-Collective',
-      Accept: 'application/json',
-      ...(body ? { 'Content-Type': 'application/json;charset=utf-8' } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  let response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        'User-Agent': 'Silvia-Art-Collective',
+        Accept: 'application/json',
+        ...(body ? { 'Content-Type': 'application/json;charset=utf-8' } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller?.signal
+    });
+  } catch (error) {
+    if (controller?.signal.aborted) throw Object.assign(new Error(`Artelo API did not answer within ${Math.round(timeoutMs / 1000)} seconds.`), { timeout: true });
+    throw Object.assign(new Error(`Artelo API could not be reached: ${error?.message || error}`), { network: true });
+  } finally { if (timer) clearTimeout(timer); }
 
   const text = await response.text();
   if (!response.ok) {
     const detail = cleanErrorBody(text);
-    throw new Error(`Artelo API ${response.status}${detail ? `: ${detail}` : ''}`);
+    throw Object.assign(new Error(`Artelo API ${response.status}${detail ? `: ${detail}` : ''}`), { status: response.status });
   }
   if (!text) return null;
   return JSON.parse(text);
@@ -103,7 +137,7 @@ function destinationByCode(code) {
   };
 }
 
-function apiSizeFromLabel(size) {
+export function apiSizeFromLabel(size) {
   const text = String(size || '').trim().toLowerCase().replace(/[×]/g, 'x').replace(/\s+/g, '');
   const match = text.match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/);
   if (!match) return null;
@@ -160,7 +194,7 @@ export async function getArteloPriceCheck({
 
   const customerAddress = {
     city: String(address?.city || '').trim(),
-    country: destination.code,
+    countryCode: destination.code,
     phone: String(address?.phone || '+15555550100').trim(),
     name: String(address?.name || 'Silvia Art Collective Price Check').trim(),
     state: String(address?.state || '').trim(),
@@ -226,7 +260,7 @@ export async function getArteloOrder(orderId) {
   if(!id||id.length>120||/[\r\n]/.test(id))throw new Error('Valid Artelo order ID required.');
   return arteloRequest('/orders/get-by-id?orderId='+encodeURIComponent(id));
 }
-export async function createArteloOrder(payload = {}) {
+export async function createArteloOrder(payload = {}, { timeoutMs } = {}) {
   if(String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED||'').toLowerCase()!=='true' ||
      String(process.env.ARTELO_FULFILLMENT_ENABLED||'').toLowerCase()!=='true')
     throw new Error('Artelo production order submission is disabled.');
@@ -236,7 +270,7 @@ export async function createArteloOrder(payload = {}) {
   if (!payload?.orderId) throw new Error('Artelo order requires orderId');
   if (!payload?.createdAt) throw new Error('Artelo order requires createdAt');
   if (!payload?.currency) throw new Error('Artelo order requires currency');
-  if (!customerAddress?.city || !customerAddress?.country || !customerAddress?.name ||
+  if (!customerAddress?.city || !customerAddress?.countryCode || !customerAddress?.name ||
       !customerAddress?.state || !customerAddress?.street1 || !customerAddress?.zipcode) {
     throw new Error('Artelo order requires a complete customer address');
   }
@@ -245,7 +279,8 @@ export async function createArteloOrder(payload = {}) {
 
   return arteloRequest('/orders/create', {
     method: 'POST',
-    body: payload
+    body: payload,
+    timeoutMs
   });
 }
 
@@ -264,32 +299,21 @@ export async function validateArteloOrderPriceCheck(payload = {}) {
   const items = Array.isArray(payload?.items) ? payload.items : [];
 
   if (!orderId) throw new Error('Artelo validation requires orderId');
-  if (!customerAddress?.city || !customerAddress?.country || !customerAddress?.street1 || !customerAddress?.zipcode) {
-    throw new Error('Artelo validation requires city, country, street1, and zipcode');
+  if (!customerAddress?.city || !customerAddress?.countryCode || !customerAddress?.street1 || !customerAddress?.zipcode) {
+    throw new Error('Artelo validation requires city, countryCode, street1, and zipcode');
   }
   if (!items.length) throw new Error('Artelo validation requires at least one item');
 
-  // Price validation only needs the product configuration and destination.
-  // Do not send artwork source URLs here: Artelo may attempt to process/fetch
-  // the design during price-check, which is unnecessary for cost validation
-  // and can fail on temporary TEST-only signed artwork URLs.
-  const priceCheckItems = items.map(item => ({
-    ...item,
-    productInfo: item?.productInfo
-      ? {
-          ...item.productInfo,
-          designs: []
-        }
-      : item?.productInfo
-  }));
-
+  // Artelo validates the price check like the order itself, so each item goes
+  // as it would be ordered: its one design included (an empty designs list is
+  // refused with "Expected 1 designs but received 0").
   const raw = await arteloRequest('/orders/price-check', {
     method: 'POST',
     body: {
       orderId,
       currency,
       customerAddress,
-      items: priceCheckItems
+      items
     }
   });
 

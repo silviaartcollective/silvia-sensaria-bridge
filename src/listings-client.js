@@ -283,7 +283,22 @@ async function openListing(id){
 // stored one, from each card or the editor. Several listings can run at once:
 // uploads go two at a time, crops queue on the PC worker (one job at a time,
 // oldest first), and one status request covers every running job.
-const artworkJobs=new Map(),artworkFiles=new Map();
+const artworkJobs=new Map(),artworkFiles=new Map(),artworkCrops=new Map();
+// Your own crops: each file's ratio comes from its name (e.g. "…2x3.jpg") or,
+// failing that, from its exact shape (short side : long side).
+const CROP_RATIOS={'1x1':[1,1],'1x2':[1,2],'1x3':[1,3],'2x3':[2,3],'3x4':[3,4],'4x5':[4,5],'11x14':[11,14],'5x7':[5,7],'14x15':[14,15]};
+async function cropRatioOf(file){
+ const named=Object.keys(CROP_RATIOS).sort((a,b)=>b.length-a.length).find(r=>new RegExp('(^|[^0-9])'+r+'([^0-9]|$)','i').test(file.name));
+ if(named)return named;
+ try{
+  const b=await createImageBitmap(file),short=Math.min(b.width,b.height),long=Math.max(b.width,b.height);b.close();
+  return Object.entries(CROP_RATIOS).find(([,[x,y]])=>Math.abs(short/long-x/y)<=.005*(x/y))?.[0]||'';
+ }catch{return '';}
+}
+async function chooseCrops(id,files){
+ const picked=await Promise.all([...files].map(async file=>({file,ratio:await cropRatioOf(file)})));
+ artworkCrops.set(id,picked);paintArtwork(id);
+}
 const ARTWORK_ACCEPT='image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff';
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let uploadsActive=0;const uploadWaiters=[];
@@ -317,14 +332,14 @@ function jobProgress(job){
  return {starting:3,checking:3,uploading:10,queued:15,cropping:15+Math.round(.75*(Number(job.progress)||0)),
   ready:90,activating:95,done:100}[job.phase]??0;
 }
-function buttonLabel(job,file){
- return job?.awaitingFinish?'Apply new crops':jobBusy(job)?'Working…':file?'Re-upload artwork':'Regenerate crops';
+function buttonLabel(job,file,crops){
+ return job?.awaitingFinish?'Apply new crops':jobBusy(job)?'Working…':crops?.length?(file?'Re-upload artwork with my crops':'Use my crops'):file?'Re-upload artwork':'Regenerate crops';
 }
 function fillArtworkArea(wrap,id,artworkId){
- const job=artworkJobs.get(id),file=artworkFiles.get(id),busy=jobBusy(job);
+ const job=artworkJobs.get(id),file=artworkFiles.get(id),crops=artworkCrops.get(id)||[],busy=jobBusy(job);
  wrap.replaceChildren();
  const note=document.createElement('div');note.className='muted';
- note.textContent='Choose a new master to replace the artwork, or leave it empty to regenerate the crops from the master stored in R2. '+artworkId+' is kept.';
+ note.textContent='Choose a new master to replace the artwork, or leave it empty to regenerate the crops from the master stored in R2. To skip the PC crops, add your own crops (with or without a new master). '+artworkId+' is kept.';
  const pick=document.createElement('div');pick.className='pick';
  const input=document.createElement('input');input.type='file';input.accept=ARTWORK_ACCEPT;input.className='hidden';
  const choose=document.createElement('button');choose.type='button';choose.textContent=file?'Change file':'Choose new master…';choose.disabled=busy;
@@ -336,13 +351,27 @@ function fillArtworkArea(wrap,id,artworkId){
  }
  choose.addEventListener('click',()=>input.click());
  input.addEventListener('change',()=>{const chosen=input.files?.[0];if(chosen)artworkFiles.set(id,chosen);paintArtwork(id);});
- const go=document.createElement('button');go.type='button';go.className='go';go.textContent=buttonLabel(job,file);go.disabled=busy;
+ // Optional: your own production crops instead of the PC worker's.
+ const ownPick=document.createElement('div');ownPick.className='pick';
+ const cropInput=document.createElement('input');cropInput.type='file';cropInput.accept='image/jpeg,.jpg,.jpeg';cropInput.multiple=true;cropInput.className='hidden';
+ const cropChoose=document.createElement('button');cropChoose.type='button';cropChoose.disabled=busy;
+ cropChoose.textContent=crops.length?'Change my crops':'Use my own crops…';
+ const cropNames=document.createElement('span');cropNames.className='muted file-name';
+ cropNames.textContent=crops.length?crops.map(c=>(c.ratio||'unknown ratio')+': '+c.file.name).join(' · '):'Optional: one JPEG per size ratio (2x3, 3x4, 4x5, 11x14, 5x7, 14x15 for most listings)';
+ ownPick.append(cropInput,cropChoose,cropNames);
+ if(crops.length&&!busy){
+  const clearCrops=document.createElement('button');clearCrops.type='button';clearCrops.className='link';clearCrops.textContent='Clear';
+  clearCrops.addEventListener('click',()=>{artworkCrops.delete(id);paintArtwork(id);});ownPick.append(clearCrops);
+ }
+ cropChoose.addEventListener('click',()=>cropInput.click());
+ cropInput.addEventListener('change',()=>{if(cropInput.files?.length)void chooseCrops(id,cropInput.files);});
+ const go=document.createElement('button');go.type='button';go.className='go';go.textContent=buttonLabel(job,file,crops);go.disabled=busy;
  go.addEventListener('click',()=>startArtwork(id,artworkId));
  const bar=document.createElement('div');bar.className='bar';const fill=document.createElement('div');
  fill.style.width=jobProgress(job)+'%';bar.append(fill);
  const status=document.createElement('div');status.className='muted artwork-status'+(job?.phase==='error'?' error':'');
  status.textContent=job?.message||'';status.setAttribute('role','status');
- wrap.append(note,pick,go,bar,status);
+ wrap.append(note,pick,ownPick,go,bar,status);
 }
 function artworkArea(row){
  const id=Number(row.listingId),wrap=document.createElement('div');
@@ -404,9 +433,9 @@ async function finishConversion(row){
 }
 function paintDrawer(){
  if(!current?.artworkId||el('artwork-section').classList.contains('hidden'))return;
- const job=artworkJobs.get(selectedId),file=artworkFiles.get(selectedId),busy=jobBusy(job);
+ const job=artworkJobs.get(selectedId),file=artworkFiles.get(selectedId),crops=artworkCrops.get(selectedId)||[],busy=jobBusy(job);
  const button=el('artwork-replace');
- button.textContent=job?.awaitingFinish?'Apply new crops':busy?'Working…':file?'Re-upload '+file.name:'Regenerate crops from stored master';
+ button.textContent=job?.awaitingFinish?'Apply new crops':busy?'Working…':crops.length?buttonLabel(job,file,crops):file?'Re-upload '+file.name:'Regenerate crops from stored master';
  button.disabled=busy;el('artwork-file').disabled=busy;
  if(job?.message)notice('artwork-status',job.message,job.phase==='error');else clearNotice('artwork-status');
 }
@@ -424,7 +453,19 @@ function startArtwork(id,artworkId){
  const existing=artworkJobs.get(id);
  if(existing?.awaitingFinish){void finishArtwork(existing);return;}
  if(jobBusy(existing))return;
- const file=artworkFiles.get(id)||null;
+ const file=artworkFiles.get(id)||null,crops=artworkCrops.get(id)||[];
+ if(crops.length){
+  const unknown=crops.filter(c=>!c.ratio).map(c=>c.file.name),seen=new Set(),twice=[];
+  for(const c of crops){if(c.ratio&&seen.has(c.ratio))twice.push(c.ratio);seen.add(c.ratio);}
+  if(unknown.length){alert('These crops match no size ratio (name them e.g. "…-2x3.jpg" or crop them exactly): '+unknown.join(', '));return;}
+  if(twice.length){alert('Two crops were chosen for '+[...new Set(twice)].join(', ')+'. Keep one per ratio.');return;}
+  if(!confirm((file?'Replace '+artworkId+'\'s master with '+file.name+' and use ':'Keep '+artworkId+'\'s stored master and use ')+'your '+crops.length+' crops ('+
+   crops.map(c=>c.ratio).join(', ')+') instead of the PC worker\'s?\n\nEach crop is checked (exact shape, JPEG, at most 17,500 px). Then '+artworkId+'\'s files in R2 are overwritten. Etsy photos, SKUs and prices are not changed.'))return;
+  const job={listingId:id,artworkId,file:file?file.name:null,ownCrops:true,phase:'starting',message:'Starting…',progress:0};
+  artworkJobs.set(id,job);paintArtwork(id);
+  void runArtwork(job,file,crops);
+  return;
+ }
  const ok=confirm(file
   ?'Replace the artwork for '+artworkId+' with '+file.name+'?\n\nThe new master is uploaded and cropped on the PC worker. After the crops are verified, '+artworkId+'\'s master, crops and manifest in R2 are overwritten. Etsy photos, SKUs and prices are not changed.'
   :'Regenerate the production crops for '+artworkId+' from the master already stored in R2?\n\nNo upload is needed. After the new crops are verified, '+artworkId+'\'s crops and manifest in R2 are overwritten. Etsy photos, SKUs and prices are not changed.');
@@ -433,7 +474,7 @@ function startArtwork(id,artworkId){
  artworkJobs.set(id,job);paintArtwork(id);
  void runArtwork(job,file);
 }
-async function runArtwork(job,file){
+async function runArtwork(job,file,crops=[]){
  const {listingId,artworkId}=job;
  try{
   let reserved;
@@ -454,6 +495,24 @@ async function runArtwork(job,file){
    reserved=await request('/api/listing-converter/reconvert/reserve',{listingId,artworkId,useExistingMaster:true});
   }
   job.revision=reserved.revision;
+  if(crops.length){
+   setJob(job,'uploading','Preparing your crops…');
+   const own=await request('/api/listing-converter/reconvert/own-crops',{listingId,artworkId,revision:job.revision,
+    crops:crops.map(c=>({ratio:c.ratio,filename:c.file.name,size:c.file.size}))});
+   let done=0;
+   await Promise.all(own.uploads.map(target=>uploadSlot(async()=>{
+    const crop=crops.find(c=>c.ratio===target.ratio);
+    setJob(job,'uploading','Uploading your crops · '+done+' of '+own.uploads.length+'…');
+    await uploadToR2(target.uploadUrl,crop.file,'image/jpeg');
+    setJob(job,'uploading','Uploading your crops · '+(++done)+' of '+own.uploads.length+'…');
+   })));
+   setJob(job,'ready','Checking your crops…');
+   const checked=await request('/api/listing-converter/reconvert/own-crops/verify',{listingId,artworkId,revision:job.revision});
+   if(checked.belowRecommended?.length)job.note=' Note: '+checked.belowRecommended.join(', ')+' below the recommended print resolution.';
+   artworkCrops.delete(listingId);
+   await finishArtwork(job);
+   return;
+  }
   setJob(job,'queued','Queueing new production crops…');
   const started=await request('/api/listing-converter/reconvert/crop',{listingId,artworkId,revision:job.revision});
   if(started.job?.status==='completed'){await finishArtwork(job);return;}
@@ -471,7 +530,8 @@ async function finishArtwork(job){
   await request('/api/listing-converter/reconvert/activate',{listingId:job.listingId,artworkId:job.artworkId,
    revision:job.revision,confirm:'REPLACE SILVIA ARTWORK'});
   artworkFiles.delete(job.listingId);
-  setJob(job,'done',(job.file?'Artwork replaced':'Crops regenerated')+' for '+job.artworkId+'. Sensaria CSVs and supplier orders now use the new files.');
+  setJob(job,'done',(job.ownCrops?(job.file?'Artwork replaced with your crops':'Your crops are in place'):job.file?'Artwork replaced':'Crops regenerated')+
+   ' for '+job.artworkId+'. Sensaria CSVs and supplier orders now use the new files.'+(job.note||''));
  }catch(error){failJob(job,error);}
 }
 // One status request for every waiting job, every 4 seconds.

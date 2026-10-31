@@ -25,7 +25,10 @@ import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
 import {beginGmailAuthorization,finishGmailAuthorization,gmailConnectionStatus,disconnectGmail,gmailOAuthConfigured} from './gmail-oauth.mjs';
 import {scanSensariaGmail,gmailTrackingStatus,saveGmailTrackingSettings} from './sensaria-gmail-tracking.mjs';
-import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy } from './order-tracking.mjs';
+import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy, readTrackingRecord } from './order-tracking.mjs';
+import { diagnoseOrder, previewArteloOrder, submitArteloOrder, verifyArteloSubmission, resolveSubmission, otherSupplierHolds } from './artelo-order-submission.mjs';
+import { ledgerStore, transition } from './supplier-order-ledger.mjs';
+import { syncArteloTracking, autoTrackingSettings, ARTELO_TRACKING_INTERVAL_MS } from './artelo-auto-tracking.mjs';
 
 const TRACKING_SHOP_NAME="Silvia Art Collective";
 import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
@@ -64,7 +67,7 @@ import {
 } from './listing-conversion-queue.mjs';
 import {
  reserveConverterArtworkRevision,reserveConverterArtworkRegeneration,startConverterArtworkCrop,getConverterArtworkRevisionStatus,getConverterArtworkRevisionStatuses,
- assertConverterArtworkReady,activateConverterArtworkRevision
+ assertConverterArtworkReady,activateConverterArtworkRevision,reserveOwnCrops,verifyOwnCrops
 } from './converter-artwork-revision.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
 import {renderInternationalShippingPage} from './international-shipping-page.mjs';
@@ -957,12 +960,23 @@ function batchDeps(){
     loadJob:async()=>{try{return await getJsonObject(BATCH_JOB_KEY)}catch(error){if(isMissingR2Object(error))return null;throw error}},
     saveJob:job=>putJsonObject(BATCH_JOB_KEY,job),
     pause:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
-    reserveArtwork:async item=>{
-      const reservation=await reserveArtworkUpload({title:'',orientation:'auto',
-        master:{filename:item.filename,contentType:item.contentType,size:item.size},mockups:[],stagedMaster:{stageId:item.stageId}});
-      const manifest=await completeArtworkUpload(reservation.artworkId);
-      queueOriginal(reservation.artworkId);
-      return {artworkId:reservation.artworkId,orientation:listingLayoutForManifest(manifest)};
+    // onReserved keeps the new ID with the batch item, so a retry finishes that
+    // artwork: reserving moves the upload out of temporary storage into it.
+    reserveArtwork:async(item,onReserved=async()=>{})=>{
+      let artworkId=item.reservedArtworkId||'';
+      if(!artworkId){
+        const staged=stagedMasterObjectKey(item.stageId,item.filename);
+        const info=await artworkObjectInfo(staged).catch(()=>null);
+        if(!info)throw Error('The uploaded file is no longer in temporary storage (kept 3 days). Start over and add this artwork again.');
+        if(item.size&&Number(info.size)!==Number(item.size))
+          throw Error('The upload of this file did not finish ('+Math.round(Number(info.size)/1048576)+' of '+Math.round(Number(item.size)/1048576)+' MB arrived). Start over and add this artwork again.');
+        artworkId=(await reserveArtworkUpload({title:'',orientation:'auto',
+          master:{filename:item.filename,contentType:item.contentType,size:item.size},mockups:[],stagedMaster:{stageId:item.stageId}})).artworkId;
+        await onReserved(artworkId);
+      }
+      const manifest=await completeArtworkUpload(artworkId);
+      queueOriginal(artworkId);
+      return {artworkId,orientation:listingLayoutForManifest(manifest)};
     },
     // From the staged master (no artwork ID yet), or from the artwork when it has one.
     startMockups:async item=>{
@@ -2191,7 +2205,8 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
     accessToken:session.accessToken
   });
-  const initialRemoteIds=receivedEtsyImageIds(await readRemoteImages());
+  const initialRemote=await readRemoteImages();
+  const initialRemoteIds=receivedEtsyImageIds(initialRemote);
   const photos=[];
   imageItems.forEach(({item,rank},index)=>{
     const previous=existingImages.get(item.key);
@@ -2207,6 +2222,12 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
         return {...object,contentType:object.contentType||item.contentType||'image/jpeg'};
       }});
   });
+  // Etsy keeps 20 photos: a draft set up again after an interruption may
+  // already be full, and then the preset photos that do not fit stay off
+  // instead of failing the setup.
+  const presetPhotosNotAdded=photos.splice(Math.max(0,ETSY_PHOTO_LIMIT-initialRemote.length)).length;
+  if(presetPhotosNotAdded)console.warn('[draft setup] '+manifest.artworkId+': listing '+listingId+' already has '+initialRemote.length+
+    ' photos; '+presetPhotosNotAdded+' preset photo(s) not added.');
   const {parallel}=await uploadPhotosToListing({session,listingId,altText:manifest.title||'',photos,
     onUploaded:async(photo,listingImageId)=>{
       const receipt={listingImageId,key:photo.item.key,filename:photo.filename,rank:photo.rank};
@@ -2249,6 +2270,7 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     verifiedImageCount: confirmed.verified,
     verificationRemoteCount: confirmed.remoteCount,
     missingPresetRoles:plan.missingPresetRoles||[],
+    presetPhotosNotAdded,
     videoUploaded: Boolean(manifest.etsyMedia.video?.videoId),
     uploadMs: Date.now() - uploadStartedAt,
     originalImageBytes,
@@ -4406,6 +4428,47 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/fulfillment-review'))return;
     return sendHtml(res,200,renderFulfillmentReviewPage('Silvia Art Collective'));
   }
+  // One regular order's supplier submission (artelo-order-submission.mjs).
+  // diagnose and artelo-preview only read; artelo-submit sends ONE order and
+  // needs the live switches, the receipt in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS
+  // and a typed confirmation. Nothing here runs on its own.
+  const submissionRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})\/(diagnose|artelo-preview|artelo-submit|artelo-verify|submission-resolve)$/);
+  if(submissionRoute){
+    if(!requireAdminApi(req,res))return;
+    const [,id,action]=submissionRoute;
+    const post=['artelo-submit','artelo-verify','submission-resolve'].includes(action);
+    if(post!==(req.method==='POST'))return sendJson(res,405,{ok:false,error:'Method not allowed.'});
+    if(post){
+      const origin=String(req.headers.origin||'');
+      const expected=(req.headers['x-forwarded-proto']||'https')+'://'+String(req.headers.host||'');
+      if((origin&&origin!==expected)||req.headers['sec-fetch-site']==='cross-site')
+        return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+      if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+        return sendJson(res,415,{ok:false,error:'JSON request required.'});
+    }
+    try{
+      const session=await getEtsySession();
+      const shopId=Number(session.shop.shop_id);
+      const deps={trackingRecord:readTrackingRecord};
+      if(action==='diagnose')return sendJson(res,200,{ok:true,diagnosis:await diagnoseOrder(id,{shopId,deps})});
+      if(action==='artelo-verify')return sendJson(res,200,{ok:true,...await verifyArteloSubmission(id)});
+      if(action==='submission-resolve')return sendJson(res,200,{ok:true,submission:await resolveSubmission(id,await readJsonBody(req))});
+      // The live Etsy receipt: payment, shipping state and address as of now.
+      const latest=await getShopReceipt({shopId,receiptId:id,keystring:session.keystring,
+        sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+      if(!Array.isArray(latest.transactions)||!latest.transactions.length)
+        latest.transactions=await receiptTransactions(session,id);
+      if(action==='artelo-preview'){
+        const preview=await previewArteloOrder(id,{shopId,latestReceipt:latest,deps});
+        delete preview._payload;delete preview._planSignature;
+        return sendJson(res,200,{ok:true,preview});
+      }
+      const submission=await submitArteloOrder(id,await readJsonBody(req),{shopId,latestReceipt:latest,deps});
+      return sendJson(res,200,{ok:true,submission});
+    }catch(error){
+      return sendJson(res,400,{ok:false,error:String(error.message||error),...(error.record?{submission:error.record}:{})});
+    }
+  }
   const regularRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})(?:\/(prepare|approve))?$/);
   if(regularRoute && req.method==='GET' && !regularRoute[2]){
     if(!requireAdminApi(req,res))return;
@@ -4522,6 +4585,13 @@ const server = http.createServer(async (req, res) => {
       if(url.searchParams.get('download')==='1'){
         const csv=csvJobResult(id);
         if(!csv)return sendJson(res,409,{ok:false,error:'CSV not yet ready. Wait for preparation to finish.'});
+        // The order's one supplier becomes Sensaria (supplier-order-ledger.mjs),
+        // so it is not also sent to Artelo; reassigning it takes a typed confirmation.
+        try{
+          const ledger=ledgerStore(),record=await ledger.read(id);
+          if(!record||(record.state==='prepared'&&record.provider!=='sensaria'))
+            await ledger.write(id,transition(record,'prepared',{provider:'sensaria',fields:{receiptId:id},note:'Sensaria CSV downloaded for a manual order.'}));
+        }catch(error){console.warn('[supplier ledger] '+id+': '+String(error.message||error));}
         res.writeHead(200,{
           'content-type':'text/csv; charset=utf-8',
           'content-disposition':'attachment; filename="sensaria-etsy-'+id+'.csv"',
@@ -4542,6 +4612,8 @@ const server = http.createServer(async (req, res) => {
     if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
       return sendJson(res,415,{ok:false,error:'JSON request required.'});
     try{
+      const held=await otherSupplierHolds(id,'sensaria');
+      if(held)return sendJson(res,409,{ok:false,error:held});
       const job=startCsvJob(id,async stage=>{
         stage('Checking Etsy payment and current order details');
         const session=await getEtsySession();
@@ -5383,7 +5455,7 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/daily-listings'))return;
     return sendHtml(res,200,renderDailyListingsPage());
   }
-  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js','/artwork-files-client.js','/artwork-library-client.js'].includes(url.pathname)){
+  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js','/artwork-files-client.js','/artwork-library-client.js','/supplier-order-client.js'].includes(url.pathname)){
     if(!requireAdminApi(req,res))return;
     const js=readFileSync(new URL('.'+url.pathname,import.meta.url),'utf8');
     res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
@@ -5989,7 +6061,9 @@ const server = http.createServer(async (req, res) => {
   if ((req.method==='POST'&&(
      url.pathname==='/api/listing-converter/reconvert/reserve'||
      url.pathname==='/api/listing-converter/reconvert/crop'||
-     url.pathname==='/api/listing-converter/reconvert/activate'
+     url.pathname==='/api/listing-converter/reconvert/activate'||
+     url.pathname==='/api/listing-converter/reconvert/own-crops'||
+     url.pathname==='/api/listing-converter/reconvert/own-crops/verify'
   ))||(req.method==='GET'&&url.pathname==='/api/listing-converter/reconvert/status')){
     if(!requireAdminApi(req,res))return;
     if(req.method==='POST'){
@@ -6047,6 +6121,11 @@ const server = http.createServer(async (req, res) => {
      }
      if(!/^[0-9a-f-]{36}$/i.test(String(body.revision||'')))
       return sendJson(res,400,{ok:false,error:'Missing artwork revision ID.'});
+     // Your own crops (one JPEG per ratio) instead of the PC worker's.
+     if(url.pathname.endsWith('/own-crops'))
+      return sendJson(res,200,{ok:true,...await reserveOwnCrops({shopId,listingId,artworkId,revision:String(body.revision),crops:body.crops})});
+     if(url.pathname.endsWith('/own-crops/verify'))
+      return sendJson(res,200,{ok:true,...await verifyOwnCrops({shopId,listingId,artworkId,revision:String(body.revision)})});
      if(url.pathname.endsWith('/activate')){
       // Listings editor "Re-upload artwork": Etsy variants, SKUs and prices are
       // unchanged, so the verified master + crops are promoted into the
@@ -7004,6 +7083,18 @@ server.listen(port, '0.0.0.0', () => {
   if(AUTO_REVIEW_ENABLED){
     setTimeout(()=>{void reconcileNewEtsyPaidOrders();},30000).unref();
     setInterval(()=>{void reconcileNewEtsyPaidOrders();},AUTO_REVIEW_INTERVAL_MS).unref();
+  }
+  // Etsy tracking for orders this app sent to Artelo (artelo-auto-tracking.mjs),
+  // only with ARTELO_AUTO_TRACKING_ENABLED=true.
+  if(autoTrackingSettings().enabled){
+    const track=async()=>{
+      try{
+        const {results}=await syncArteloTracking(await getEtsySession());
+        for(const r of results)console.log('[artelo tracking] '+r.receiptId+': '+r.outcome+(r.trackingNumber?' '+r.carrier+' '+r.trackingNumber:'')+(r.reason?' · '+r.reason:'')+(r.artelo?' · Artelo '+r.artelo:''));
+      }catch(error){console.error('[artelo tracking] run failed: '+String(error.message||error));}
+    };
+    setTimeout(()=>{void track();},3*60*1000).unref();
+    setInterval(()=>{void track();},ARTELO_TRACKING_INTERVAL_MS).unref();
   }
   if(gmailOAuthConfigured()){
     const poll=async()=>{

@@ -24,7 +24,7 @@ table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:9px;bord
 <a href="/orders">All Orders</a><a class="nav active" href="/fulfillment-review">Fulfillment Review</a>
 <a href="/tracking">Tracking</a></nav></aside><main>
 <h1>Supplier Fulfillment Review</h1><p class="sub">__SHOP__ · Automatic live supplier recommendations · Human approval</p>
-<div class="note">Review mode only. No supplier orders are placed from this page. Sensaria remains a manual CSV workflow. Live comparisons may include modeled shipping or contingency costs; verify the exact shipping address, product variant and final invoice before purchasing.</div>
+<div class="note">No supplier order is ever placed automatically. An approved Artelo order can be sent on its own from "Order status" below, only when its receipt is authorized in Render. Sensaria remains a manual CSV workflow. Live comparisons may include modeled shipping or contingency costs; verify the exact shipping address, product variant and final invoice before purchasing.</div>
 <div class="card"><h2>Find an Etsy receipt</h2>
 <div class="row"><input id="receipt" type="text" inputmode="numeric" placeholder="Etsy receipt ID" aria-label="Etsy receipt ID">
 <button id="load">View recommendation</button><button id="prepare" class="primary">Refresh live supplier quote</button></div>
@@ -36,8 +36,12 @@ table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:9px;bord
 <label><input type="checkbox" id="check-variant"> I verified the supplier, product, size, frame and variant.</label>
 <label><input type="checkbox" id="check-price"> I verified the current supplier total and order margin.</label></div>
 <button id="approve" class="primary">Approve for manual supplier placement</button>
-<p class="sub">Approval does not buy anything or transmit customer details to a supplier. A submission workflow will be added only after provider-specific production testing.</p>
-</section></main></div><script>
+<p class="sub">Approval does not buy anything or transmit customer details to a supplier.</p>
+</section>
+<section class="card"><h2>Order status</h2>
+<p class="sub">Where this order is: imported, paid, recommended supplier, approval, supplier submission and supplier order ID. Diagnose and Preview only read.</p>
+<div id="supplier-order-panel"></div>
+</section></main></div><script src="/supplier-order-client.js"></script><script>
 (()=>{
 const $=id=>document.getElementById(id),set=(id,v)=>$(id).textContent=String(v??'');
 const report=(v,err)=>{$('message').textContent=v;$('message').className=err?'error':'';};
@@ -50,7 +54,7 @@ async function api(path,body){
 }
 async function run(fn){if(busy)return;busy=true;for(const x of document.querySelectorAll('button'))x.disabled=true;
  try{await fn()}catch(e){report(e.message||String(e),true)}finally{busy=false;for(const x of document.querySelectorAll('button'))x.disabled=false}}
-function id(){const v=$('receipt').value.trim();if(!/^[1-9]\d{0,19}$/.test(v))throw Error('Enter a numeric Etsy receipt ID');return v}
+function id(){const v=$('receipt').value.trim().replace(/^#/,'');if(!/^[1-9][0-9]{0,19}$/.test(v))throw Error('Enter a numeric Etsy receipt ID');return v}
 function show(p){
  plan=p;$('details').hidden=!p;if(!p)return;
  const box=$('plan');box.replaceChildren();
@@ -102,8 +106,10 @@ $('approve').addEventListener('click',()=>run(async()=>{
  await api('/api/fulfillment-review/'+id()+'/approve',{confirm:'APPROVE FOR REVIEW',
  addressVerified:checks[0],artworkVerified:checks[1],variantVerified:checks[2],priceVerified:checks[3]});
  report('Approved for manual supplier placement. Nothing was purchased.');}));
+// Order status: the shared supplier-order panel (supplier-order-client.js).
+window.SupplierOrderPanel?.mount($('supplier-order-panel'),{receipt:id,report});
 const preset=new URLSearchParams(location.search).get('receipt');
-if(preset&&/^[1-9]\d{0,19}$/.test(preset)){
+if(preset&&/^[1-9][0-9]{0,19}$/.test(preset)){
  $('receipt').value=preset;$('load').click();
  let attempts=0;const tick=setInterval(async()=>{
    if(++attempts>12||plan){clearInterval(tick);return;}

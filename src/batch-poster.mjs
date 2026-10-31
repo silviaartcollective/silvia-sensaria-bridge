@@ -162,7 +162,10 @@ async function processItem(deps, item, mine) {
   const stopped = () => { if (!mine.stop) return false; item.status = 'waiting'; item.step = 'Stopped'; return true; };
   const saveArtwork = async () => {
     await step('Saving the artwork');
-    Object.assign(item, await deps.reserveArtwork(item));
+    // The artwork ID is kept as soon as it exists: a retry after a failure
+    // finishes that artwork (the upload already moved into it) instead of
+    // reserving another one with no upload.
+    Object.assign(item, await deps.reserveArtwork(item, async artworkId => { item.reservedArtworkId = artworkId; await save(deps); }));
     await save(deps);
   };
   try {
@@ -218,8 +221,10 @@ async function processItem(deps, item, mine) {
     }
     if (stopped()) return;
     // A draft whose setup was cut short (a restart) is set up again; Etsy keeps the one draft.
+    // A draft whose setup failed is set up again too (Try again): its old
+    // "failed" would otherwise be read back at once and nothing redone.
     for (let attempt = 1; ; attempt++) {
-      if (!item.listingId || attempt > 1) {
+      if (!item.listingId || attempt > 1 || (await deps.draftSetup(item.artworkId)).status === 'failed') {
         await step('Creating the Etsy draft');
         item.listingId = await deps.createDraft(item);
         await save(deps);

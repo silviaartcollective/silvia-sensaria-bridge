@@ -332,7 +332,9 @@ export function etsyCarrierCode(carrier) {
     'CANADA POST':'canada-post','PUROLATOR':'purolator',
     'DPD':'dpd','ONTRAC':'ontrac','OTHER':'other'
   };
-  const code=values[text(carrier).toUpperCase()];
+  // A service name such as "USPS Ground Advantage" counts as its carrier.
+  const name=text(carrier).toUpperCase().replace(/\s+/g,' ');
+  const code=values[name]||values[Object.keys(values).find(k=>name.startsWith(k+' '))];
   if(!code)throw new Error('Unknown Etsy carrier. Confirm tracking manually in Etsy.');
   return code;
 }
