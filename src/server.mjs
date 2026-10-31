@@ -67,7 +67,7 @@ import {
 } from './listing-conversion-queue.mjs';
 import {
  reserveConverterArtworkRevision,reserveConverterArtworkRegeneration,startConverterArtworkCrop,getConverterArtworkRevisionStatus,getConverterArtworkRevisionStatuses,
- assertConverterArtworkReady,activateConverterArtworkRevision
+ assertConverterArtworkReady,activateConverterArtworkRevision,reserveOwnCrops,verifyOwnCrops
 } from './converter-artwork-revision.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
 import {renderInternationalShippingPage} from './international-shipping-page.mjs';
@@ -6058,7 +6058,9 @@ const server = http.createServer(async (req, res) => {
   if ((req.method==='POST'&&(
      url.pathname==='/api/listing-converter/reconvert/reserve'||
      url.pathname==='/api/listing-converter/reconvert/crop'||
-     url.pathname==='/api/listing-converter/reconvert/activate'
+     url.pathname==='/api/listing-converter/reconvert/activate'||
+     url.pathname==='/api/listing-converter/reconvert/own-crops'||
+     url.pathname==='/api/listing-converter/reconvert/own-crops/verify'
   ))||(req.method==='GET'&&url.pathname==='/api/listing-converter/reconvert/status')){
     if(!requireAdminApi(req,res))return;
     if(req.method==='POST'){
@@ -6116,6 +6118,11 @@ const server = http.createServer(async (req, res) => {
      }
      if(!/^[0-9a-f-]{36}$/i.test(String(body.revision||'')))
       return sendJson(res,400,{ok:false,error:'Missing artwork revision ID.'});
+     // Your own crops (one JPEG per ratio) instead of the PC worker's.
+     if(url.pathname.endsWith('/own-crops'))
+      return sendJson(res,200,{ok:true,...await reserveOwnCrops({shopId,listingId,artworkId,revision:String(body.revision),crops:body.crops})});
+     if(url.pathname.endsWith('/own-crops/verify'))
+      return sendJson(res,200,{ok:true,...await verifyOwnCrops({shopId,listingId,artworkId,revision:String(body.revision)})});
      if(url.pathname.endsWith('/activate')){
       // Listings editor "Re-upload artwork": Etsy variants, SKUs and prices are
       // unchanged, so the verified master + crops are promoted into the
