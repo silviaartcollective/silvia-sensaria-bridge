@@ -58,9 +58,10 @@ export function buildArteloPayload({ receipt, plan, asset, prefix = 'SAC' }) {
   const orientation = orientationFor(asset?.orientation);
   if (!orientation) issues.push(`Artwork orientation "${asset?.orientation || 'unknown'}" has no Artelo equivalent (square artwork needs manual review).`);
   if (!asset?.url) issues.push('The production artwork has no download URL.');
+  // Artelo's address object: countryCode (ISO 3166), not country.
   const address = { name: words(receipt?.name), street1: words(receipt?.first_line), street2: words(receipt?.second_line),
-    city: words(receipt?.city), state: words(receipt?.state), zipcode: words(receipt?.zip), country: words(receipt?.country_iso).toUpperCase() };
-  for (const [field, label] of [['name', 'name'], ['street1', 'street'], ['city', 'city'], ['zipcode', 'postal code'], ['country', 'country']])
+    city: words(receipt?.city), state: words(receipt?.state), zipcode: words(receipt?.zip), countryCode: words(receipt?.country_iso).toUpperCase() };
+  for (const [field, label] of [['name', 'name'], ['street1', 'street'], ['city', 'city'], ['zipcode', 'postal code'], ['countryCode', 'country']])
     if (!address[field]) issues.push(`The Etsy shipping address has no ${label}.`);
   // Artelo's order API requires a state/region; Etsy omits it for some countries.
   if (!address.state) issues.push('Artelo requires a state/region and the Etsy address has none; enter it with Artelo support or in its dashboard.');
@@ -72,7 +73,8 @@ export function buildArteloPayload({ receipt, plan, asset, prefix = 'SAC' }) {
     channelName: 'Etsy',
     createdAt: created ? new Date(Number(created) * 1000).toISOString() : new Date().toISOString(),
     currency: words(receipt?.grandtotal?.currency_code || receipt?.total_price?.currency_code || 'USD').toUpperCase(),
-    customerAddress: { ...address, phone: '', email: '', company: '' },
+    // Etsy shares no buyer phone or email; empty fields are left out.
+    customerAddress: Object.fromEntries(Object.entries(address).filter(([, value]) => value)),
     items: [{
       orderItemId: words(transaction.transaction_id) || '1',
       productInfo: {
@@ -169,7 +171,7 @@ export async function previewArteloOrder(receiptId, { shopId, prefix = 'SAC', la
   if (!plan) blockers.push('No supplier recommendation has been prepared.');
   else if (plan.supplier !== 'artelo') blockers.push(`The recommended supplier is ${plan.provider || plan.supplier}, not Artelo.`);
   if (review.status !== 'approved_for_manual_order' || !review.approval?.planSignature || review.approval.planSignature !== plan?.signature)
-    blockers.push('Approve the Artelo recommendation on this page first (address, artwork, variant and price checked).');
+    blockers.push('Approve the Artelo recommendation on Fulfillment Review first (address, artwork, variant and price checked).');
   const ledger = await d.ledger.read(id);
   const blocked = blockedBy(ledger, 'artelo');
   if (blocked) blockers.push(blocked);
@@ -195,7 +197,11 @@ export async function previewArteloOrder(receiptId, { shopId, prefix = 'SAC', la
       if (price?.total == null) blockers.push('Artelo returned no total for this order.');
       else if (Number.isFinite(quotedProduct) && price.productionCost != null && Math.abs(price.productionCost - quotedProduct) > Math.max(2, quotedProduct * 0.15))
         blockers.push(`Artelo prices this product at $${price.productionCost.toFixed(2)}, not the approved $${quotedProduct.toFixed(2)}: check the product before submitting.`);
-    } catch (error) { blockers.push('Artelo price check failed: ' + (error?.message || error)); }
+    } catch (error) {
+      const phoneNote = payload.customerAddress.countryCode !== 'US' && !payload.customerAddress.phone
+        ? ' Artelo asks for a phone number on orders shipped outside the US, and Etsy does not share the buyer\'s phone: order this one in the Artelo dashboard.' : '';
+      blockers.push('Artelo price check failed: ' + (error?.message || error) + phoneNote);
+    }
   }
   const switches = [];
   if (!settings.masterEnabled) switches.push('FULFILLMENT_LIVE_SUBMISSION_ENABLED is not true');

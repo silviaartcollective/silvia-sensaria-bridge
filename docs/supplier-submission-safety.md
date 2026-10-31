@@ -87,6 +87,12 @@ that supplier's ordering step: Sensaria's CSV download, the Artelo panel
 PrintShrimp, a note to place the order in that supplier's dashboard, since the
 app has no order submission for them. Diagnose works for every order.
 
+Artelo's address object uses `countryCode` (not `country`); Etsy shares no
+buyer phone or email, so those are left out. Artelo asks for a phone number on
+orders shipped outside the US, so a non-US order may be refused at Preview:
+order it in the Artelo dashboard. When Artelo refuses a price check, Preview
+shows Artelo's full message, including the fields it rejected.
+
 Artelo's order API needs a state/region; Etsy omits it for some countries,
 which blocks the submission (order those by hand). Square artwork is held for
 manual review.

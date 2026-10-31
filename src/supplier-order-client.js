@@ -41,7 +41,7 @@ function previewText(p){
   line('Artelo order reference',p.payload?.orderId),
   line('Product',[item.catalogProductId,item.paperType,item.frameStyle,item.size,item.orientation].filter(Boolean).join(' · ')),
   line('Artwork',p.artwork?p.artwork.key+' ('+p.artwork.width+'×'+p.artwork.height+')':''),
-  line('Ship to',[a.name,a.street1,a.street2,a.city,a.state,a.zipcode,a.country].filter(Boolean).join(', ')),
+  line('Ship to',[a.name,a.street1,a.street2,a.city,a.state,a.zipcode,a.countryCode].filter(Boolean).join(', ')),
   line('Approved quote',money(c.approvedQuoteUsd)+' (with reserve '+money(c.approvedModeledUsd)+')'),
   line('Artelo price check',pc?money(pc.total)+' '+(pc.currency||'')+' = production '+money(pc.productionCost)+' + shipping '+money(pc.shippingCost)+' + tax '+money(pc.taxes):'not run'),
   line('Submission record',p.submission?p.submission.provider+' · '+p.submission.state:'none'),

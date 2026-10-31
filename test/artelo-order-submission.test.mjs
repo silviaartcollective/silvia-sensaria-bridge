@@ -99,7 +99,8 @@ test('live submission enabled and this receipt authorized: the one order is sent
   const payload = w.state.created[0].payload;
   assert.equal(payload.orderId, 'SAC-3456789012');
   assert.equal(payload.isTestOrder, false);
-  assert.deepEqual(payload.customerAddress, { name: 'Ada Buyer', street1: '12 Rue Example', street2: '', city: 'Toronto', state: 'ON', zipcode: 'M5H 2N2', country: 'CA', phone: '', email: '', company: '' });
+  // Artelo's address fields: countryCode, and no empty phone, email or street2.
+  assert.deepEqual(payload.customerAddress, { name: 'Ada Buyer', street1: '12 Rue Example', city: 'Toronto', state: 'ON', zipcode: 'M5H 2N2', countryCode: 'CA' });
   const info = payload.items[0].productInfo;
   assert.deepEqual([info.catalogProductId, info.paperType, info.frameStyle, info.frameColor, info.size, info.orientation],
     ['IndividualArtPrint', 'MattePoster', 'Unframed', null, 'x30x40', 'Vertical']);
@@ -226,6 +227,42 @@ test('preview: read-only Artelo price check of the exact order, with a different
   assert.match(gb.issues.join(' '), /requires a state\/region/);
   const square = buildArteloPayload({ receipt: receipt(), plan: plan(), asset: { ...asset, orientation: 'square' } });
   assert.match(square.issues.join(' '), /square artwork needs manual review/);
+});
+
+test('preview sends Artelo its own address fields and shows why Artelo refused the price check', async () => {
+  const us = receipt({ name: 'Jamie Moyle', first_line: '256 Lows Hollow Rd', city: 'Stewartsville', state: 'NJ', zip: '08886', country_iso: 'US' });
+  const seen = [];
+  const ok = world({ staged: us, artelo: { priceCheck: async payload => { seen.push(payload); return { total: 55.1, productionCost: 38, shippingCost: 14, currency: 'USD' }; } } });
+  await previewArteloOrder(RECEIPT, { shopId: SHOP, deps: ok.deps });
+  assert.deepEqual(seen[0].customerAddress, { name: 'Jamie Moyle', street1: '256 Lows Hollow Rd', city: 'Stewartsville', state: 'NJ', zipcode: '08886', countryCode: 'US' });
+  assert.ok(!('country' in seen[0].customerAddress));
+  // Outside the US with no phone (Etsy shares none), a refusal says so.
+  const refused = { priceCheck: async () => { throw new Error('Artelo API 400: Invalid Input'); } };
+  const ca = await previewArteloOrder(RECEIPT, { shopId: SHOP, deps: world({ artelo: refused }).deps });
+  assert.match(ca.blockers.join(' '), /Invalid Input Artelo asks for a phone number on orders shipped outside the US/);
+  const home = await previewArteloOrder(RECEIPT, { shopId: SHOP, deps: world({ staged: us, artelo: refused }).deps });
+  assert.match(home.blockers.join(' '), /Artelo price check failed: Artelo API 400: Invalid Input$/m);
+  assert.doesNotMatch(home.blockers.join(' '), /phone/);
+});
+
+test('an Artelo error keeps its field details', async () => {
+  const saved = { fetch: globalThis.fetch, key: process.env.ARTELO_API_KEY };
+  process.env.ARTELO_API_KEY = 'test-key';
+  let sent;
+  globalThis.fetch = async (url, options) => { sent = { url, body: JSON.parse(options.body) };
+    return new Response(JSON.stringify({ message: 'Invalid Input', errors: [{ field: 'customerAddress.countryCode', message: 'Required' }] }), { status: 400 }); };
+  try {
+    const { validateArteloOrderPriceCheck } = await import('../src/artelo.mjs');
+    const { payload } = buildArteloPayload({ receipt: receipt(), plan: plan(), asset });
+    await assert.rejects(validateArteloOrderPriceCheck(payload),
+      error => error.status === 400 && /^Artelo API 400: Invalid Input \{"errors":\[\{"field":"customerAddress\.countryCode"/.test(error.message));
+    assert.match(sent.url, /\/orders\/price-check$/);
+    assert.deepEqual(sent.body.items[0].productInfo.designs, [], 'no artwork link is sent for a price check');
+    assert.ok(!JSON.stringify(sent.body).includes('test-key'));
+  } finally {
+    globalThis.fetch = saved.fetch;
+    if (saved.key === undefined) delete process.env.ARTELO_API_KEY; else process.env.ARTELO_API_KEY = saved.key;
+  }
 });
 
 test('submission record rules: one supplier, no resubmission, unknown leaves only by verification', () => {
