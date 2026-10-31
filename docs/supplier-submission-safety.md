@@ -117,3 +117,34 @@ tracking) or canceled, and marks each order shipped once.
 `ETSY_SHIPMENT_SUBMISSION_ENABLED=false` also stops it. Each run is logged as
 `[artelo tracking]` lines in Render. "Label created" is not "shipped": the
 order is marked when Artelo reports it shipped.
+
+## Without the receipt list
+
+`SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS=all` lets any approved Artelo order be
+submitted from the app (Preview, dashboard check, typed confirmation) with no
+Render change per order. A list of receipts still limits it to those.
+
+## Automatic submission
+
+With `ARTELO_AUTO_SUBMIT_ENABLED=true` and both live switches, every 15
+minutes (while the service is awake) the app sends new paid orders whose
+recommended supplier is Artelo, with no one approving them, when every check
+passes:
+
+- the order was placed after automatic submission was switched on (the time
+  is recorded at startup; switching it off and on starts again from then), so
+  older orders are never sent automatically;
+- it is a new recommendation (awaiting approval) with no submission record of
+  any kind, so an order sent, rejected, uncertain, given to Sensaria or
+  fulfilled elsewhere is left to a person;
+- Preview's checks: paid, not shipped or canceled, address complete with a
+  state, artwork present and unchanged, and Artelo's price for the exact order
+  within max($2, 15%) of the quote;
+- fewer than `ARTELO_AUTO_SUBMIT_DAILY_LIMIT` orders (default 5) were sent
+  automatically today.
+
+An order that fails a check is held for a person (Fulfillment Review, as
+before) and not checked again until it is quoted again. Each order is sent
+once; an uncertain outcome is never retried. Runs are logged as
+`[artelo auto-submit]` lines in Render.
+

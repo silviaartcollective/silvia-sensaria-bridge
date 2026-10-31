@@ -26,7 +26,8 @@ import { renderTrackingPage } from './tracking-page.mjs';
 import {beginGmailAuthorization,finishGmailAuthorization,gmailConnectionStatus,disconnectGmail,gmailOAuthConfigured} from './gmail-oauth.mjs';
 import {scanSensariaGmail,gmailTrackingStatus,saveGmailTrackingSettings} from './sensaria-gmail-tracking.mjs';
 import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy, readTrackingRecord } from './order-tracking.mjs';
-import { diagnoseOrder, previewArteloOrder, submitArteloOrder, verifyArteloSubmission, resolveSubmission, otherSupplierHolds } from './artelo-order-submission.mjs';
+import { diagnoseOrder, previewArteloOrder, submitArteloOrder, verifyArteloSubmission, resolveSubmission, otherSupplierHolds,
+  autoSubmitArteloOrder, syncAutoSubmitActivation, submissionSettings } from './artelo-order-submission.mjs';
 import { ledgerStore, transition } from './supplier-order-ledger.mjs';
 import { syncArteloTracking, autoTrackingSettings, ARTELO_TRACKING_INTERVAL_MS } from './artelo-auto-tracking.mjs';
 
@@ -7073,6 +7074,34 @@ server.listen(port, '0.0.0.0', () => {
   if(AUTO_REVIEW_ENABLED){
     setTimeout(()=>{void reconcileNewEtsyPaidOrders();},30000).unref();
     setInterval(()=>{void reconcileNewEtsyPaidOrders();},AUTO_REVIEW_INTERVAL_MS).unref();
+  }
+  // New Artelo orders sent automatically (autoSubmitArteloOrder), only with
+  // ARTELO_AUTO_SUBMIT_ENABLED=true and both live switches; orders placed
+  // before it was switched on are never sent automatically.
+  void syncAutoSubmitActivation().then(since=>{if(since)console.log('[artelo auto-submit] on for orders placed since '+since);},
+    error=>console.error('[artelo auto-submit] activation: '+String(error.message||error)));
+  if(submissionSettings().autoEnabled){
+    let sweeping=false;
+    const sweep=async()=>{
+      if(sweeping)return;sweeping=true;
+      try{
+        const session=await getEtsySession(),shopId=Number(session.shop.shop_id);
+        const {orders}=await listOrders();
+        const candidates=orders.filter(o=>!o.error&&o.supplier==='artelo'&&o.status==='awaiting_supplier_approval'&&o.paid&&!o.shipped).slice(0,10);
+        for(const o of candidates){
+          try{
+            const latest=await getShopReceipt({shopId,receiptId:o.receiptId,keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+            if(!Array.isArray(latest.transactions)||!latest.transactions.length)latest.transactions=await receiptTransactions(session,o.receiptId);
+            const result=await autoSubmitArteloOrder(o.receiptId,{shopId,latestReceipt:latest,deps:{trackingRecord:readTrackingRecord}});
+            if(!['before_switch_on','already_held','not_artelo','off'].includes(result.status))
+              console.log('[artelo auto-submit] '+o.receiptId+': '+result.status+(result.record?' · Artelo order '+(result.record.supplierOrderId||'(no ID)'):'')+(result.reasons?' · '+result.reasons.join(' '):''));
+          }catch(error){console.error('[artelo auto-submit] '+o.receiptId+': '+String(error.message||error));}
+        }
+      }catch(error){console.error('[artelo auto-submit] sweep failed: '+String(error.message||error));}
+      finally{sweeping=false;}
+    };
+    setTimeout(()=>{void sweep();},4*60*1000).unref();
+    setInterval(()=>{void sweep();},15*60*1000).unref();
   }
   // Etsy tracking for orders this app sent to Artelo (artelo-auto-tracking.mjs),
   // only with ARTELO_AUTO_TRACKING_ENABLED=true.
