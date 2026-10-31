@@ -79,11 +79,13 @@ export function buildArteloPayload({ receipt, plan, asset, prefix = 'SAC' }) {
     customerAddress: Object.fromEntries(Object.entries(address).filter(([, value]) => value)),
     items: [{
       orderItemId: words(transaction.transaction_id) || '1',
-      // Artelo requires a frame color even for an unframed print (null is
-      // refused); frameStyle Unframed means no frame, and the price check
-      // against the approved unframed quote would catch a frame being charged.
+      // In an order the frame is chosen by frameColor, which Artelo requires
+      // (null is refused): Unframed for a print with no frame. NaturalOak was
+      // priced as a framed print ($11.87 + $6.37 for 8x10, against $4.06 +
+      // $4.91 unframed); the price check against the approved unframed quote
+      // blocks any frame charge.
       productInfo: {
-        catalogProductId: 'IndividualArtPrint', frameStyle: 'Unframed', frameColor: 'NaturalOak',
+        catalogProductId: 'IndividualArtPrint', frameStyle: 'Unframed', frameColor: 'Unframed',
         includeFramingService: false, includeHangingPins: false, includeMats: false,
         paperType: 'MattePoster', orientation: orientation || null, size: size || '',
         canvasDesignedFor: null, canvasBorderStyle: null,
