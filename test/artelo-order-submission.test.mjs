@@ -99,8 +99,8 @@ test('live submission enabled and this receipt authorized: the one order is sent
   const payload = w.state.created[0].payload;
   assert.equal(payload.orderId, 'SAC-3456789012');
   assert.equal(payload.isTestOrder, false);
-  // Artelo's address fields: countryCode, and no empty phone, email or street2.
-  assert.deepEqual(payload.customerAddress, { name: 'Ada Buyer', street1: '12 Rue Example', city: 'Toronto', state: 'ON', zipcode: 'M5H 2N2', countryCode: 'CA' });
+  // Artelo's address fields: the country code as country and countryCode, and no empty phone, email or street2.
+  assert.deepEqual(payload.customerAddress, { name: 'Ada Buyer', street1: '12 Rue Example', city: 'Toronto', state: 'ON', zipcode: 'M5H 2N2', country: 'CA', countryCode: 'CA' });
   const info = payload.items[0].productInfo;
   assert.deepEqual([info.catalogProductId, info.paperType, info.frameStyle, info.frameColor, info.size, info.orientation],
     ['IndividualArtPrint', 'MattePoster', 'Unframed', null, 'x30x40', 'Vertical']);
@@ -234,8 +234,7 @@ test('preview sends Artelo its own address fields and shows why Artelo refused t
   const seen = [];
   const ok = world({ staged: us, artelo: { priceCheck: async payload => { seen.push(payload); return { total: 55.1, productionCost: 38, shippingCost: 14, currency: 'USD' }; } } });
   await previewArteloOrder(RECEIPT, { shopId: SHOP, deps: ok.deps });
-  assert.deepEqual(seen[0].customerAddress, { name: 'Jamie Moyle', street1: '256 Lows Hollow Rd', city: 'Stewartsville', state: 'NJ', zipcode: '08886', countryCode: 'US' });
-  assert.ok(!('country' in seen[0].customerAddress));
+  assert.deepEqual(seen[0].customerAddress, { name: 'Jamie Moyle', street1: '256 Lows Hollow Rd', city: 'Stewartsville', state: 'NJ', zipcode: '08886', country: 'US', countryCode: 'US' });
   // Outside the US with no phone (Etsy shares none), a refusal says so.
   const refused = { priceCheck: async () => { throw new Error('Artelo API 400: Invalid Input'); } };
   const ca = await previewArteloOrder(RECEIPT, { shopId: SHOP, deps: world({ artelo: refused }).deps });
@@ -245,17 +244,27 @@ test('preview sends Artelo its own address fields and shows why Artelo refused t
   assert.doesNotMatch(home.blockers.join(' '), /phone/);
 });
 
-test('an Artelo error keeps its field details', async () => {
+test('an Artelo error names each rejected field, with long value lists cut short', async () => {
   const saved = { fetch: globalThis.fetch, key: process.env.ARTELO_API_KEY };
   process.env.ARTELO_API_KEY = 'test-key';
+  const countries = ['US', 'AD', 'AE', 'AF', ...Array.from({ length: 245 }, (_, i) => 'Q' + i)];
+  const bodies = [
+    // Artelo's validation answer (receipt 4217901308): one issue per field.
+    { message: 'Invalid Input', data: { issues: [{ code: 'invalid_value', values: countries, path: ['customerAddress', 'country'],
+      message: 'Invalid option: expected one of ' + countries.map(c => '"' + c + '"').join('|') }] } },
+    { message: 'Invalid Input', errors: [{ field: 'items.0.productInfo.size', message: 'Required' }] },
+    { message: 'Invalid Input', detail: { list: countries } }
+  ];
   let sent;
   globalThis.fetch = async (url, options) => { sent = { url, body: JSON.parse(options.body) };
-    return new Response(JSON.stringify({ message: 'Invalid Input', errors: [{ field: 'customerAddress.countryCode', message: 'Required' }] }), { status: 400 }); };
+    return new Response(JSON.stringify(bodies.shift()), { status: 400 }); };
   try {
     const { validateArteloOrderPriceCheck } = await import('../src/artelo.mjs');
     const { payload } = buildArteloPayload({ receipt: receipt(), plan: plan(), asset });
-    await assert.rejects(validateArteloOrderPriceCheck(payload),
-      error => error.status === 400 && /^Artelo API 400: Invalid Input \{"errors":\[\{"field":"customerAddress\.countryCode"/.test(error.message));
+    await assert.rejects(validateArteloOrderPriceCheck(payload), error => error.status === 400 &&
+      error.message === 'Artelo API 400: Invalid Input: customerAddress.country: Invalid option (one of US, AD, AE, AF … 249 values)');
+    await assert.rejects(validateArteloOrderPriceCheck(payload), { message: 'Artelo API 400: Invalid Input: items.0.productInfo.size: Required' });
+    await assert.rejects(validateArteloOrderPriceCheck(payload), { message: 'Artelo API 400: Invalid Input {"detail":{"list":["US","AD","AE","AF","… 249 values"]}}' });
     assert.match(sent.url, /\/orders\/price-check$/);
     assert.deepEqual(sent.body.items[0].productInfo.designs, [], 'no artwork link is sent for a price check');
     assert.ok(!JSON.stringify(sent.body).includes('test-key'));
