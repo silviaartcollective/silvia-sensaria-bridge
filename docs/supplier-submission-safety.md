@@ -68,8 +68,8 @@ and `fulfilled_elsewhere`.
 1. All Orders → select the order (or Fulfillment Review → enter the receipt)
    → **Diagnose this order**. Both pages show the same supplier-order panel.
 2. **Preview Artelo order**: the exact product (IndividualArtPrint, Matte
-   Poster, unframed, size, orientation; Artelo requires a frame color even
-   unframed, so NaturalOak is sent with frame style Unframed), artwork, shipping address and Artelo's
+   Poster, unframed, size, orientation; in an order Artelo reads the frame
+   from frameColor, so Unframed is sent there), artwork, shipping address and Artelo's
    own price check (production, shipping, tax, total) of the same order input,
    artwork link included, as Artelo requires. No order is created.
    A price far from the approved quote blocks the submission.

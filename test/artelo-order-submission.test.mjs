@@ -103,7 +103,7 @@ test('live submission enabled and this receipt authorized: the one order is sent
   assert.deepEqual(payload.customerAddress, { name: 'Ada Buyer', street1: '12 Rue Example', city: 'Toronto', state: 'ON', zipcode: 'M5H 2N2', country: 'CA', countryCode: 'CA' });
   const info = payload.items[0].productInfo;
   assert.deepEqual([info.catalogProductId, info.paperType, info.frameStyle, info.frameColor, info.size, info.orientation],
-    ['IndividualArtPrint', 'MattePoster', 'Unframed', 'NaturalOak', 'x30x40', 'Vertical']);
+    ['IndividualArtPrint', 'MattePoster', 'Unframed', 'Unframed', 'x30x40', 'Vertical']);
   assert.equal(info.designs[0].sourceImage.url, asset.url);
   assert.equal(payload.items[0].unitPrice, 99);
   assert.equal(w.state.review.status, 'supplier_submitted');
@@ -227,6 +227,18 @@ test('preview: read-only Artelo price check of the exact order, with a different
   assert.match(gb.issues.join(' '), /requires a state\/region/);
   const square = buildArteloPayload({ receipt: receipt(), plan: plan(), asset: { ...asset, orientation: 'square' } });
   assert.match(square.issues.join(' '), /square artwork needs manual review/);
+});
+
+test('receipt 4217901308: the framed price is blocked, Artelo\'s unframed price passes', async () => {
+  const eightByTen = { review: approvedReview({ regularPlan: plan({ size: '8x10', quotedTotalUsd: 8.97, modeledLandedUsd: 9.87, shippingUsd: 4.91, quoteDetails: { apiSize: 'x8x10' } }) }) };
+  const seen = [];
+  const answer = production => ({ priceCheck: async payload => { seen.push(payload.items[0].productInfo); return { total: production + 6.37, productionCost: production, shippingCost: 6.37, currency: 'USD' }; } });
+  const framed = await previewArteloOrder(RECEIPT, { shopId: SHOP, deps: world({ ...eightByTen, artelo: answer(11.87) }).deps });
+  assert.match(framed.blockers.join(' '), /Artelo prices this product at \$11\.87, not the approved \$4\.06/);
+  const unframed = await previewArteloOrder(RECEIPT, { shopId: SHOP, deps: world({ ...eightByTen, artelo: answer(4.06) }).deps });
+  assert.deepEqual(unframed.blockers, []);
+  assert.equal(unframed.ready, true);
+  assert.deepEqual([seen[1].frameColor, seen[1].frameStyle, seen[1].size], ['Unframed', 'Unframed', 'x8x10']);
 });
 
 test('preview sends Artelo its own address fields and shows why Artelo refused the price check', async () => {
