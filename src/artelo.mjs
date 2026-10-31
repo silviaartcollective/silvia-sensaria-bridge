@@ -61,7 +61,9 @@ function cleanErrorBody(text) {
   }
 }
 
-async function arteloRequest(pathname, { method = 'GET', body } = {}) {
+// timeoutMs (optional) aborts a request that has not answered; the caller
+// then cannot know whether Artelo acted on it.
+async function arteloRequest(pathname, { method = 'GET', body, timeoutMs } = {}) {
   const apiToken = token();
   if (!apiToken) throw new Error('ARTELO_API_KEY is not configured');
 
@@ -69,21 +71,30 @@ async function arteloRequest(pathname, { method = 'GET', body } = {}) {
     ? pathname
     : `${ARTELO_API_BASE}${pathname.startsWith('/') ? '' : '/'}${pathname}`;
 
-  const response = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${apiToken}`,
-      'User-Agent': 'Silvia-Art-Collective',
-      Accept: 'application/json',
-      ...(body ? { 'Content-Type': 'application/json;charset=utf-8' } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  let response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        'User-Agent': 'Silvia-Art-Collective',
+        Accept: 'application/json',
+        ...(body ? { 'Content-Type': 'application/json;charset=utf-8' } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller?.signal
+    });
+  } catch (error) {
+    if (controller?.signal.aborted) throw Object.assign(new Error(`Artelo API did not answer within ${Math.round(timeoutMs / 1000)} seconds.`), { timeout: true });
+    throw Object.assign(new Error(`Artelo API could not be reached: ${error?.message || error}`), { network: true });
+  } finally { if (timer) clearTimeout(timer); }
 
   const text = await response.text();
   if (!response.ok) {
     const detail = cleanErrorBody(text);
-    throw new Error(`Artelo API ${response.status}${detail ? `: ${detail}` : ''}`);
+    throw Object.assign(new Error(`Artelo API ${response.status}${detail ? `: ${detail}` : ''}`), { status: response.status });
   }
   if (!text) return null;
   return JSON.parse(text);
@@ -103,7 +114,7 @@ function destinationByCode(code) {
   };
 }
 
-function apiSizeFromLabel(size) {
+export function apiSizeFromLabel(size) {
   const text = String(size || '').trim().toLowerCase().replace(/[×]/g, 'x').replace(/\s+/g, '');
   const match = text.match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/);
   if (!match) return null;
@@ -226,7 +237,7 @@ export async function getArteloOrder(orderId) {
   if(!id||id.length>120||/[\r\n]/.test(id))throw new Error('Valid Artelo order ID required.');
   return arteloRequest('/orders/get-by-id?orderId='+encodeURIComponent(id));
 }
-export async function createArteloOrder(payload = {}) {
+export async function createArteloOrder(payload = {}, { timeoutMs } = {}) {
   if(String(process.env.FULFILLMENT_LIVE_SUBMISSION_ENABLED||'').toLowerCase()!=='true' ||
      String(process.env.ARTELO_FULFILLMENT_ENABLED||'').toLowerCase()!=='true')
     throw new Error('Artelo production order submission is disabled.');
@@ -245,7 +256,8 @@ export async function createArteloOrder(payload = {}) {
 
   return arteloRequest('/orders/create', {
     method: 'POST',
-    body: payload
+    body: payload,
+    timeoutMs
   });
 }
 

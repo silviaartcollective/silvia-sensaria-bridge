@@ -34,6 +34,10 @@ services:
         value: "false"
       - key: ARTELO_FULFILLMENT_ENABLED
         value: "false"
+      # Receipts that may be sent to a supplier one at a time from Fulfillment
+      # Review (comma-separated). Empty: none. See docs/supplier-submission-safety.md.
+      - key: SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS
+        sync: false
       - key: ARTELO_TEST_ORDER_ENABLED
         value: "false"
       - key: PRINTSHRIMP_FULFILLMENT_ENABLED

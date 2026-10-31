@@ -25,7 +25,9 @@ import { decorateAdminHtml } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
 import {beginGmailAuthorization,finishGmailAuthorization,gmailConnectionStatus,disconnectGmail,gmailOAuthConfigured} from './gmail-oauth.mjs';
 import {scanSensariaGmail,gmailTrackingStatus,saveGmailTrackingSettings} from './sensaria-gmail-tracking.mjs';
-import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy } from './order-tracking.mjs';
+import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy, readTrackingRecord } from './order-tracking.mjs';
+import { diagnoseOrder, previewArteloOrder, submitArteloOrder, verifyArteloSubmission, resolveSubmission, otherSupplierHolds } from './artelo-order-submission.mjs';
+import { ledgerStore, transition } from './supplier-order-ledger.mjs';
 
 const TRACKING_SHOP_NAME="Silvia Art Collective";
 import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
@@ -4406,6 +4408,47 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/fulfillment-review'))return;
     return sendHtml(res,200,renderFulfillmentReviewPage('Silvia Art Collective'));
   }
+  // One regular order's supplier submission (artelo-order-submission.mjs).
+  // diagnose and artelo-preview only read; artelo-submit sends ONE order and
+  // needs the live switches, the receipt in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS
+  // and a typed confirmation. Nothing here runs on its own.
+  const submissionRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})\/(diagnose|artelo-preview|artelo-submit|artelo-verify|submission-resolve)$/);
+  if(submissionRoute){
+    if(!requireAdminApi(req,res))return;
+    const [,id,action]=submissionRoute;
+    const post=['artelo-submit','artelo-verify','submission-resolve'].includes(action);
+    if(post!==(req.method==='POST'))return sendJson(res,405,{ok:false,error:'Method not allowed.'});
+    if(post){
+      const origin=String(req.headers.origin||'');
+      const expected=(req.headers['x-forwarded-proto']||'https')+'://'+String(req.headers.host||'');
+      if((origin&&origin!==expected)||req.headers['sec-fetch-site']==='cross-site')
+        return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+      if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+        return sendJson(res,415,{ok:false,error:'JSON request required.'});
+    }
+    try{
+      const session=await getEtsySession();
+      const shopId=Number(session.shop.shop_id);
+      const deps={trackingRecord:readTrackingRecord};
+      if(action==='diagnose')return sendJson(res,200,{ok:true,diagnosis:await diagnoseOrder(id,{shopId,deps})});
+      if(action==='artelo-verify')return sendJson(res,200,{ok:true,...await verifyArteloSubmission(id)});
+      if(action==='submission-resolve')return sendJson(res,200,{ok:true,submission:await resolveSubmission(id,await readJsonBody(req))});
+      // The live Etsy receipt: payment, shipping state and address as of now.
+      const latest=await getShopReceipt({shopId,receiptId:id,keystring:session.keystring,
+        sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+      if(!Array.isArray(latest.transactions)||!latest.transactions.length)
+        latest.transactions=await receiptTransactions(session,id);
+      if(action==='artelo-preview'){
+        const preview=await previewArteloOrder(id,{shopId,latestReceipt:latest,deps});
+        delete preview._payload;delete preview._planSignature;
+        return sendJson(res,200,{ok:true,preview});
+      }
+      const submission=await submitArteloOrder(id,await readJsonBody(req),{shopId,latestReceipt:latest,deps});
+      return sendJson(res,200,{ok:true,submission});
+    }catch(error){
+      return sendJson(res,400,{ok:false,error:String(error.message||error),...(error.record?{submission:error.record}:{})});
+    }
+  }
   const regularRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})(?:\/(prepare|approve))?$/);
   if(regularRoute && req.method==='GET' && !regularRoute[2]){
     if(!requireAdminApi(req,res))return;
@@ -4522,6 +4565,13 @@ const server = http.createServer(async (req, res) => {
       if(url.searchParams.get('download')==='1'){
         const csv=csvJobResult(id);
         if(!csv)return sendJson(res,409,{ok:false,error:'CSV not yet ready. Wait for preparation to finish.'});
+        // The order's one supplier becomes Sensaria (supplier-order-ledger.mjs),
+        // so it is not also sent to Artelo; reassigning it takes a typed confirmation.
+        try{
+          const ledger=ledgerStore(),record=await ledger.read(id);
+          if(!record||(record.state==='prepared'&&record.provider!=='sensaria'))
+            await ledger.write(id,transition(record,'prepared',{provider:'sensaria',fields:{receiptId:id},note:'Sensaria CSV downloaded for a manual order.'}));
+        }catch(error){console.warn('[supplier ledger] '+id+': '+String(error.message||error));}
         res.writeHead(200,{
           'content-type':'text/csv; charset=utf-8',
           'content-disposition':'attachment; filename="sensaria-etsy-'+id+'.csv"',
@@ -4542,6 +4592,8 @@ const server = http.createServer(async (req, res) => {
     if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
       return sendJson(res,415,{ok:false,error:'JSON request required.'});
     try{
+      const held=await otherSupplierHolds(id,'sensaria');
+      if(held)return sendJson(res,409,{ok:false,error:held});
       const job=startCsvJob(id,async stage=>{
         stage('Checking Etsy payment and current order details');
         const session=await getEtsySession();
