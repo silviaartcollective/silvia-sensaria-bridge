@@ -58,9 +58,11 @@ export function buildArteloPayload({ receipt, plan, asset, prefix = 'SAC' }) {
   const orientation = orientationFor(asset?.orientation);
   if (!orientation) issues.push(`Artwork orientation "${asset?.orientation || 'unknown'}" has no Artelo equivalent (square artwork needs manual review).`);
   if (!asset?.url) issues.push('The production artwork has no download URL.');
-  // Artelo's address object: countryCode (ISO 3166), not country.
+  // The ISO 3166 code goes in both country and countryCode: Artelo's order
+  // validation requires country (a code); its address object reads countryCode.
+  const countryCode = words(receipt?.country_iso).toUpperCase();
   const address = { name: words(receipt?.name), street1: words(receipt?.first_line), street2: words(receipt?.second_line),
-    city: words(receipt?.city), state: words(receipt?.state), zipcode: words(receipt?.zip), countryCode: words(receipt?.country_iso).toUpperCase() };
+    city: words(receipt?.city), state: words(receipt?.state), zipcode: words(receipt?.zip), country: countryCode, countryCode };
   for (const [field, label] of [['name', 'name'], ['street1', 'street'], ['city', 'city'], ['zipcode', 'postal code'], ['countryCode', 'country']])
     if (!address[field]) issues.push(`The Etsy shipping address has no ${label}.`);
   // Artelo's order API requires a state/region; Etsy omits it for some countries.

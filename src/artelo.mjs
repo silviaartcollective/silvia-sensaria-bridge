@@ -50,6 +50,20 @@ export function arteloConfigStatus() {
   };
 }
 
+const shortLists = (key, value) => Array.isArray(value) && value.length > 8 ? [...value.slice(0, 4), `… ${value.length} values`] : value;
+
+// "customerAddress.country: Invalid option (one of US, AD, AE, AF … 249 values)"
+// for each rejected field; an enum's allowed values are cut to a few.
+function describeIssues(issues) {
+  return issues.slice(0, 6).map(issue => {
+    const where = Array.isArray(issue?.path) ? issue.path.join('.') : String(issue?.path || issue?.field || '');
+    const said = String(issue?.message || issue?.code || 'invalid').replace(/:\s*expected one of[\s\S]*$/i, '').slice(0, 160);
+    const values = Array.isArray(issue?.values) && issue.values.length
+      ? ` (one of ${issue.values.slice(0, 4).join(', ')}${issue.values.length > 4 ? ` … ${issue.values.length} values` : ''})` : '';
+    return `${where || 'request'}: ${said}${values}`;
+  }).join('; ');
+}
+
 function cleanErrorBody(text) {
   const value = String(text || '').trim();
   if (!value) return '';
@@ -57,10 +71,13 @@ function cleanErrorBody(text) {
     const parsed = JSON.parse(value);
     const message = parsed?.error_description || parsed?.error || parsed?.message;
     if (!message) return value.slice(0, 800);
-    // Keep whatever else Artelo sent (field-level validation errors) after its message.
-    const { error_description, error, message: _message, status, statusCode, ...rest } = parsed;
     const text = typeof message === 'string' ? message : JSON.stringify(message);
-    return Object.keys(rest).length ? `${text} ${JSON.stringify(rest).slice(0, 600)}` : text;
+    // Validation errors name each rejected field.
+    const issues = [parsed?.data?.issues, parsed?.issues, parsed?.errors].find(list => Array.isArray(list) && list.length);
+    if (issues) return `${text}: ${describeIssues(issues)}`;
+    // Keep whatever else Artelo sent after its message, long lists cut short.
+    const { error_description, error, message: _message, status, statusCode, ...rest } = parsed;
+    return Object.keys(rest).length ? `${text} ${JSON.stringify(rest, shortLists).slice(0, 600)}` : text;
   } catch {
     return value.slice(0, 800);
   }
