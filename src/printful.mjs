@@ -91,6 +91,14 @@ export async function getPrintfulProductPrices(productId, { currency = 'USD', fe
   return data;
 }
 
+// One catalog variant's prices: { currency, variant: { id, techniques: [...] } }.
+// Used when the product's price list does not include the variant.
+export async function getPrintfulVariantPrices(variantId, { currency = 'USD', fetchImpl } = {}) {
+  const data = dataOf(await printfulRequest(`/v2/catalog-variants/${encodeURIComponent(variantId)}/prices`, { fetchImpl, query: { currency } }), 'variant prices');
+  if (!data || typeof data !== 'object') throw new ProviderApiError(PROVIDER, 'malformed-response', 'Printful variant prices were empty.');
+  return data;
+}
+
 // A read-only quote, safe to repeat. recipient: { country_code, state_code, zip, city, address1 }
 export async function getPrintfulShippingRates({ recipient, items, currency = 'USD', fetchImpl } = {}) {
   const data = dataOf(await printfulRequest('/v2/shipping-rates', { method: 'POST', retry: true, fetchImpl,

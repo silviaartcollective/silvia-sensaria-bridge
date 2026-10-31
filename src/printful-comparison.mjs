@@ -4,7 +4,7 @@
 // shipping-rates endpoint to the country's reference address.
 import {
   printfulConfigStatus, listPrintfulCategories, listPrintfulProducts, listPrintfulVariants,
-  getPrintfulProductPrices, getPrintfulShippingRates
+  getPrintfulProductPrices, getPrintfulVariantPrices, getPrintfulShippingRates
 } from './printful.mjs';
 import { mapLimit, statusForError, ProviderApiError } from './provider-http.mjs';
 import { parseDimensions, sameSize, sizeLabel, shapeOf, finishFamily, wallArtFamily, rowKey, amount, quoteRecord, toUsd, PRODUCT_LABELS, FRAMED } from './supplier-catalog-match.mjs';
@@ -53,8 +53,9 @@ export async function loadPrintfulCatalog({ fresh = false, deps = {} } = {}) {
   return catalogPromise;
 }
 
-function variantPrice(prices, variantId) {
-  const row = (prices?.variants || []).find(v => Number(v?.id) === Number(variantId));
+export function variantPrice(prices, variantId) {
+  // A product price list ({ variants: [...] }) or one variant's ({ variant: {...} }).
+  const row = [...(prices?.variants || []), ...(prices?.variant ? [prices.variant] : [])].find(v => Number(v?.id) === Number(variantId));
   const offers = (row?.techniques || []).map(t => ({ technique: t?.technique_key || t?.technique_display_name || '',
     price: amount(t?.discounted_price) ?? amount(t?.price) })).filter(t => t.price != null && t.price > 0);
   offers.sort((a, b) => a.price - b.price);
@@ -77,8 +78,19 @@ async function quoteEntry(entry, countryCode, api) {
   const recipient = { country_code: address.countryCode, state_code: address.state || undefined, zip: address.postalCode || undefined,
     city: address.city || undefined, address1: address.address1 || undefined };
   const prices = await cached(priceCache, String(entry.product.id), () => api.getPrintfulProductPrices(entry.product.id, { currency: 'USD' }));
-  const price = variantPrice(prices, entry.variant.id);
-  if (!price) return { entry, status: 'price-unavailable', reason: `Printful returned no price for variant ${entry.variant.id}.` };
+  let price = variantPrice(prices, entry.variant.id);
+  // The product's price list may not include every variant: ask for this one.
+  if (!price) {
+    try {
+      price = variantPrice(await cached(priceCache, 'variant:' + entry.variant.id,
+        () => api.getPrintfulVariantPrices(entry.variant.id, { currency: 'USD' })), entry.variant.id);
+    } catch (error) {
+      return { entry, status: error instanceof ProviderApiError ? statusForError(error, 'price-unavailable') : 'price-unavailable',
+        reason: `Printful price for variant ${entry.variant.id} failed: ` + (error?.message || error) };
+    }
+  }
+  if (!price) return { entry, status: 'price-unavailable',
+    reason: `Printful returned no price for variant ${entry.variant.id} (its product price list had ${(prices?.variants || []).length} variants, and the variant's own price had none).` };
   let rates;
   try {
     rates = await cached(shippingCache, `${entry.variant.id}|${address.countryCode}`, () => api.getPrintfulShippingRates({ recipient,
@@ -94,7 +106,7 @@ async function quoteEntry(entry, countryCode, api) {
 }
 
 export async function scanPrintfulComparisonRows({ rows = [], countryCode, keyOf = rowKey, fresh = false, deps = {} } = {}) {
-  const api = { getPrintfulProductPrices, getPrintfulShippingRates, ...deps };
+  const api = { getPrintfulProductPrices, getPrintfulVariantPrices, getPrintfulShippingRates, ...deps };
   const result = new Map();
   if (!printfulConfigStatus().ready) {
     for (const row of rows) result.set(keyOf(row), quoteRecord({ provider: PROVIDER, status: 'not-configured', reason: 'PRINTFUL_API_TOKEN is not configured.' }));

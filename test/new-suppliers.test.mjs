@@ -121,6 +121,8 @@ function printfulDeps({ shipping } = {}) {
       { id: 301, techniques: [{ technique_key: 'digital', price: '29.00' }] },
       { id: 302, techniques: [{ technique_key: 'digital', price: '45.00' }] },
       { id: 6141, techniques: [{ technique_key: 'digital', price: '118.00' }] }].filter(v => String(v.id).startsWith(String(id))) }),
+    // Only variant 6142's own price exists beyond the product price lists.
+    getPrintfulVariantPrices: async id => ({ currency: 'USD', variant: Number(id) === 6142 ? { id: 6142, techniques: [{ technique_key: 'digital', price: '121.00' }] } : null }),
     getPrintfulShippingRates: async ({ recipient, items }) => {
       calls.shipping.push({ recipient, items });
       if (shipping) return shipping(recipient, items);
@@ -382,4 +384,11 @@ test('one supplier failing leaves the others; the winner is only "cheapest verif
   // 300 × 0.8 = 240 collected; 24 Etsy fee reserve; 0.20 listing fee; Lumaprints 130 + 20% reserve = 156.
   assert.equal(profits.suppliers.lumaprints.estimatedProfit.contributionUsd, 59.8);
   assert.equal(profits.suppliers.gooten.estimatedProfit, undefined);
+});
+
+test('Printful: a variant missing from its product price list is priced from its own price', async () => {
+  const { variantPrice } = await import('../src/printful-comparison.mjs');
+  assert.deepEqual(variantPrice({ currency: 'usd', variant: { id: 48495, techniques: [{ technique_key: 'digital', price: '17.25' }] } }, 48495),
+    { technique: 'digital', price: 17.25, currency: 'USD' });
+  assert.equal(variantPrice({ currency: 'USD', variants: [{ id: 1, techniques: [] }] }, 48495), null);
 });
