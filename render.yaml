@@ -42,6 +42,13 @@ services:
       # app sent to Artelo. See docs/supplier-submission-safety.md.
       - key: ARTELO_AUTO_TRACKING_ENABLED
         sync: false
+      # Send new Artelo-recommended orders automatically (with both live
+      # switches); only orders placed after it is switched on. Daily limit
+      # ARTELO_AUTO_SUBMIT_DAILY_LIMIT (default 5).
+      - key: ARTELO_AUTO_SUBMIT_ENABLED
+        sync: false
+      - key: ARTELO_AUTO_SUBMIT_DAILY_LIMIT
+        sync: false
       - key: ARTELO_TEST_ORDER_ENABLED
         value: "false"
       - key: PRINTSHRIMP_FULFILLMENT_ENABLED
