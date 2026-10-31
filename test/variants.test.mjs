@@ -53,13 +53,13 @@ test('includes mapped 8x10 poster with exact converted USD retail price', () => 
   assert.equal(eightByTen.sku, 'SAC0042-P-810');
   assert.equal(eightByTen.offerings[0].is_enabled, true);
   assert.equal(eightByTen.offerings[0].quantity, 999);
-  assert.equal(eightByTen.offerings[0].price, 36.98);
+  assert.equal(eightByTen.offerings[0].price, 34.50);
 });
 
 test('poster prices rise with size despite supplier cost anomalies', () => {
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_CAD.P['8x10'], 54.95);
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10'], 36.98);
-  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'], 40.34);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_CAD.P['8x10'], 51.26);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10'], 34.50);
+  assert.equal(SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'], 37.21);
   assert.ok(
     SILVIA_RETAIL_PRICE_LADDER_USD.P['11x14'] >
     SILVIA_RETAIL_PRICE_LADDER_USD.P['8x10']
@@ -109,4 +109,14 @@ test('framed canvas colours share one exact converted USD customer price per siz
   );
   assert.equal(natural.offerings[0].price, 136.65);
   assert.equal(black.offerings[0].price, 136.65);
+});
+
+test('poster prices match the old Gelato listings, and squares and panoramics follow by area', () => {
+  const shown = size => Math.round(SILVIA_RETAIL_PRICE_LADDER_USD.P[size] * 0.8 * 100) / 100;
+  const old = { '11x14': 29.77, '12x16': 30.41, '12x18': 31.05, '16x20': 32.94, '16x24': 34.22, '18x24': 35.16, '24x36': 51.07, '30x40': 57.43 };
+  for (const [size, price] of Object.entries(old)) assert.equal(shown(size), price, size);
+  for (const sequence of [['5x7', '8x10', '8x12', '11x14', '12x16', '12x18', '16x20', '16x24', '18x24', '20x30', '24x36', '30x40'],
+    ['5x5', '8x8', '10x10', '12x12', '16x16', '18x18', '20x20', '24x24', '30x30'], ['8x16', '10x20', '12x36', '20x40', '24x48']])
+    for (let i = 1; i < sequence.length; i++) assert.ok(shown(sequence[i]) > shown(sequence[i - 1]), sequence[i]);
+  assert.ok(shown('16x16') < shown('16x20'));
 });
