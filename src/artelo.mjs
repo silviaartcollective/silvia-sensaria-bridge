@@ -55,7 +55,12 @@ function cleanErrorBody(text) {
   if (!value) return '';
   try {
     const parsed = JSON.parse(value);
-    return parsed?.error_description || parsed?.error || parsed?.message || value;
+    const message = parsed?.error_description || parsed?.error || parsed?.message;
+    if (!message) return value.slice(0, 800);
+    // Keep whatever else Artelo sent (field-level validation errors) after its message.
+    const { error_description, error, message: _message, status, statusCode, ...rest } = parsed;
+    const text = typeof message === 'string' ? message : JSON.stringify(message);
+    return Object.keys(rest).length ? `${text} ${JSON.stringify(rest).slice(0, 600)}` : text;
   } catch {
     return value.slice(0, 800);
   }
@@ -171,7 +176,7 @@ export async function getArteloPriceCheck({
 
   const customerAddress = {
     city: String(address?.city || '').trim(),
-    country: destination.code,
+    countryCode: destination.code,
     phone: String(address?.phone || '+15555550100').trim(),
     name: String(address?.name || 'Silvia Art Collective Price Check').trim(),
     state: String(address?.state || '').trim(),
@@ -247,7 +252,7 @@ export async function createArteloOrder(payload = {}, { timeoutMs } = {}) {
   if (!payload?.orderId) throw new Error('Artelo order requires orderId');
   if (!payload?.createdAt) throw new Error('Artelo order requires createdAt');
   if (!payload?.currency) throw new Error('Artelo order requires currency');
-  if (!customerAddress?.city || !customerAddress?.country || !customerAddress?.name ||
+  if (!customerAddress?.city || !customerAddress?.countryCode || !customerAddress?.name ||
       !customerAddress?.state || !customerAddress?.street1 || !customerAddress?.zipcode) {
     throw new Error('Artelo order requires a complete customer address');
   }
@@ -276,8 +281,8 @@ export async function validateArteloOrderPriceCheck(payload = {}) {
   const items = Array.isArray(payload?.items) ? payload.items : [];
 
   if (!orderId) throw new Error('Artelo validation requires orderId');
-  if (!customerAddress?.city || !customerAddress?.country || !customerAddress?.street1 || !customerAddress?.zipcode) {
-    throw new Error('Artelo validation requires city, country, street1, and zipcode');
+  if (!customerAddress?.city || !customerAddress?.countryCode || !customerAddress?.street1 || !customerAddress?.zipcode) {
+    throw new Error('Artelo validation requires city, countryCode, street1, and zipcode');
   }
   if (!items.length) throw new Error('Artelo validation requires at least one item');
 

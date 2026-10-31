@@ -90,7 +90,7 @@ test('Fulfillment Review and Orders both load the one shared supplier-order pane
 
 const preview = {
   ready: true, blockers: [], switches: [], confirmation: 'SUBMIT 4217901308 TO ARTELO',
-  payload: { orderId: 'SAC-4217901308', customerAddress: { name: 'Ada', city: 'Austin', country: 'US' },
+  payload: { orderId: 'SAC-4217901308', customerAddress: { name: 'Ada', city: 'Austin', countryCode: 'US' },
     items: [{ productInfo: { catalogProductId: 'IndividualArtPrint', paperType: 'MattePoster', frameStyle: 'Unframed', size: 'TwelveByEighteen', orientation: 'Vertical' } }] },
   artwork: { key: 'art/1.jpg', width: 3600, height: 5400 },
   expectedCost: { approvedQuoteUsd: 21, approvedModeledUsd: 23, arteloPriceCheck: { total: 21.5, currency: 'USD', productionCost: 14, shippingCost: 6, taxes: 1.5 } }
