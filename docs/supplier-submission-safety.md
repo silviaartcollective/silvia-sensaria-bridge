@@ -99,3 +99,21 @@ shows Artelo's message and each field it rejected.
 Artelo's order API needs a state/region; Etsy omits it for some countries,
 which blocks the submission (order those by hand). Square artwork is held for
 manual review.
+
+## Etsy tracking for Artelo orders
+
+With `ARTELO_AUTO_TRACKING_ENABLED=true`, every hour (while the service is
+awake) the app looks at the orders it sent to Artelo (submission record
+submitted or accepted, with an Artelo order ID, from the last 60 days):
+
+1. links each one in Order Tracking to its Artelo order, if not linked yet;
+2. asks Artelo for the order's shipments;
+3. once Artelo reports it shipped with a tracking number, marks the Etsy
+   order shipped with that tracking and carrier. Etsy emails the buyer.
+
+It never touches an order sent to Artelo by hand, linked in Order Tracking to
+another supplier or order, or already shown on Etsy as shipped (with any
+tracking) or canceled, and marks each order shipped once.
+`ETSY_SHIPMENT_SUBMISSION_ENABLED=false` also stops it. Each run is logged as
+`[artelo tracking]` lines in Render. "Label created" is not "shipped": the
+order is marked when Artelo reports it shipped.

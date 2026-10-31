@@ -28,6 +28,7 @@ import {scanSensariaGmail,gmailTrackingStatus,saveGmailTrackingSettings} from '.
 import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy, readTrackingRecord } from './order-tracking.mjs';
 import { diagnoseOrder, previewArteloOrder, submitArteloOrder, verifyArteloSubmission, resolveSubmission, otherSupplierHolds } from './artelo-order-submission.mjs';
 import { ledgerStore, transition } from './supplier-order-ledger.mjs';
+import { syncArteloTracking, autoTrackingSettings, ARTELO_TRACKING_INTERVAL_MS } from './artelo-auto-tracking.mjs';
 
 const TRACKING_SHOP_NAME="Silvia Art Collective";
 import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
@@ -7053,6 +7054,18 @@ server.listen(port, '0.0.0.0', () => {
   if(AUTO_REVIEW_ENABLED){
     setTimeout(()=>{void reconcileNewEtsyPaidOrders();},30000).unref();
     setInterval(()=>{void reconcileNewEtsyPaidOrders();},AUTO_REVIEW_INTERVAL_MS).unref();
+  }
+  // Etsy tracking for orders this app sent to Artelo (artelo-auto-tracking.mjs),
+  // only with ARTELO_AUTO_TRACKING_ENABLED=true.
+  if(autoTrackingSettings().enabled){
+    const track=async()=>{
+      try{
+        const {results}=await syncArteloTracking(await getEtsySession());
+        for(const r of results)console.log('[artelo tracking] '+r.receiptId+': '+r.outcome+(r.trackingNumber?' '+r.carrier+' '+r.trackingNumber:'')+(r.reason?' · '+r.reason:'')+(r.artelo?' · Artelo '+r.artelo:''));
+      }catch(error){console.error('[artelo tracking] run failed: '+String(error.message||error));}
+    };
+    setTimeout(()=>{void track();},3*60*1000).unref();
+    setInterval(()=>{void track();},ARTELO_TRACKING_INTERVAL_MS).unref();
   }
   if(gmailOAuthConfigured()){
     const poll=async()=>{

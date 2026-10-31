@@ -38,6 +38,10 @@ services:
       # Review (comma-separated). Empty: none. See docs/supplier-submission-safety.md.
       - key: SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS
         sync: false
+      # Hourly: mark Etsy orders shipped with Artelo's tracking, for orders this
+      # app sent to Artelo. See docs/supplier-submission-safety.md.
+      - key: ARTELO_AUTO_TRACKING_ENABLED
+        sync: false
       - key: ARTELO_TEST_ORDER_ENABLED
         value: "false"
       - key: PRINTSHRIMP_FULFILLMENT_ENABLED
