@@ -269,7 +269,8 @@ test('an Artelo error names each rejected field, with long value lists cut short
     await assert.rejects(validateArteloOrderPriceCheck(payload), { message: 'Artelo API 400: Invalid Input: items.0.productInfo.size: Required' });
     await assert.rejects(validateArteloOrderPriceCheck(payload), { message: 'Artelo API 400: Invalid Input {"detail":{"list":["US","AD","AE","AF","… 249 values"]}}' });
     assert.match(sent.url, /\/orders\/price-check$/);
-    assert.deepEqual(sent.body.items[0].productInfo.designs, [], 'no artwork link is sent for a price check');
+    // The price check carries the order's one design, as Artelo requires.
+    assert.deepEqual(sent.body.items[0].productInfo.designs, [{ fitOptions: { canvas: 'Paper', style: 'Outside' }, sourceImage: { url: asset.url } }]);
     assert.ok(!JSON.stringify(sent.body).includes('test-key'));
   } finally {
     globalThis.fetch = saved.fetch;

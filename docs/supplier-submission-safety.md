@@ -70,7 +70,8 @@ and `fulfilled_elsewhere`.
 2. **Preview Artelo order**: the exact product (IndividualArtPrint, Matte
    Poster, unframed, size, orientation; Artelo requires a frame color even
    unframed, so NaturalOak is sent with frame style Unframed), artwork, shipping address and Artelo's
-   own price check (production, shipping, tax, total). No order is created.
+   own price check (production, shipping, tax, total) of the same order input,
+   artwork link included, as Artelo requires. No order is created.
    A price far from the approved quote blocks the submission.
 3. Check the Artelo dashboard has no order for the receipt.
 4. In Render set `FULFILLMENT_LIVE_SUBMISSION_ENABLED=true`,
