@@ -3,6 +3,7 @@ import {
   SILVIA_SALE_DISCOUNT_PERCENT,
   SILVIA_REFERENCE_CAD_PER_USD
 } from './variants.mjs';
+import { LISTING_FEE_USD } from './listing-fees.mjs';
 
 function round(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -41,6 +42,24 @@ export function retailCatalogLookup(ladder = SILVIA_RETAIL_PRICE_LADDER_USD) {
 
 export function loadRetailCatalogLookup() {
   return retailCatalogLookup();
+}
+
+// Each eligible supplier's own estimated contribution after Etsy fees, with the
+// same sale price, discount and Etsy fee reserve as the winner's estimate, less
+// Etsy's listing fee.
+export function withSupplierProfits(row, retailLookup, policy = profitScenarioPolicy()) {
+  const retailPriceUsd = retailLookup.get(`${row.productCode}|${row.size}`);
+  if (!Number.isFinite(retailPriceUsd) || retailPriceUsd <= 0 || !row?.suppliers) return row;
+  const salePriceUsd = round(retailPriceUsd * (1 - policy.saleDiscountPercent / 100));
+  const collectedUsd = round(salePriceUsd + policy.customerShippingUsd);
+  const etsyFeeReserveUsd = round(collectedUsd * policy.etsyFeeReservePercent / 100);
+  const suppliers = Object.fromEntries(Object.entries(row.suppliers).map(([key, record]) => {
+    const cost = Number(record?.modeledLandedUsd ?? record?.totalUsd);
+    if (!record?.eligible || !Number.isFinite(cost)) return [key, record];
+    return [key, { ...record, estimatedProfit: { salePriceUsd, etsyFeeReserveUsd, listingFeeUsd: LISTING_FEE_USD,
+      supplierUsd: round(cost), contributionUsd: round(collectedUsd - etsyFeeReserveUsd - LISTING_FEE_USD - cost) } }];
+  }));
+  return { ...row, suppliers };
 }
 
 export function withEstimatedMargin(row, retailLookup, policy = profitScenarioPolicy()) {
