@@ -96,3 +96,25 @@ test('one month picker at the top drives every section, and late answers for an 
   assert.match(client, /if\(mine!==asked\)return;/);
   assert.match(client, /if\(mine!==askedEtsy\)return;/);
 });
+
+test('the total is one amount in the shop\'s currency, ChatGPT converted at the day\'s rate', async () => {
+  const nodes = new Map();
+  const node = id => { if (!nodes.has(id)) nodes.set(id, { id, value: '', textContent: '', className: '', disabled: false, max: '', style: {},
+    classList: { add() {}, remove() {} }, addEventListener() {}, replaceChildren() {}, append() {} }); return nodes.get(id); };
+  const replies = {
+    '/api/listing-fees': { ok: true, currency: 'CAD', listing: { total: 5628, count: 201, byType: [] }, projected: null, other: [{ total: 18809 }], skipped: [], charges: [] },
+    '/api/expenses/chatgpt': { ok: true, usage: { calls: 3, inputTokens: 1, outputTokens: 1, estimatedUsd: 0.803, byModel: {} }, billed: null, adminKeyConfigured: false },
+    '/api/expenses/fx': { ok: true, currency: 'CAD', perUsd: 1.4 }
+  };
+  const sandbox = { document: { getElementById: node, querySelectorAll: () => [], createElement: () => node(Symbol()) }, URLSearchParams, Date, Math, Number, String, Map, Set, Object, Array, Error, Promise,
+    fetch: async url => ({ ok: true, status: 200, json: async () => replies[url.split('?')[0]] }) };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(readFileSync(new URL('../src/listing-fees-client.js', import.meta.url), 'utf8'), sandbox);
+  for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+  // CA$56.28 + CA$188.09 Etsy fees + US$0.803 × 1.4 = CA$1.12 ChatGPT → CA$245.49.
+  assert.match(node('ex-total').textContent, /245\.49/);
+  assert.doesNotMatch(node('ex-total').textContent, /\+/);
+  assert.match(node('ex-total-note').textContent, /ChatGPT US\$0\.80 at 1\.4000 CAD per US\$/);
+  assert.match(node('ex-ai').textContent, /1\.12/);
+});

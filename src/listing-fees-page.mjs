@@ -17,7 +17,7 @@ export function renderListingFeesPage(){
 <p class="muted">The month chosen here is used for everything on this page.</p>
 <div class="stats"><div class="stat">Etsy fees<b id="ex-etsy">–</b><span class="muted">listing and other fees</span></div>
 <div class="stat">ChatGPT<b id="ex-ai">–</b><span class="muted" id="ex-ai-note"></span></div>
-<div class="stat">Total<b id="ex-total">–</b><span class="muted">fees and expenses</span></div></div>
+<div class="stat">Total<b id="ex-total">–</b><span class="muted" id="ex-total-note">fees and expenses</span></div></div>
 </section>
 
 <section class="card" id="fees"><div class="flex"><h2>Listing fees</h2><span class="muted month-name"></span></div>
