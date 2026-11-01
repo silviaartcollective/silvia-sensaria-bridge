@@ -12,16 +12,26 @@ function totals(){
  el('ex-ai').textContent=aiUsd==null?'–':usd(aiUsd);
  el('ex-total').textContent=etsyCents==null||aiUsd==null?'–':currency==='USD'?usd(etsyCents/100+aiUsd):money(etsyCents)+' + '+usd(aiUsd);
 }
+// The chosen month's name on every section ("This month" for the current one).
+function monthNames(){
+ const value=el('lf-month').value||thisMonth(),name=range(value).start.toLocaleDateString(undefined,{month:'long',year:'numeric'});
+ el('ex-month').textContent=value===thisMonth()?'This month · '+name:name;
+ for(const node of document.querySelectorAll('.month-name'))node.textContent=name;
+}
+// Each answer belongs to the month it was asked for: a slower one for an
+// earlier choice is dropped.
+let asked=0;
 async function loadChatGpt(){
- const value=el('lf-month').value||thisMonth(),{min,max}=range(value);
- el('ex-month').textContent=new Date(range(value).start).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+ const value=el('lf-month').value||thisMonth(),{min,max}=range(value),mine=++asked;
+ aiUsd=null;totals();
  try{
   const res=await fetch('/api/expenses/chatgpt?'+new URLSearchParams({month:value,min,max}),{cache:'no-store'});
   const data=await res.json().catch(()=>({}));
+  if(mine!==asked)return;
   if(!res.ok||!data.ok)throw Error(data.error||'ChatGPT costs could not be read (HTTP '+res.status+').');
   const u=data.usage;
   el('ai-estimated').textContent=u?usd(u.estimatedUsd):usd(0);
-  el('ai-tokens').textContent=u?u.inputTokens.toLocaleString()+' tokens in · '+u.outputTokens.toLocaleString()+' out':'nothing recorded this month';
+  el('ai-tokens').textContent=u?u.inputTokens.toLocaleString()+' tokens in · '+u.outputTokens.toLocaleString()+' out':'nothing recorded in this month';
   el('ai-calls').textContent=u?u.calls+' request'+(u.calls===1?'':'s'):'';
   el('ai-per').textContent=u&&u.calls?usd(u.estimatedUsd/u.calls):'–';
   el('ai-billed').textContent=data.billed?Number(data.billed.total).toLocaleString(undefined,{style:'currency',currency:data.billed.currency||'USD'}):'–';
@@ -31,9 +41,14 @@ async function loadChatGpt(){
   // The billed amount when there is one, else the estimate.
   aiUsd=data.billed&&String(data.billed.currency).toUpperCase()==='USD'?Number(data.billed.total):u?u.estimatedUsd:0;
   el('ex-ai-note').textContent=data.billed?'billed by OpenAI':'estimated from tokens';
-  if(u?.unpricedCalls)el('ai-status').className='notice',el('ai-status').textContent=u.unpricedCalls+' request(s) used a model without a known price; their cost is not included.';
-  else el('ai-status').className='notice hidden';
- }catch(error){aiUsd=null;el('ai-status').className='notice error';el('ai-status').textContent=String(error.message||error);}
+  const say=text=>{el('ai-status').className=text?'notice':'notice hidden';el('ai-status').textContent=text||'';};
+  if(u?.unpricedCalls)say(u.unpricedCalls+' request(s) used a model without a known price; their cost is not included.');
+  // A month before the app recorded ChatGPT requests: only OpenAI's bill has it.
+  else if(!u&&!data.billed)say('The app did not record ChatGPT requests in this month (it records them from this update on). '+
+   (data.adminKeyConfigured?(data.billedError||'OpenAI billed nothing for it.'):'Add OPENAI_ADMIN_KEY in Render to see what OpenAI billed for it.'));
+  else if(!u&&data.billed)say('The app did not record requests in this month; the amount is what OpenAI billed.');
+  else say('');
+ }catch(error){if(mine!==asked)return;aiUsd=null;el('ai-status').className='notice error';el('ai-status').textContent=String(error.message||error);}
  totals();
 }
 const money=cents=>(Number(cents)/100).toLocaleString(undefined,{style:'currency',currency});
@@ -45,18 +60,21 @@ function range(value){
 }
 const thisMonth=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');};
 function row(cells){const tr=make('tr');cells.forEach((text,i)=>tr.append(make('td',i?'n':'',text)));return tr;}
+let askedEtsy=0;
 async function load(fresh=false){
- const value=el('lf-month').value||thisMonth(),{min,max,days,start}=range(value);
+ const value=el('lf-month').value||thisMonth(),{min,max,days,start}=range(value),mine=++askedEtsy;
+ etsyCents=null;totals();
  el('pl-days').value=String(days);plan();
  notice('Reading the month from Etsy…');el('lf-refresh').disabled=true;
  try{
   const res=await fetch('/api/listing-fees?'+new URLSearchParams({min,max,...(fresh?{fresh:'1'}:{})}),{cache:'no-store'});
   const data=await res.json().catch(()=>({}));
+  if(mine!==askedEtsy)return;
   if(!res.ok||!data.ok)throw Error(data.error||'Etsy could not be read (HTTP '+res.status+').');
   currency=data.currency||'USD';
   const listing=data.listing;
   el('lf-total').textContent=money(listing.total);
-  el('lf-count').textContent=listing.count+' listing'+(listing.count===1?'':'s')+' and renewals';
+  el('lf-count').textContent=listing.count+' listing'+(listing.count===1?'':'s')+' and renewals'+(listing.count>0?' · '+money(listing.total/listing.count)+' each':'');
   el('lf-projected').textContent=data.projected==null?'–':money(data.projected);
   const elapsed=Math.max(1,Math.min(days,(Date.now()/1000-min)/86400));
   el('lf-rate').textContent=data.projected==null?(Date.now()/1000>max?'the month is over':'the month has not started'):'about '+money(listing.total/elapsed)+' a day so far';
@@ -64,6 +82,7 @@ async function load(fresh=false){
   etsyCents=listing.total+data.other.reduce((sum,item)=>sum+item.total,0);totals();
   el('lf-types').replaceChildren(...(listing.byType.length?listing.byType.map(item=>row([item.label,String(item.count),money(item.total)])):[row(['No listing fees this month','',''])]));
   el('lf-other').replaceChildren(...(data.other.length?data.other.map(item=>row([item.label,String(item.count),money(item.total)])):[row(['None','',''])]));
+  el('lf-skipped').replaceChildren(...((data.skipped||[]).length?data.skipped.map(item=>row([item.label,String(item.count),money(item.total)])):[row(['None','',''])]));
   // By day, in this computer's time zone.
   const perDay=new Map();
   for(const [at,cents] of data.charges){
@@ -84,8 +103,8 @@ async function load(fresh=false){
    box.append(line);
   }
   notice(data.cached?'Read from Etsy '+Math.round(data.ageSeconds/60)+' min ago. Refresh to read it again.':'');
- }catch(error){etsyCents=null;totals();notice(String(error.message||error),'error');}
- finally{el('lf-refresh').disabled=false;}
+ }catch(error){if(mine!==askedEtsy)return;etsyCents=null;totals();notice(String(error.message||error),'error');}
+ finally{if(mine===askedEtsy)el('lf-refresh').disabled=false;}
 }
 function plan(){
  const n=id=>Math.max(0,Number(el(id).value)||0);
@@ -95,7 +114,7 @@ function plan(){
 }
 for(const id of ['pl-new','pl-repost','pl-days','pl-fee'])el(id).addEventListener('input',plan);
 el('lf-month').value=thisMonth();el('lf-month').max=thisMonth();
-el('lf-month').addEventListener('change',()=>{void load();void loadChatGpt();});
+el('lf-month').addEventListener('change',()=>{monthNames();void load();void loadChatGpt();});
 el('lf-refresh').addEventListener('click',()=>{void load(true);void loadChatGpt();});
-plan();void load();void loadChatGpt();
+monthNames();plan();void load();void loadChatGpt();
 })();
