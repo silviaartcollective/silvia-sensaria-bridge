@@ -11,7 +11,9 @@ const LABELS = {
   transaction: 'Transaction fees', transaction_quantity: 'Transaction fees (quantity)', shipping_transaction: 'Transaction fees on shipping',
   payment_processing_fee: 'Payment processing', offsite_ads_fee: 'Offsite Ads', prolist: 'Etsy Ads', shipping_label: 'Shipping labels',
   shipping_labels: 'Shipping labels', vat_tax_ep: 'Tax on Etsy fees', refund_processing_fee: 'Processing fee refunded',
-  recoup: 'Balance recovered by Etsy', payment_gross: 'Sales', refund_gross: 'Refunds to buyers', disburse2: 'Deposits to your bank'
+  recoup: 'Balance recovered by Etsy', payment_gross: 'Sales', refund_gross: 'Refunds to buyers', disburse2: 'Deposits to your bank',
+  regulatory_operating_fee: 'Regulatory operating fee', vat_transaction: 'Tax on transaction fees', vat_processing_fee: 'Tax on processing fees',
+  vat_regulatory_operating_fee: 'Tax on regulatory fees', sales_tax: 'Tax paid by buyer (passed to the government)'
 };
 const typeOf = entry => String(entry?.ledger_type || entry?.description || 'other').trim();
 export const feeLabel = type => LABELS[String(type).toLowerCase()] || String(type).replace(/_/g, ' ');
@@ -20,9 +22,13 @@ export const feeLabel = type => LABELS[String(type).toLowerCase()] || String(typ
 export const isListingFee = entry => /(^|[_\s-])(listing|renew)/i.test(typeOf(entry));
 // A fee given back (on a refunded order): it reduces the fees, not counted as money in.
 const isFeeCredit = type => /refund/i.test(type) && /fee|processing|transaction|ads|prolist|label/i.test(type);
+// Sales tax the buyer paid, which Etsy passes to the government ("Tax paid by
+// buyer"): not the shop's cost. Tax on Etsy's own fees (VAT/GST/HST on
+// transaction, processing, regulatory fees: vat_…) is a cost and stays a fee.
+const isBuyerTax = type => !/^vat|_vat|gst|hst|on_fee|seller/i.test(type) && /sales_tax|buyer|tax_collected|marketplace_tax|remit|^tax$/i.test(type);
 // Money moving in or out (sales, deposits, refunds to buyers, reserves, Etsy
-// recovering a negative balance, chargebacks) is not a fee.
-const notAFee = type => /disburse|deposit|transfer|reserve|refund|recoup|chargeback|payment$|payment_gross|sale/i.test(type);
+// recovering a negative balance, chargebacks, buyer sales tax) is not a fee.
+const notAFee = type => isBuyerTax(type) || /disburse|deposit|transfer|reserve|refund|recoup|chargeback|payment$|payment_gross|sale/i.test(type);
 
 // Every ledger entry between the two times, page after page.
 export async function ledgerEntries(fetchPage, { min, max, pageSize = 100, maxPages = 200 }) {

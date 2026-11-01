@@ -20,7 +20,7 @@ function configured(name, fallback) {
 export function profitScenarioPolicy() {
   return {
     saleDiscountPercent: configured('SAC_SALE_DISCOUNT_PERCENT', SILVIA_SALE_DISCOUNT_PERCENT),
-    etsyFeeReservePercent: configured('SAC_ETSY_FEE_RESERVE_PERCENT', 10),
+    etsyFeeReservePercent: configured('SAC_ETSY_FEE_RESERVE_PERCENT', 12), // transaction 6.5% + processing 3% + regulatory 0.5% + tax on those fees, as Etsy charges them
     minimumMarginUsd: configured('SAC_MIN_MARGIN_USD', 7.5),
     minimumMarginPercent: configured('SAC_MIN_MARGIN_PERCENT', 10),
     cadPerUsd: configured('SAC_REFERENCE_CAD_PER_USD', SILVIA_REFERENCE_CAD_PER_USD),
