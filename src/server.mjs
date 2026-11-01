@@ -13,6 +13,7 @@ import { renderListingReposterPage } from './listing-reposter-page.mjs';
 import { renderRepostListingsPage } from './repost-listings-page.mjs';
 import { renderListingFeesPage } from './listing-fees-page.mjs';
 import { ledgerEntries, summarizeFees, MAX_RANGE_SECONDS } from './listing-fees.mjs';
+import { recordOpenAiUsage, openAiUsageForMonth, openAiBilledCosts } from './openai-costs.mjs';
 import { renderDailyListingsPage } from './daily-listings-page.mjs';
 import {
   cropOutputKeyForJob, isStagedRevisionJob, isStagedConverterCropJob, reserveArtworkRevision,
@@ -1027,7 +1028,7 @@ function batchDeps(){
         const manifest=await loadArtworkManifest(item.artworkId);
         picture=(await getArtworkObject(manifest.master.key)).body;
       }
-      return generateEtsySeo({image:await seoImage(picture),orientation:item.orientation,...(await seoShopContext(await getEtsySession()))});
+      return generateEtsySeo({onUsage:recordOpenAiUsage,image:await seoImage(picture),orientation:item.orientation,...(await seoShopContext(await getEtsySession()))});
     },
     attachMockups:(artworkId,jobId,templateIds)=>syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds}),
     // The order arranged for the preset and shape goes on the artwork, as the
@@ -1215,7 +1216,7 @@ async function renewalSeo(listingId){
   try{manifest=await loadArtworkManifest(artworkIdFromInventory(await getListingInventory({listingId,...args})))}catch{}
   const layout=manifest?listingLayoutForManifest(manifest):'';
   const context=await seoShopContext(session);
-  const seo=await generateEtsySeo({image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
+  const seo=await generateEtsySeo({onUsage:recordOpenAiUsage,image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
     orientation:layout,previous:{title:listing.title,tags:listing.tags||[]},...context});
   if(!manifest)return {title:seo.title,tags:seo.tags,style:seo.style,description:String(listing.description||''),descriptionKept:true};
   const current=context.sections.find(item=>String(item.shop_section_id)===String(listing.shop_section_id||''));
@@ -1284,7 +1285,7 @@ async function refreshSeo(listingId){
   let layout='';
   try{layout=listingLayoutForManifest(await loadArtworkManifest(artworkIdFromInventory(await getListingInventory({listingId,...args}))))}catch{}
   const context=await seoShopContext(session);
-  const seo=await generateEtsySeo({image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
+  const seo=await generateEtsySeo({onUsage:recordOpenAiUsage,image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
     orientation:layout,previous:{title:listing.title,tags:listing.tags||[]},...context});
   const current=context.sections.find(item=>String(item.shop_section_id)===String(listing.shop_section_id||''));
   return {title:seo.title,tags:seo.tags,style:seo.style,description:seo.description,
@@ -5743,6 +5744,19 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res,200,value);
     }catch(error){return sendJson(res,502,{ok:false,error:String(error?.message||error).slice(0,400)})}
   }
+  // Fees & Expenses: the month's ChatGPT costs (recorded per request, and
+  // what OpenAI billed when OPENAI_ADMIN_KEY is set).
+  if (req.method === 'GET' && url.pathname === '/api/expenses/chatgpt') {
+    if (!requireAdminApi(req,res)) return;
+    try{
+      const month=String(url.searchParams.get('month')||''),min=Number(url.searchParams.get('min')),max=Number(url.searchParams.get('max'));
+      const usage=await openAiUsageForMonth(month);
+      let billed=null,billedError='';
+      if(Number.isSafeInteger(min)&&Number.isSafeInteger(max)&&max>min&&max-min<=MAX_RANGE_SECONDS)
+        billed=await openAiBilledCosts({min,max}).catch(error=>{billedError=String(error?.message||error).slice(0,300);return null;});
+      return sendJson(res,200,{ok:true,month,usage,billed,billedError,adminKeyConfigured:Boolean(String(process.env.OPENAI_ADMIN_KEY||'').trim())});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error).slice(0,300)})}
+  }
   if (req.method === 'GET' && url.pathname === '/listing-reposter') {
     if (!requireAdminPage(req,res,'/listing-reposter')) return;
     return sendHtml(res,200,renderRepostListingsPage());
@@ -6495,7 +6509,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (picture.length < 100) return sendJson(res, 400, { ok: false, error: 'Choose the master artwork first.' });
       const session = await getEtsySession();
-      const seo = await generateEtsySeo({ image: await seoImage(picture), orientation: String(body.orientation || ''),
+      const seo = await generateEtsySeo({ onUsage: recordOpenAiUsage, image: await seoImage(picture), orientation: String(body.orientation || ''),
         ...(await seoShopContext(session)) });
       return sendJson(res, 200, { ok: true, seo, pasteText: seoPasteText(seo) });
     } catch (error) {
