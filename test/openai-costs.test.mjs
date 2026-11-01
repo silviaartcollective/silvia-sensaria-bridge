@@ -84,3 +84,15 @@ test('the page is Fees & Expenses, with the ChatGPT section and the month\'s tot
   const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
   assert.equal((server.match(/generateEtsySeo\(\{ ?onUsage: ?recordOpenAiUsage,/g) || []).length, 4, 'every SEO request records its cost');
 });
+
+test('one month picker at the top drives every section, and late answers for an earlier month are dropped', () => {
+  const page = renderListingFeesPage();
+  const totals = page.indexOf('id="totals"'), picker = page.indexOf('id="lf-month"');
+  assert.ok(totals > 0 && picker > totals && picker < page.indexOf('id="fees"'), 'the picker sits in the top card');
+  assert.equal((page.match(/id="lf-month"/g) || []).length, 1);
+  assert.equal((page.match(/class="muted month-name"|class="month-name"/g) || []).length, 2);
+  const client = readFileSync(new URL('../src/listing-fees-client.js', import.meta.url), 'utf8');
+  assert.match(client, /addEventListener\('change',\(\)=>\{monthNames\(\);void load\(\);void loadChatGpt\(\);\}\)/);
+  assert.match(client, /if\(mine!==asked\)return;/);
+  assert.match(client, /if\(mine!==askedEtsy\)return;/);
+});
