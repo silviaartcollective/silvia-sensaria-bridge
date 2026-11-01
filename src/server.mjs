@@ -14,6 +14,7 @@ import { renderRepostListingsPage } from './repost-listings-page.mjs';
 import { renderListingFeesPage } from './listing-fees-page.mjs';
 import { ledgerEntries, summarizeFees, MAX_RANGE_SECONDS } from './listing-fees.mjs';
 import { recordOpenAiUsage, openAiUsageForMonth, openAiBilledCosts } from './openai-costs.mjs';
+import { usdRate } from './supplier-catalog-match.mjs';
 import { renderDailyListingsPage } from './daily-listings-page.mjs';
 import {
   cropOutputKeyForJob, isStagedRevisionJob, isStagedConverterCropJob, reserveArtworkRevision,
@@ -5746,6 +5747,16 @@ const server = http.createServer(async (req, res) => {
   }
   // Fees & Expenses: the month's ChatGPT costs (recorded per request, and
   // what OpenAI billed when OPENAI_ADMIN_KEY is set).
+  // How many of the shop's currency one US$ buys, so ChatGPT's US$ cost can be
+  // added to Etsy's fees (e.g. CA$) for one total. Frankfurter, cached 6 hours.
+  if (req.method === 'GET' && url.pathname === '/api/expenses/fx') {
+    if (!requireAdminApi(req,res)) return;
+    try{
+      const currency=String(url.searchParams.get('currency')||'').toUpperCase();
+      const fx=await usdRate(currency);
+      return sendJson(res,200,{ok:true,currency,perUsd:Number((1/fx.rate).toFixed(6)),date:fx.date,source:fx.source});
+    }catch(error){return sendJson(res,502,{ok:false,error:'Exchange rate unavailable: '+String(error?.message||error).slice(0,200)})}
+  }
   if (req.method === 'GET' && url.pathname === '/api/expenses/chatgpt') {
     if (!requireAdminApi(req,res)) return;
     try{

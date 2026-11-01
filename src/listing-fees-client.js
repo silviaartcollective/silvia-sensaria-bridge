@@ -6,11 +6,26 @@ const make=(tag,className,text)=>{const node=document.createElement(tag);if(clas
 const notice=(text,kind='')=>{const node=el('lf-status');node.className='notice'+(kind?' '+kind:'');node.textContent=text;if(!text)node.classList.add('hidden');};
 let currency='USD',etsyCents=null,aiUsd=null;
 const usd=value=>Number(value).toLocaleString(undefined,{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:value>0&&value<1?3:2});
-// The month's total, once both parts are in (Etsy fees are in the shop's currency).
+// The month's total in the shop's currency, once both parts are in: ChatGPT's
+// US$ cost is converted at today's rate (Etsy fees are in the shop's currency).
+const fxPerUsd={USD:1},fxAsked=new Set();
+async function loadFx(code){
+ if(fxPerUsd[code]||fxAsked.has(code))return;fxAsked.add(code);
+ try{
+  const res=await fetch('/api/expenses/fx?'+new URLSearchParams({currency:code}),{cache:'no-store'});
+  const data=await res.json().catch(()=>({}));
+  if(res.ok&&data.ok&&data.perUsd>0)fxPerUsd[code]=data.perUsd;
+ }catch{}
+ fxAsked.delete(code);totals();
+}
 function totals(){
+ const perUsd=fxPerUsd[currency];
  el('ex-etsy').textContent=etsyCents==null?'–':money(etsyCents);
- el('ex-ai').textContent=aiUsd==null?'–':usd(aiUsd);
- el('ex-total').textContent=etsyCents==null||aiUsd==null?'–':currency==='USD'?usd(etsyCents/100+aiUsd):money(etsyCents)+' + '+usd(aiUsd);
+ el('ex-ai').textContent=aiUsd==null?'–':perUsd&&currency!=='USD'?money(Math.round(aiUsd*perUsd*100)):usd(aiUsd);
+ if(etsyCents==null||aiUsd==null){el('ex-total').textContent='–';return;}
+ if(!perUsd){el('ex-total').textContent=money(etsyCents)+' + '+usd(aiUsd);void loadFx(currency);return;}
+ el('ex-total').textContent=money(etsyCents+Math.round(aiUsd*perUsd*100));
+ el('ex-total-note').textContent=currency==='USD'?'fees and expenses':'fees and expenses · ChatGPT US$'+aiUsd.toFixed(2)+' at '+perUsd.toFixed(4)+' '+currency+' per US$';
 }
 // The chosen month's name on every section ("This month" for the current one).
 function monthNames(){
