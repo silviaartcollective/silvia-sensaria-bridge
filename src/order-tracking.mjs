@@ -334,9 +334,9 @@ export function etsyCarrierCode(carrier) {
   };
   // A service name such as "USPS Ground Advantage" counts as its carrier.
   const name=text(carrier).toUpperCase().replace(/\s+/g,' ');
-  const code=values[name]||values[Object.keys(values).find(k=>name.startsWith(k+' '))];
-  if(!code)throw new Error('Unknown Etsy carrier. Confirm tracking manually in Etsy.');
-  return code;
+  // Any other carrier (Artelo's "Amazon Logistics US - Amazon Shipping Ground")
+  // goes to Etsy as "other", which still carries the tracking number to the buyer.
+  return values[name]||values[Object.keys(values).find(k=>name.startsWith(k+' '))]||'other';
 }
 export function prepareStagedEtsyShipment(record, receipt, input, shopId) {
   const id=receiptId(input?.receiptId);
