@@ -85,6 +85,18 @@ function pairFromText(value, defaultUnit = '') {
   return normalizePair(a, b);
 }
 
+// Every size a label gives: "600x900-mm-24x36-inch" is both 600x900 mm and
+// 24x36 in. The first alone (23.6x35.4 in) misses a 24x36 request.
+function pairsFromText(value, defaultUnit = '') {
+  const text = compact(value).replace(/["']/g, '');
+  const pairs = [];
+  for (const match of text.matchAll(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(?:[-_ ]?(mm|cm|inch|in))?/gi)) {
+    const pair = pairFromText(match[0], defaultUnit);
+    if (pair) pairs.push(pair);
+  }
+  return pairs;
+}
+
 function productSizeCandidates(product) {
   const pairs = [];
   const add = pair => {
@@ -103,7 +115,7 @@ function productSizeCandidates(product) {
     ? product.attributes : {};
   for (const [key, value] of Object.entries(attrs)) {
     if (!/format|size|dimension/i.test(key)) continue;
-    add(pairFromText(value));
+    for (const pair of pairsFromText(value)) add(pair);
   }
 
   const uid = String(product?.productUid || '');
@@ -232,6 +244,9 @@ function compatibilityScore(row, product, catalog) {
     if (/canvas/.test(text)) score += 4;
     if (/frame/.test(text)) score += 4;
   }
+  // Gelato's "geo simplified" products are routed to a production partner
+  // near the buyer, so they ship to more countries: tried first.
+  if (/geo[-_]simplified/.test(text)) score += 3;
   return score;
 }
 
@@ -324,12 +339,9 @@ function matchingGelatoFormatAttributes(catalog, target) {
     const matchingValues = (attribute.values || [])
       .filter(value =>
         [value?.productAttributeValueUid, value?.title]
-          .some(text => {
-            const pair = pairFromText(text);
-            return Boolean(pair) &&
-              Math.abs(pair.width - target.width) <= 0.52 &&
-              Math.abs(pair.height - target.height) <= 0.52;
-          })
+          .some(text => pairsFromText(text).some(pair =>
+            Math.abs(pair.width - target.width) <= 0.52 &&
+            Math.abs(pair.height - target.height) <= 0.52))
       )
       .map(value => value.productAttributeValueUid)
       .filter(Boolean);
@@ -449,6 +461,8 @@ function parseShipmentPrice(payload, productUid) {
 
 // A quoted candidate's US$ product, shipping and total, or what is missing. A
 // product price Gelato gives in another currency is converted, not dropped.
+export const _test = { pairsFromText, matchingGelatoFormatAttributes, productSizeCandidates, sizeCompatible, compatibilityScore };
+
 export async function gelatoQuoteTotals(quote, { rate = usdRate } = {}) {
   const productPrice = quote?.productPrice, shipping = quote?.shipping;
   let productCost = null, missing = '';
