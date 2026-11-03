@@ -98,7 +98,9 @@ test('one failing order is reported and the others still run', async () => {
 test('Artelo shipments and carrier service names map to Etsy', () => {
   assert.equal(etsyCarrierCode('USPS Ground Advantage'), 'usps');
   assert.equal(etsyCarrierCode('ups'), 'ups');
-  assert.throws(() => etsyCarrierCode('Pigeon Express'), /Unknown Etsy carrier/);
+  // Carriers Etsy has no code for are sent as "other", so the tracking still reaches Etsy.
+  assert.equal(etsyCarrierCode('Amazon Logistics US - Amazon Shipping Ground'), 'other');
+  assert.equal(etsyCarrierCode('Pigeon Express'), 'other');
   assert.deepEqual(supplierShipments('artelo', { order: { status: 'Processing', shipments: [] } }), { status: 'processing', shipments: [] });
   assert.deepEqual(supplierShipments('artelo', { status: 'Shipped', shipments: [{ id: 's1', trackingNumber: '9400111899223344556677', carrier: 'USPS' }] }).shipments,
     [{ trackingNumber: '9400111899223344556677', trackingUrl: '', carrier: 'USPS', shipmentId: 's1', status: 'shipped', source: 'artelo_api' }]);
