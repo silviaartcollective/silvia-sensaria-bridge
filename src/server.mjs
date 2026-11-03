@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
+import { zoomForThumbnail } from './thumbnail-zoom.mjs';
 import {getFaviconAssets} from './favicon-assets.mjs';
 import { renderDashboard } from './dashboard.mjs';
 import {workerUpdateBundle,latestWorkerVersion,heartbeatUpdate,workerUpdateText,compareWorkerVersions} from './worker-update.mjs';
@@ -2109,7 +2110,10 @@ async function uploadPhotosToListing({session,listingId,altText='',photos,onUplo
     while(id<lanes&&next<photos.length){
       const index=next++;
       readAhead(index);readAhead(index+lanes);
-      const photo=photos[index],object=await reads.get(index);
+      const photo=photos[index];
+      let object=await reads.get(index);
+      // The listing's first photo (Etsy's thumbnail) goes up slightly zoomed.
+      if(photo.zoom)object={...object,body:await zoomForThumbnail(object.body),contentType:'image/jpeg'};
       if(typeof photo.rank==='function')photo.rank=photo.rank();
       let result;
       const attempt=lanes>1?send(photo,object,false):oneAtATime(()=>send(photo,object,true));
@@ -2168,7 +2172,9 @@ async function replaceListingPhotos({session,listingId,photos,altText=''}){
   const remove=image=>withEtsyListingRetry(()=>deleteListingImage({shopId,listingId,listingImageId:idOf(image),...args}),{attempts:4,baseDelayMs:220});
   const before=await read(),placed=[];
   for(const [index,photo] of photos.entries()){
-    const object=await photo.read(),rank=index+1,overwrite=rank<=before.length;
+    let object=await photo.read();const rank=index+1,overwrite=rank<=before.length;
+    // Photo 1 is Etsy's thumbnail: slightly zoomed.
+    if(rank===1)object={...object,body:await zoomForThumbnail(object.body),contentType:'image/jpeg'};
     const upload=replace=>withEtsyListingRetry(()=>uploadListingImage({shopId,listingId,imageBuffer:object.body,filename:photo.filename,
       contentType:object.contentType||'image/jpeg',rank,overwrite:replace,altText,...args}),{attempts:8,baseDelayMs:180});
     let result;
@@ -2216,6 +2222,8 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
       uploadedImages[index]={...previous,rank};return;
     }
     photos.push({index,item,rank,
+      // A preset photo is the thumbnail only when the chosen order puts it first.
+      zoom:(manifest.etsyPhotoOrder?.tiles||[])[0]==='key:'+item.key,
       filename:String(item.originalFilename||item.key.split('/').pop()||'listing-image.jpg'),
       read:async()=>{
         const object=plan.objectByKey.get(item.key)||await getArtworkObject(item.key);
@@ -3090,6 +3098,7 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[],in
       const uploadedReceipts=[];
       const {parallel}=await uploadPhotosToListing({session,listingId,altText:fresh.title||'',
         photos:pendingSelected.map(item=>({item,filename:item.originalFilename,rank:()=>rankFor(item),
+          zoom:placeOf('key:'+item.key)===0,
           read:()=>etsyReadyImage(item.key,{etsyKey:item.etsyKey||''})})),
         onUploaded:async(photo,listingImageId)=>{
           uploaded++;
