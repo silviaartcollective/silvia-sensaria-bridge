@@ -6,6 +6,7 @@ import {
   getGelatoShipmentPrices,
   gelatoConfigStatus
 } from './gelato.mjs';
+import { usdRate } from './supplier-catalog-match.mjs';
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let productCatalogCache = null;
@@ -446,6 +447,23 @@ function parseShipmentPrice(payload, productUid) {
   };
 }
 
+// A quoted candidate's US$ product, shipping and total, or what is missing. A
+// product price Gelato gives in another currency is converted, not dropped.
+export async function gelatoQuoteTotals(quote, { rate = usdRate } = {}) {
+  const productPrice = quote?.productPrice, shipping = quote?.shipping;
+  let productCost = null, missing = '';
+  if (!productPrice || productPrice.price == null) missing = 'no product price';
+  else if (productPrice.currency === 'USD') productCost = productPrice.price;
+  else {
+    try { productCost = Number((productPrice.price * (await rate(productPrice.currency)).rate).toFixed(2)); }
+    catch { missing = 'product price in ' + productPrice.currency + ' with no exchange rate'; }
+  }
+  const shippingCost = shipping?.price ?? null;
+  if (!missing && shippingCost == null) missing = 'no shipping method to the destination';
+  return { productCost, shippingCost, totalUsd: missing ? null : productCost + shippingCost, missing,
+    productCurrency: productPrice?.currency || '' };
+}
+
 async function quoteProduct(productUid, countryCode) {
   const key = `${productUid}|${String(countryCode || '').toUpperCase()}`;
   const cached = quoteCache.get(key);
@@ -588,22 +606,23 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
       }
     });
 
-    const available = quoted.map(item => {
-      const productPrice = item.quote?.productPrice;
-      const shipping = item.quote?.shipping;
-      const productCost = productPrice?.currency === 'USD' ? productPrice.price : null;
-      const shippingCost = shipping?.price;
-      const totalUsd = productCost != null && shippingCost != null ? productCost + shippingCost : null;
-      return { ...item, productCost, shippingCost, totalUsd };
-    }).filter(item => item.totalUsd != null)
+    const totaled = await Promise.all(quoted.map(async item => ({ ...item, ...(item.quote ? await gelatoQuoteTotals(item.quote) : {}) })));
+    const available = totaled.filter(item => item.totalUsd != null)
       .sort((a, b) => a.totalUsd - b.totalUsd);
 
     const best = available[0];
     if (!best) {
-      const firstError = quoted.find(item => item.error)?.error || '';
+      // Which part each matched product lacked: its price, or shipping to here.
+      const lacks = totaled.map(item => (item.candidate.product?.productUid || 'product') + ': ' + (item.error || item.missing || 'incomplete price'));
+      const noShipping = totaled.length && totaled.every(item => item.missing === 'no shipping method to the destination');
       result.set(rowKey(row), {
-        provider: 'Gelato', eligible: false, status: firstError ? 'quote-error' : 'price-unavailable',
-        reason: firstError || 'Gelato matched this exact catalog product, but a complete product + shipping price was not returned for the destination.'
+        provider: 'Gelato', eligible: false,
+        status: noShipping ? 'destination-unsupported' : totaled.some(item => item.error) ? 'quote-error' : 'price-unavailable',
+        reason: (noShipping
+          ? `Gelato has ${row?.size} in this product (${totaled.length} matching version${totaled.length === 1 ? '' : 's'}) but offers no shipping method to ${country} for it.`
+          : `Gelato matched ${totaled.length} exact-size product${totaled.length === 1 ? '' : 's'} but none returned a complete price for ${country}.`) +
+          ' ' + lacks.slice(0, 4).join(' · '),
+        meta: { candidates: lacks }
       });
       continue;
     }
