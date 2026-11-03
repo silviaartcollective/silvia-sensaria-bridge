@@ -24,3 +24,11 @@ test('what is missing is said: no shipping to the destination, no price, or no e
   assert.equal(noRate.missing, 'product price in XYZ with no exchange rate');
   assert.equal(noRate.totalUsd, null);
 });
+
+test('up to 16 matching versions are tried, 4 at a time, until one ships to the country', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../src/gelato-comparison.mjs', import.meta.url), 'utf8');
+  assert.match(source, /\.sort\(\(a, b\) => b\.score - a\.score\)\s*\/\/[^\n]*\n[^\n]*\n\s*\.slice\(0, 16\);/);
+  assert.match(source, /for \(let start = 0; start < candidates\.length; start \+= 4\)/);
+  assert.match(source, /if \(totaled\.some\(item => item\.totalUsd != null\)\) break;/);
+});
