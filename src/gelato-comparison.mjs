@@ -546,7 +546,9 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
           (Array.isArray(item.product?.supportedCountries) && item.product.supportedCountries.includes(country) ? 100 : 0)
       }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, 4);
+      // The best-scoring versions may not ship to this country (e.g. a frame
+      // made only in Europe): up to 16 are tried, 4 at a time, see below.
+      .slice(0, 16);
 
     if (!candidates.length) {
       const familyRows = (catalogRows || []).filter(item => item.productCode === row?.productCode);
@@ -598,15 +600,20 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
       continue;
     }
 
-    const quoted = await mapLimit(candidates, 2, async candidate => {
-      try {
-        return { candidate, quote: await quoteProduct(candidate.product.productUid, country) };
-      } catch (error) {
-        return { candidate, error: error?.message || String(error) };
-      }
-    });
-
-    const totaled = await Promise.all(quoted.map(async item => ({ ...item, ...(item.quote ? await gelatoQuoteTotals(item.quote) : {}) })));
+    // Four versions at a time, best-scoring first, until one has a complete
+    // price for this country (product and shipping).
+    const totaled = [];
+    for (let start = 0; start < candidates.length; start += 4) {
+      const quoted = await mapLimit(candidates.slice(start, start + 4), 2, async candidate => {
+        try {
+          return { candidate, quote: await quoteProduct(candidate.product.productUid, country) };
+        } catch (error) {
+          return { candidate, error: error?.message || String(error) };
+        }
+      });
+      totaled.push(...await Promise.all(quoted.map(async item => ({ ...item, ...(item.quote ? await gelatoQuoteTotals(item.quote) : {}) }))));
+      if (totaled.some(item => item.totalUsd != null)) break;
+    }
     const available = totaled.filter(item => item.totalUsd != null)
       .sort((a, b) => a.totalUsd - b.totalUsd);
 
