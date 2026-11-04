@@ -155,7 +155,8 @@ import {
   claimNextCropJob,
   updateCropJobProgress,
   completeCropJob,
-  failCropJob
+  failCropJob,
+  releaseCropJobsNotHeld
 } from './crop-job-store.mjs';
 import { podProviderStatus, testPodProvider } from './pod-providers.mjs';
 import { verifyEtsyWebhook, receiptReferenceFromEtsyResource } from './etsy-webhook.mjs';
@@ -668,6 +669,17 @@ function requireCropWorker(req, res) {
   if (isCropWorkerAuthorized(req)) return true;
   sendJson(res, 401, { ok: false, error: 'Invalid crop worker token.' });
   return false;
+}
+
+// Workers from v4.8.1 name the crop they hold in each heartbeat; any other crop
+// still marked as theirs is queued again (crop-job-store.mjs), at most once a minute.
+let abandonedCropCheckAt=0;
+function releaseAbandonedCrops(input={}){
+  if(!('cropJobId' in input)||Date.now()-abandonedCropCheckAt<60*1000)return;
+  abandonedCropCheckAt=Date.now();
+  void releaseCropJobsNotHeld(input.workerId,input.cropJobId).then(ids=>{
+    if(ids.length)console.log('Crop jobs queued again (the PC worker no longer holds them): '+ids.join(', '));
+  },error=>console.error('Crop jobs could not be checked:',error?.message||error));
 }
 
 function recordCropWorkerHeartbeat(input = {}) {
@@ -3707,6 +3719,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { ok: false, error: 'workerId is required' });
       }
       logWorkerRestart(input.restart);
+      releaseAbandonedCrops(input);
       return sendJson(res, 200, {
         ok: true,
         worker: recordCropWorkerHeartbeat(input),
