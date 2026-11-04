@@ -118,7 +118,9 @@ function temporaryNetworkFailure(error){
 async function requestJsonRetry(url,options={},maxAttempts=4){
  for(let attempt=0;attempt<maxAttempts;attempt++){
   try{
-   const response=await fetch(url,options);
+   // A request that never answers would hold its upload slot and stop every
+   // conversion queued behind it; it is retried instead.
+   const response=await fetch(url,options.signal?options:{...options,signal:globalThis.AbortSignal?.timeout?.(90000)});
    const data=await response.json();
    const retryable=[408,429,500,502,503,504].includes(response.status)||
      (!response.ok&&temporaryNetworkFailure({message:data?.error}));
@@ -154,8 +156,12 @@ async function putFile(url,file,onProgress,contentType){
   onProgress(20);
   for(let attempt=0;attempt<3;attempt++){
    try{
+    // Time limit by size (2 min plus 4 s per MB, at most 30 min): a stalled upload
+    // is retried rather than holding its slot forever.
+    const limit=Math.min(30*60000,120000+Math.ceil((file.size||0)/1048576)*4000);
     const response=await fetch(url,{method:'PUT',
-     headers:{'content-type':contentType||file.type||'image/jpeg'},body:file});
+     headers:{'content-type':contentType||file.type||'image/jpeg'},body:file,
+     signal:globalThis.AbortSignal?.timeout?.(limit)});
     if(!response.ok){
      if(![408,429,500,502,503,504].includes(response.status)||attempt===2)
       throw Error('Cloudflare upload failed ('+response.status+')');
@@ -232,12 +238,23 @@ function waitForCrop(jobId,setStatus,setProgress){
  });
 }
 
+// Each Convert click used to open the launch link, even with the worker running:
+// a cmd window flashed every time, and leaving the page for the link while other
+// artworks were uploading could cut them off. It now opens only when the worker
+// is offline, at most once every 2 minutes.
+let workerOnline=null,workerLaunchAt=0;
+function launchWorkerIfOffline(){
+  if(workerOnline!==false||Date.now()-workerLaunchAt<120000)return;
+  workerLaunchAt=Date.now();
+  try{window.location.href='pod-crop-worker://start'}catch{}
+}
 async function refreshWorker(){
   try{
     const r=await fetch('/api/crop-worker/status',{cache:'no-store'});
     const d=await r.json();
     if(!r.ok)throw new Error();
     const w=d.worker||{};
+    workerOnline=Boolean(w.online);
     if(w.online){
       workerStatus.className='status ok';
       workerStatus.textContent=w.busy?'Online · currently cropping':'Online · ready';
@@ -602,7 +619,7 @@ async function convertListing(item,card){
   'Existing photos, video, title, description and tags stay in place.'
  );
  if(!confirmed)return;
- try{window.location.href='pod-crop-worker://start'}catch{}
+ launchWorkerIfOffline();
  button.disabled=true;input.disabled=true;bar.style.width='5%';
  status.className='cardstatus';
  try{
