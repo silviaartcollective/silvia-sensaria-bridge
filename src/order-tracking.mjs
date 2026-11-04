@@ -1,6 +1,7 @@
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { r2Client, r2Config, getJsonObject, putJsonObject } from './r2.mjs';
 import { getShopReceipt, createReceiptShipment } from './etsy.mjs';
+import { etsyCarrierCodeFor } from './etsy-carriers.mjs';
 import { getGelatoOrderTracking } from './gelato.mjs';
 import { getPrintifyOrderTracking } from './printify.mjs';
 import { getProdigiOrder } from './prodigi.mjs';
@@ -124,7 +125,7 @@ export function suggestCarrier(url) {
     [/^(.*\.)?usps\.com$/,'USPS'],[/^(.*\.)?dhl\.com$/,'DHL'],
     [/^(.*\.)?canadapost(?:-postescanada)?\.ca$/,'Canada Post'],
     [/^(.*\.)?purolator\.com$/,'Purolator'],[/^(.*\.)?ontrac\.com$/,'OnTrac'],
-    [/^(.*\.)?dpd\.(com|co\.uk|de|fr)$/,'DPD']];
+    [/^(.*\.)?dpd\.(com|co\.uk|de|fr)$/,'DPD'],[/^(track\.)?amazon\.com$/,'Amazon Logistics US']];
   return rules.find(([re])=>re.test(host))?.[1] || '';
 }
 export function normalizedShipment(input) {
@@ -326,18 +327,8 @@ export async function checkEtsyShipmentStatus(session,id) {
 }
 
 const pendingEtsyShipments = new Set();
-export function etsyCarrierCode(carrier) {
-  const values = {
-    'USPS':'usps','UPS':'ups','FEDEX':'fedex','DHL':'dhl',
-    'CANADA POST':'canada-post','PUROLATOR':'purolator',
-    'DPD':'dpd','ONTRAC':'ontrac','OTHER':'other'
-  };
-  // A service name such as "USPS Ground Advantage" counts as its carrier.
-  const name=text(carrier).toUpperCase().replace(/\s+/g,' ');
-  // Any other carrier (Artelo's "Amazon Logistics US - Amazon Shipping Ground")
-  // goes to Etsy as "other", which still carries the tracking number to the buyer.
-  return values[name]||values[Object.keys(values).find(k=>name.startsWith(k+' '))]||'other';
-}
+// Etsy's own carrier code, so Etsy can follow the package (etsy-carriers.mjs).
+export function etsyCarrierCode(carrier) { return etsyCarrierCodeFor(carrier); }
 export function prepareStagedEtsyShipment(record, receipt, input, shopId) {
   const id=receiptId(input?.receiptId);
   if(!record||record.receiptId!==id||String(record.shopId)!==String(shopId))
