@@ -8,7 +8,7 @@ export function renderListingConverterPage() {
 <title>Gelato → Silvia Converter</title>
 <style>
 :root{--bg:#f4f1eb;--panel:#fffdfa;--ink:#20221e;--muted:#74776f;--line:#dfdcd4;--green:#536454;--green2:#e8eee7;--amber:#946b35;--amber2:#f5ead9;--red:#9b4439}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}.shell{max-width:1500px;margin:0 auto;padding:34px 24px 55px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:20px}.toplinks{display:flex;gap:10px;flex-wrap:wrap}.btn,a.btn{border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);padding:10px 13px;font:inherit;font-size:13px;font-weight:700;text-decoration:none;cursor:pointer}.btn.primary{background:#30352e;color:#fff;border-color:#30352e}.btn.reconvert{background:#e8eee7;color:#314333;border-color:#c9d5c6}.btn.reconvert:hover{background:#dde8dc}.queue-remove{font-size:11px!important;padding:7px 10px!important;color:#8f5446!important}.reconvert-note{border:1px solid #e2e7dd;background:#f3f6f1;border-radius:8px;padding:9px 10px;color:#536454;font-size:11px}.etsy-view{display:inline-flex;align-items:center;justify-content:center;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:#3b453b;font-size:12px;font-weight:650;text-decoration:none;white-space:nowrap}.etsy-view:hover{border-color:#a7b5a6;background:#f4f7f2}.etsy-view:focus-visible{outline:2px solid var(--green);outline-offset:2px}.btn:disabled{opacity:.5;cursor:not-allowed}h1{font-family:Georgia,serif;font-weight:500;font-size:38px;margin:0 0 7px}.sub{margin:0;color:var(--muted);font-size:14px;line-height:1.55}.statusbar{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:14px 16px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px}.status{font-size:12px;color:var(--muted);line-height:1.5}.status.ok{color:var(--green)}.status.bad{color:var(--red)}.status.warn{color:var(--amber)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;overflow:hidden;box-shadow:0 10px 28px rgba(40,40,30,.05)}.preview{aspect-ratio:4/3;background:#ebe8e1;display:grid;place-items:center;overflow:hidden}.preview img{width:100%;height:100%;object-fit:cover}.preview .empty{font-size:12px;color:var(--muted)}.body{padding:15px}.title{font-weight:700;font-size:14px;line-height:1.4;margin-bottom:6px}.meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px}.pill{font-size:10px;padding:5px 7px;border-radius:999px;background:#f1eee8;color:var(--muted)}.pill.done{background:var(--green2);color:var(--green)}.pill.warn{background:var(--amber2);color:var(--amber)}.upload{display:grid;gap:9px;margin-top:11px}.upload input[type=file]{width:100%;font-size:13px;color:var(--muted)}input[type=file]::file-selector-button{margin-right:12px;padding:12px 22px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:14px;font-weight:700;cursor:pointer}input[type=file]::file-selector-button:hover{background:#f4f1ea}input[type=file]::-webkit-file-upload-button{margin-right:12px;padding:12px 22px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:14px;font-weight:700;cursor:pointer}.progress{height:6px;background:#e7e3dc;border-radius:99px;overflow:hidden}.progress span{display:block;width:0;height:100%;background:#667867;transition:width .2s}.cardstatus{font-size:11px;line-height:1.45;color:var(--muted);min-height:34px}.cardstatus.ok{color:var(--green)}.cardstatus.bad{color:var(--red)}.cardstatus.warn{color:var(--amber)}.search{width:min(460px,100%);padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font:inherit}
+*{box-sizing:border-box}.batchbar[hidden]{display:none}.batch{font-weight:650;font-size:15px}.batch.done{color:var(--green)}.batch.attention{color:var(--amber)}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}.shell{max-width:1500px;margin:0 auto;padding:34px 24px 55px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:20px}.toplinks{display:flex;gap:10px;flex-wrap:wrap}.btn,a.btn{border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);padding:10px 13px;font:inherit;font-size:13px;font-weight:700;text-decoration:none;cursor:pointer}.btn.primary{background:#30352e;color:#fff;border-color:#30352e}.btn.reconvert{background:#e8eee7;color:#314333;border-color:#c9d5c6}.btn.reconvert:hover{background:#dde8dc}.queue-remove{font-size:11px!important;padding:7px 10px!important;color:#8f5446!important}.reconvert-note{border:1px solid #e2e7dd;background:#f3f6f1;border-radius:8px;padding:9px 10px;color:#536454;font-size:11px}.etsy-view{display:inline-flex;align-items:center;justify-content:center;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:#3b453b;font-size:12px;font-weight:650;text-decoration:none;white-space:nowrap}.etsy-view:hover{border-color:#a7b5a6;background:#f4f7f2}.etsy-view:focus-visible{outline:2px solid var(--green);outline-offset:2px}.btn:disabled{opacity:.5;cursor:not-allowed}h1{font-family:Georgia,serif;font-weight:500;font-size:38px;margin:0 0 7px}.sub{margin:0;color:var(--muted);font-size:14px;line-height:1.55}.statusbar{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:14px 16px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px}.status{font-size:12px;color:var(--muted);line-height:1.5}.status.ok{color:var(--green)}.status.bad{color:var(--red)}.status.warn{color:var(--amber)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;overflow:hidden;box-shadow:0 10px 28px rgba(40,40,30,.05)}.preview{aspect-ratio:4/3;background:#ebe8e1;display:grid;place-items:center;overflow:hidden}.preview img{width:100%;height:100%;object-fit:cover}.preview .empty{font-size:12px;color:var(--muted)}.body{padding:15px}.title{font-weight:700;font-size:14px;line-height:1.4;margin-bottom:6px}.meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px}.pill{font-size:10px;padding:5px 7px;border-radius:999px;background:#f1eee8;color:var(--muted)}.pill.done{background:var(--green2);color:var(--green)}.pill.warn{background:var(--amber2);color:var(--amber)}.upload{display:grid;gap:9px;margin-top:11px}.upload input[type=file]{width:100%;font-size:13px;color:var(--muted)}input[type=file]::file-selector-button{margin-right:12px;padding:12px 22px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:14px;font-weight:700;cursor:pointer}input[type=file]::file-selector-button:hover{background:#f4f1ea}input[type=file]::-webkit-file-upload-button{margin-right:12px;padding:12px 22px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:14px;font-weight:700;cursor:pointer}.progress{height:6px;background:#e7e3dc;border-radius:99px;overflow:hidden}.progress span{display:block;width:0;height:100%;background:#667867;transition:width .2s}.cardstatus{font-size:11px;line-height:1.45;color:var(--muted);min-height:34px}.cardstatus.ok{color:var(--green)}.cardstatus.bad{color:var(--red)}.cardstatus.warn{color:var(--amber)}.search{width:min(460px,100%);padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font:inherit}
 @media(max-width:1050px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.grid{grid-template-columns:1fr}.top{flex-direction:column}h1{font-size:31px}}
 
 .app-shell{min-height:100vh;display:grid;grid-template-columns:238px minmax(0,1fr)}
@@ -62,6 +62,8 @@ export function renderListingConverterPage() {
     <a class="btn primary" id="launch-worker" href="pod-crop-worker://start">Launch Shared PC Crop Worker</a>
   </div>
 
+  <div class="statusbar batchbar" id="batch-bar" hidden><div class="batch" id="batch-status" role="status" aria-live="polite"></div></div>
+
   <div class="statusbar">
     <input class="search" id="search" placeholder="Search listing title or Etsy listing ID">
     <div class="status" id="list-status">Loading Etsy listings…</div>
@@ -81,6 +83,54 @@ const search=document.getElementById('search');
 const refresh=document.getElementById('refresh');
 const launchWorker=document.getElementById('launch-worker');
 let listingData=[],queueJobs=[];
+
+// The batch counter: every listing started counts, and when none is still
+// working it says Done. The next listing started after that begins a new batch.
+const batchBar=document.getElementById('batch-bar'),batchStatus=document.getElementById('batch-status');
+let batch=new Map(); // listingId -> {state:'working'|'done'|'attention', jobId}
+const batchCount=state=>[...batch.values()].filter(v=>v.state===state).length;
+function renderBatch(){
+ if(!batch.size){batchBar.hidden=true;return}
+ batchBar.hidden=false;
+ const total=batch.size,done=batchCount('done'),attention=batchCount('attention'),working=batchCount('working');
+ const plural=n=>n===1?' listing':' listings';
+ if(working){
+  batchStatus.className='batch';
+  batchStatus.textContent='Processing '+total+plural(total)+' · '+done+' done'+
+   (attention?' · '+attention+' need attention':'')+' · '+working+' in progress';
+ }else{
+  batchStatus.className='batch '+(attention?'attention':'done');
+  batchStatus.textContent='Done · '+done+' of '+total+plural(total)+' converted'+
+   (attention?' · '+attention+' need attention (see the red or amber cards)':'');
+ }
+}
+function batchStart(listingId){
+ const id=String(listingId);
+ if(batch.size&&!batchCount('working'))batch=new Map();
+ batch.set(id,{state:'working',jobId:''});
+ renderBatch();
+}
+function batchJob(listingId,jobId){
+ const entry=batch.get(String(listingId));
+ if(entry)entry.jobId=String(jobId||'');
+}
+// Listings hidden by the search count too, so this reads the queue itself.
+function batchFromQueue(){
+ for(const [id,entry] of batch){
+  if(entry.state!=='working'||!entry.jobId)continue;
+  const job=queueJobs.find(j=>String(j.id)===entry.jobId);
+  if(job?.status==='completed')batchSettle(id,'done',job.id);
+  else if(['failed','canceled'].includes(job?.status))batchSettle(id,'attention',job.id);
+ }
+}
+function batchSettle(listingId,state,jobId){
+ const entry=batch.get(String(listingId));
+ if(!entry||entry.state!=='working')return;
+ // An older Etsy job of a listing started again does not settle the new one.
+ if(jobId!==undefined&&entry.jobId!==String(jobId))return;
+ entry.state=state;
+ renderBatch();
+}
 
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -118,7 +168,9 @@ function temporaryNetworkFailure(error){
 async function requestJsonRetry(url,options={},maxAttempts=4){
  for(let attempt=0;attempt<maxAttempts;attempt++){
   try{
-   const response=await fetch(url,options);
+   // A request that never answers would hold its upload slot and stop every
+   // conversion queued behind it; it is retried instead.
+   const response=await fetch(url,options.signal?options:{...options,signal:globalThis.AbortSignal?.timeout?.(90000)});
    const data=await response.json();
    const retryable=[408,429,500,502,503,504].includes(response.status)||
      (!response.ok&&temporaryNetworkFailure({message:data?.error}));
@@ -154,8 +206,12 @@ async function putFile(url,file,onProgress,contentType){
   onProgress(20);
   for(let attempt=0;attempt<3;attempt++){
    try{
+    // Time limit by size (2 min plus 4 s per MB, at most 30 min): a stalled upload
+    // is retried rather than holding its slot forever.
+    const limit=Math.min(30*60000,120000+Math.ceil((file.size||0)/1048576)*4000);
     const response=await fetch(url,{method:'PUT',
-     headers:{'content-type':contentType||file.type||'image/jpeg'},body:file});
+     headers:{'content-type':contentType||file.type||'image/jpeg'},body:file,
+     signal:globalThis.AbortSignal?.timeout?.(limit)});
     if(!response.ok){
      if(![408,429,500,502,503,504].includes(response.status)||attempt===2)
       throw Error('Cloudflare upload failed ('+response.status+')');
@@ -232,12 +288,23 @@ function waitForCrop(jobId,setStatus,setProgress){
  });
 }
 
+// Each Convert click used to open the launch link, even with the worker running:
+// a cmd window flashed every time, and leaving the page for the link while other
+// artworks were uploading could cut them off. It now opens only when the worker
+// is offline, at most once every 2 minutes.
+let workerOnline=null,workerLaunchAt=0;
+function launchWorkerIfOffline(){
+  if(workerOnline!==false||Date.now()-workerLaunchAt<120000)return;
+  workerLaunchAt=Date.now();
+  try{window.location.href='pod-crop-worker://start'}catch{}
+}
 async function refreshWorker(){
   try{
     const r=await fetch('/api/crop-worker/status',{cache:'no-store'});
     const d=await r.json();
     if(!r.ok)throw new Error();
     const w=d.worker||{};
+    workerOnline=Boolean(w.online);
     if(w.online){
       workerStatus.className='status ok';
       workerStatus.textContent=w.busy?'Online · currently cropping':'Online · ready';
@@ -313,6 +380,7 @@ async function refreshConversionQueue(){
   const result=await response.json();
   if(!response.ok||!result.ok)throw Error(result.error||'Queue unavailable');
   queueJobs=Array.isArray(result.jobs)?result.jobs:[];
+  batchFromQueue();
   for(const card of cards.querySelectorAll('article[data-listing-id]')){
    const item=listingData.find(v=>String(v.listingId)===card.dataset.listingId);
    if(item)showQueueState(item,card);
@@ -325,6 +393,7 @@ async function queuedConversion(item,card,payload){
   body:JSON.stringify(payload)
  });
  if(!result.job)throw Error(result.error||'Could not queue Etsy conversion');
+ batchJob(item.listingId,result.job.id);
  queueJobs=queueJobs.filter(j=>j.id!==result.job.id);
  queueJobs.push({...result.job,position:result.position});
  showQueueState(item,card);void refreshConversionQueue();
@@ -487,6 +556,7 @@ async function reconvertListing(item,card){
     'Existing photos, video, title, description and tags are kept.'
   );
   if(!approved)return;
+  batchStart(item.listingId);
   button.disabled=true;input.disabled=true;
   bar.style.width='5%';
   status.className='cardstatus';
@@ -539,6 +609,7 @@ async function reconvertListing(item,card){
      status.textContent=useExistingMaster
       ?'Crops queued from the stored master. Start the shared PC worker, then click Reconvert listing again (no file) to resume. Existing artwork and Etsy listing are unchanged.'
       :'New master uploaded and crops queued. Start the shared PC worker, then choose this same file and click Reconvert listing to resume. Existing artwork and Etsy listing are unchanged.';
+     batchSettle(item.listingId,'attention');
      return;
     }
     if(!setup.cropsReady){
@@ -552,6 +623,7 @@ async function reconvertListing(item,card){
     await queuedConversion(item,card,{listingId:item.listingId,artworkId,reconvert:true,revision});
     bar.style.width='96%';
   }catch(error){
+    batchSettle(item.listingId,'attention');
     status.className='cardstatus bad';
     status.textContent='Reconversion incomplete: '+String(error.message||error)+
       '. Existing artwork ID remains '+artworkId+'. '+(useExistingMaster?'Retry when ready.':'Keep this file selected and retry if needed.');
@@ -571,12 +643,14 @@ async function retrySavedEtsyConversion(item,card){
   'Etsy settings, SKUs and pricing will be verified again. No artwork re-upload is required.'))return true;
  const button=card.querySelector('.convert'),input=card.querySelector('.master');
  const status=card.querySelector('.cardstatus');
+ batchStart(item.listingId);
  button.disabled=true;
  status.className='cardstatus';
  status.textContent='Retrying Etsy conversion using saved '+item.artworkId+'…';
  try{
   await queuedConversion(item,card,{listingId:item.listingId,artworkId:item.artworkId});
  }catch(error){
+  batchSettle(item.listingId,'attention');
   status.className='cardstatus bad';
   status.textContent='Etsy retry could not be queued: '+String(error?.message||error);
   button.disabled=false;
@@ -602,7 +676,8 @@ async function convertListing(item,card){
   'Existing photos, video, title, description and tags stay in place.'
  );
  if(!confirmed)return;
- try{window.location.href='pod-crop-worker://start'}catch{}
+ batchStart(item.listingId);
+ launchWorkerIfOffline();
  button.disabled=true;input.disabled=true;bar.style.width='5%';
  status.className='cardstatus';
  try{
@@ -651,6 +726,7 @@ async function convertListing(item,card){
    status.className='cardstatus warn';
    status.textContent='Artwork '+setup.artworkId+' safely uploaded; crops are queued. '+
     'Start worker/start-worker.cmd on your PC, then retry with the same file to resume. No Etsy changes were made.';
+   batchSettle(item.listingId,'attention');
    return;
   }
   if(!setup.cropsReady){
@@ -662,6 +738,7 @@ async function convertListing(item,card){
   await queuedConversion(item,card,{listingId:item.listingId,artworkId:setup.artworkId});
   bar.style.width='96%';
  }catch(error){
+  batchSettle(item.listingId,'attention');
   status.className='cardstatus bad';
   status.textContent=String(error?.message||error)+
    (temporaryNetworkFailure(error)

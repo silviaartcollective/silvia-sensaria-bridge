@@ -2,6 +2,9 @@ import { readFileSync } from 'node:fs';
 import { getSensariaComparison, validateProdigiOrderQuote } from './prodigi.mjs';
 import { scanPrintifyComparisonRows } from './printify-comparison.mjs';
 import { scanGelatoComparisonRows } from './gelato-comparison.mjs';
+import { scanPrintfulComparisonRows } from './printful-comparison.mjs';
+import { scanLumaprintsComparisonRows } from './lumaprints-comparison.mjs';
+import { scanGootenComparisonRows } from './gooten-comparison.mjs';
 import { getPrintShrimpPricing, printShrimpPriceRow } from './printshrimp.mjs';
 import { getGbpToUsdRate } from './supplier-comparison.mjs';
 import { estimateSupplierLandedCost, landedCostPolicy } from './landed-cost.mjs';
@@ -254,6 +257,12 @@ async function printifyRecord(row, countryCode) {
   }
 }
 
+// Printful, Lumaprints and Gooten quote one exact row with their comparison scans.
+async function scannedRecord(provider, scan, row, countryCode) {
+  const records = await scan({ rows: [row], countryCode });
+  return [...records.values()][0] || providerRecord({ provider, status: 'unavailable', reason: provider + ' returned no comparison record.' });
+}
+
 async function gelatoRecord(row, countryCode) {
   try {
     const records = await scanGelatoComparisonRows({ rows: [row], countryCode, fresh: false });
@@ -442,11 +451,15 @@ export const CUSTOM_LOOKUP_PROVIDER_DEADLINES_MS = Object.freeze({
   printify: 24000,
   gelato: 24000,
   printshrimp: 10000,
-  artelo: 12000
+  artelo: 12000,
+  printful: 24000,
+  lumaprints: 20000,
+  gooten: 24000
 });
+const PROVIDER_NAMES = Object.freeze({ prodigi: 'Prodigi', printify: 'Printify', gelato: 'Gelato', printshrimp: 'PrintShrimp', artelo: 'Artelo',
+  printful: 'Printful', lumaprints: 'Lumaprints', gooten: 'Gooten' });
 export async function boundedCustomProvider(key, operation, timeoutMs = CUSTOM_LOOKUP_PROVIDER_DEADLINES_MS[key]) {
-  const names={prodigi:'Prodigi',printify:'Printify',gelato:'Gelato',printshrimp:'PrintShrimp',artelo:'Artelo'};
-  const provider=names[key];
+  const provider=PROVIDER_NAMES[key];
   if(!provider||typeof operation!=='function'||!Number.isFinite(timeoutMs)||timeoutMs<=0)
     throw Error('Invalid bounded supplier lookup.');
   let timer;
@@ -507,15 +520,18 @@ export async function lookupCustomSize({
     ['printify', () => printifyRecord(row, country)],
     ['gelato', () => gelatoRecord(row, country)],
     ['printshrimp', () => printShrimpRecord({ productCode: product, size, countryCode: country })],
-    ['artelo', () => arteloRecord({ productCode: product, size, countryCode: country })]
+    ['artelo', () => arteloRecord({ productCode: product, size, countryCode: country })],
+    ['printful', () => scannedRecord('Printful', scanPrintfulComparisonRows, row, country)],
+    ['lumaprints', () => scannedRecord('Lumaprints', scanLumaprintsComparisonRows, row, country)],
+    ['gooten', () => scannedRecord('Gooten', scanGootenComparisonRows, row, country)]
   ];
   const quotes = previewOnly
     ? providerTasks.map(([key]) => providerRecord({
-        provider: ({prodigi:'Prodigi',printify:'Printify',gelato:'Gelato',printshrimp:'PrintShrimp',artelo:'Artelo'})[key],
+        provider: PROVIDER_NAMES[key],
         status:'checking',reason:'Live supplier quote has not completed yet.'
       }))
     : await Promise.all(providerTasks.map(([key, fn]) => boundedCustomProvider(key, fn)));
-  const [prodigi,printify,gelato,printshrimp,artelo] = quotes;
+  const [prodigi,printify,gelato,printshrimp,artelo,printful,lumaprints,gooten] = quotes;
 
   const raw = {
     sensaria,
@@ -523,7 +539,10 @@ export async function lookupCustomSize({
     printshrimp,
     printify,
     gelato,
-    artelo
+    artelo,
+    printful,
+    lumaprints,
+    gooten
   };
 
   const policy = landedCostPolicy();

@@ -19,8 +19,8 @@ test('preview returns Sensaria and nonranked placeholders without waiting on any
  assert.equal(result.suppliers.sensaria.status,'available');
  assert.ok(result.suppliers.sensaria.totalUsd>0);
  assert.equal(result.winner?.provider,'Sensaria');
- assert.equal(result.incompleteProviders.length,5);
- for(const name of ['prodigi','printify','gelato','printshrimp','artelo']){
+ assert.equal(result.incompleteProviders.length,8);
+ for(const name of ['prodigi','printify','gelato','printshrimp','artelo','printful','lumaprints','gooten']){
   assert.equal(result.suppliers[name].status,'checking');
   assert.equal(result.suppliers[name].eligible,false);
   assert.ok(!result.ranking.some(x=>x.provider===result.suppliers[name].provider));

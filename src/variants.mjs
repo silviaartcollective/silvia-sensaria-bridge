@@ -85,33 +85,37 @@ export const SILVIA_POSTER_ETSY_CAD_PER_USD = 1.486;
 export const SILVIA_SALE_DISCOUNT_PERCENT = 25;
 export const SILVIA_RETAIL_PRICE_LADDER_CAD = {
   P: {
-    '8x16': 64.95,
-    '10x20': 74.95,
-    '20x40': 114.95,
-    '24x48': 139.95,
-    '12x36': 99.95,
+    '8x16': 58.07,
+    '10x20': 60.67,
+    '20x40': 96.51,
+    '24x48': 111.98,
+    '12x36': 69.66,
     // Poster prices step upward by size rather than reusing equal adjacent tiers.
-    '5x7': 52.95,
-    '5x5': 52.95,
-    '8x8': 53.95,
-    '10x10': 55.95,
-    '12x12': 59.95,
-    '16x16': 69.95,
-    '18x18': 75.95,
-    '20x20': 82.95,
-    '24x24': 105.95,
-    '30x30': 122.95,
-    '20x30': 95.95,
-    '8x12': 57.95,
-    '8x10': 54.95,
-    '11x14': 59.95,
-    '12x16': 62.95,
-    '12x18': 65.95,
-    '16x20': 72.95,
-    '16x24': 80.95,
-    '18x24': 87.95,
-    '24x36': 102.95,
-    '30x40': 122.95
+    // Buyers see the same poster prices as at Japandi: Silvia's regular price
+    // after its 25% sale equals Japandi's after its 20% sale (11x14 to 30x40
+    // as the old Gelato poster listings, US$29.77 to $57.43; 20x30, squares and
+    // panoramics by print area). At Silvia's 1.486 CAD per USD poster rate.
+    '5x7': 50.12,
+    '5x5': 50.12,
+    '8x8': 53.06,
+    '10x10': 56.96,
+    '12x12': 58.62,
+    '16x16': 62.96,
+    '18x18': 65.43,
+    '20x20': 68.41,
+    '24x24': 80.18,
+    '30x30': 102.53,
+    '20x30': 81.92,
+    '8x12': 56.96,
+    '8x10': 54.68,
+    '11x14': 58.98,
+    '12x16': 60.25,
+    '12x18': 61.52,
+    '16x20': 65.26,
+    '16x24': 67.8,
+    '18x24': 69.66,
+    '24x36': 101.18,
+    '30x40': 113.78
   },
   C: {
     '8x16': 139.95,

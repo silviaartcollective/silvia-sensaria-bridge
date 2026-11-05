@@ -59,7 +59,7 @@ button:disabled{opacity:.6;cursor:wait}
 <script>
 (()=>{
  const byId=id=>document.getElementById(id);
- const providers=['Sensaria','Prodigi','Artelo','PrintShrimp','Printify','Gelato'];
+ const providers=['Sensaria','Prodigi','Artelo','PrintShrimp','Printify','Gelato','Printful','Lumaprints','Gooten'];
  function result(id,message,kind,detail) {
    const tag=byId(id+'-result'); if(tag){tag.textContent=message;tag.className='result '+(kind||'');}
    if(detail!=null){const d=byId(id+'-detail');if(d)d.textContent=String(detail);}

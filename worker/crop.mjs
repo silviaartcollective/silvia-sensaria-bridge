@@ -61,15 +61,27 @@ export function calculateCenterCrop(width, height, targetWidth, targetHeight) {
   };
 }
 
-export function validateRatioSource(master, ratio, target) {
+export function validateRatioSource(master, ratio, target, { exact = false } = {}) {
   // Reference dimensions indicate the aspect ratio and the nominal 300-PPI
-  // goal. They are NEVER an instruction to upscale the source image.
+  // goal. They are not an instruction to upscale the source image, unless the
+  // shop asks for exact target sizes (Arté Antica's production crops must be
+  // exactly 12000 × 18000 and so on): then the crop is made at that size,
+  // enlarging a smaller master.
   const requiredWidth = Number(target?.width || 0);
   const requiredHeight = Number(target?.height || 0);
   if (!requiredWidth || !requiredHeight) {
     throw new Error(`Missing production target for ${ratio}.`);
   }
   const crop = calculateCenterCrop(master.width, master.height, requiredWidth, requiredHeight);
+  if (exact) {
+    return {
+      required: { width: requiredWidth, height: requiredHeight },
+      crop,
+      output: { width: requiredWidth, height: requiredHeight },
+      upscaled: crop.width < requiredWidth || crop.height < requiredHeight,
+      recommendedPixelsMet: crop.width >= requiredWidth && crop.height >= requiredHeight
+    };
+  }
   // Scale down proportionally for smaller print formats, but never upscale.
   const scale = Math.min(1, requiredWidth / crop.width, requiredHeight / crop.height);
   const output = {
@@ -90,11 +102,13 @@ export async function generateProductionCrop({
   outputPath,
   master,
   ratio,
-  target
+  target,
+  exact = false
 }) {
-  const { crop, output: planned, recommendedPixelsMet } = validateRatioSource(master, ratio, target);
+  const { crop, output: planned, recommendedPixelsMet, upscaled } = validateRatioSource(master, ratio, target, { exact });
   // Extract the full-resolution crop directly from the original pixels. Do not
-  // enlarge tiny masters or shrink larger masters to fixed 300-PPI dimensions.
+  // enlarge tiny masters or shrink larger masters to fixed 300-PPI dimensions,
+  // except for a shop asking for exact target sizes.
   const left = Math.floor((master.width - crop.width) / 2);
   const top = Math.floor((master.height - crop.height) / 2);
   let image = sharp(masterPath, { limitInputPixels: false, sequentialRead: true })
@@ -103,7 +117,7 @@ export async function generateProductionCrop({
   if (planned.width !== crop.width || planned.height !== crop.height) {
     image = image.resize(planned.width, planned.height, {
       fit: 'fill',
-      withoutEnlargement: true,
+      withoutEnlargement: !exact,
       kernel: sharp.kernel.lanczos3
     });
   }
@@ -136,6 +150,6 @@ export async function generateProductionCrop({
     density: Number(output.density || 300),
     recommendedPixelsMet,
     downscaled: output.width < crop.width || output.height < crop.height,
-    upscaled: false
+    upscaled: upscaled === true
   };
 }
