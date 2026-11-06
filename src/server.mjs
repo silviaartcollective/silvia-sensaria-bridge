@@ -16,6 +16,7 @@ import { renderRepostListingsPage } from './repost-listings-page.mjs';
 import { renderListingFeesPage } from './listing-fees-page.mjs';
 import { ledgerEntries, summarizeFees, MAX_RANGE_SECONDS } from './listing-fees.mjs';
 import { recordOpenAiUsage, openAiUsageForMonth, openAiBilledCosts } from './openai-costs.mjs';
+import { scheduleSupplierCatalogWarmup } from './supplier-catalog-warmup.mjs';
 import { usdRate } from './supplier-catalog-match.mjs';
 import { renderDailyListingsPage } from './daily-listings-page.mjs';
 import {
@@ -7128,6 +7129,9 @@ async function recoverRecentGeneratedJpgs(){
 // the on-demand Scan Gmail button remains available.
 const GMAIL_TRACKING_POLL_MS=15*60*1000;
 server.listen(port, '0.0.0.0', () => {
+  // Printful, Lumaprints and Gooten catalogs read ahead, so a lookup after a
+  // restart does not time out reading them (supplier-catalog-warmup.mjs).
+  scheduleSupplierCatalogWarmup();
   console.log(`Silvia Sensaria bridge listening on port ${port}`);
   setTimeout(()=>{void recoverRecentGeneratedJpgs().catch(
     error=>console.error('PSD startup recovery failed:',error)
