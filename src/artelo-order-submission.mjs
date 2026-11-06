@@ -9,6 +9,7 @@
 // "submitting" before the request; a timeout or outage leaves it "unknown",
 // which is never retried until it is verified with Artelo.
 import { readOrder, saveReview, validReceiptId } from './custom-order-store.mjs';
+import { getJsonObject, putJsonObject, isMissingR2Object } from './r2.mjs';
 import { eligibleRegularReceipt, parseFulfillmentSku } from './regular-order-routing.mjs';
 import { resolveProviderArtworkAsset } from './fulfillment-assets.mjs';
 import { artworkObjectExists } from './r2.mjs';
@@ -25,10 +26,17 @@ export function submissionSettings(env = process.env) {
     masterEnabled: flag(env, 'FULFILLMENT_LIVE_SUBMISSION_ENABLED'),
     arteloEnabled: flag(env, 'ARTELO_FULFILLMENT_ENABLED'),
     allowedReceipts: new Set(words(env.SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS).split(/[\s,]+/).filter(Boolean)),
+    // "all": every approved order may be submitted from the app, no list.
+    allReceipts: words(env.SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS).toLowerCase() === 'all',
+    // Automatic submission of new Artelo orders (autoSubmitArteloOrder).
+    autoEnabled: flag(env, 'ARTELO_AUTO_SUBMIT_ENABLED'),
+    dailyLimit: Math.min(50, Math.max(1, Math.floor(Number(env.ARTELO_AUTO_SUBMIT_DAILY_LIMIT) || 5))),
     // Not read by this app: setting it changes nothing.
     ignoredVariables: ['LIVE_ORDER_SUBMISSION'].filter(name => env[name] != null)
   };
 }
+
+const receiptAllowed = (settings, id) => settings.allReceipts || settings.allowedReceipts.has(id);
 
 export const confirmationFor = receiptId => `SUBMIT ${receiptId} TO ARTELO`;
 export const notReceivedConfirmation = receiptId => `ARTELO DOES NOT HAVE ${receiptId}`;
@@ -156,7 +164,7 @@ export async function diagnoseOrder(receiptId, { shopId, deps = {} } = {}) {
     submission: ledger,
     supplierOrderId: ledger?.supplierOrderId || review.supplierOrderId || tracking?.supplierOrderId || '',
     liveSubmission: { masterEnabled: settings.masterEnabled, arteloEnabled: settings.arteloEnabled,
-      receiptAuthorized: settings.allowedReceipts.has(id), ignoredVariables: settings.ignoredVariables,
+      receiptAuthorized: receiptAllowed(settings, id), automaticEnabled: settings.autoEnabled, ignoredVariables: settings.ignoredVariables,
       automaticSubmission: false,
       note: 'Silvia never submits supplier orders automatically. LIVE_ORDER_SUBMISSION is not read by this app; FULFILLMENT_LIVE_SUBMISSION_ENABLED and ARTELO_FULFILLMENT_ENABLED only allow the explicit single-order submission below.' },
     problems
@@ -164,8 +172,11 @@ export async function diagnoseOrder(receiptId, { shopId, deps = {} } = {}) {
 }
 
 // The checks for one Artelo submission, with Artelo's own read-only price
-// check of the exact order. Never creates an order.
-export async function previewArteloOrder(receiptId, { shopId, prefix = 'SAC', latestReceipt = null, deps = {} } = {}) {
+// check of the exact order. Never creates an order. automatic: the checks for
+// autoSubmitArteloOrder, which replace the operator's approval: no
+// submission record at all, and ARTELO_AUTO_SUBMIT_ENABLED instead of the
+// receipt list.
+export async function previewArteloOrder(receiptId, { shopId, prefix = 'SAC', latestReceipt = null, automatic = false, deps = {} } = {}) {
   const d = { ...defaultDeps(), ...deps };
   const id = validReceiptId(receiptId);
   const settings = submissionSettings(d.env);
@@ -177,9 +188,14 @@ export async function previewArteloOrder(receiptId, { shopId, prefix = 'SAC', la
   catch (error) { blockers.push(error.message); }
   if (!plan) blockers.push('No supplier recommendation has been prepared.');
   else if (plan.supplier !== 'artelo') blockers.push(`The recommended supplier is ${plan.provider || plan.supplier}, not Artelo.`);
-  if (review.status !== 'approved_for_manual_order' || !review.approval?.planSignature || review.approval.planSignature !== plan?.signature)
+  if (automatic) {
+    if (review.status !== 'awaiting_supplier_approval') blockers.push(`The order is ${review.status || 'not reviewed'}, not a new recommendation.`);
+  } else if (review.status !== 'approved_for_manual_order' || !review.approval?.planSignature || review.approval.planSignature !== plan?.signature)
     blockers.push('Approve the Artelo recommendation on Fulfillment Review first (address, artwork, variant and price checked).');
   const ledger = await d.ledger.read(id);
+  // Automatic submission never touches an order that has any record (sent,
+  // rejected, unknown, Sensaria CSV, fulfilled elsewhere): only a person does.
+  if (automatic && ledger) blockers.push(`A submission record exists (${ledger.provider} · ${ledger.state}).`);
   const blocked = blockedBy(ledger, 'artelo');
   if (blocked) blockers.push(blocked);
   const tracking = await d.trackingRecord(id).catch(() => null);
@@ -213,7 +229,8 @@ export async function previewArteloOrder(receiptId, { shopId, prefix = 'SAC', la
   const switches = [];
   if (!settings.masterEnabled) switches.push('FULFILLMENT_LIVE_SUBMISSION_ENABLED is not true');
   if (!settings.arteloEnabled) switches.push('ARTELO_FULFILLMENT_ENABLED is not true');
-  if (!settings.allowedReceipts.has(id)) switches.push(`receipt ${id} is not in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS`);
+  if (automatic) { if (!settings.autoEnabled) switches.push('ARTELO_AUTO_SUBMIT_ENABLED is not true'); }
+  else if (!receiptAllowed(settings, id)) switches.push(`receipt ${id} is not in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS (or set it to all)`);
   const visible = payload ? { ...payload, items: payload.items.map(item => ({ ...item, productInfo: { ...item.productInfo,
     designs: item.productInfo.designs.map(() => ({ sourceImage: { url: '(signed R2 link to ' + (asset?.key || '') + ')' } })) } })) } : null;
   return { receiptId: id, ready: !blockers.length && !switches.length, blockers, switches, payload: visible,
@@ -238,11 +255,17 @@ export async function submitArteloOrder(receiptId, input = {}, { shopId, prefix 
     const preview = await previewArteloOrder(id, { shopId, prefix, latestReceipt, deps: d });
     if (preview.switches.length) throw new Error('Artelo submission is not authorized: ' + preview.switches.join('; ') + '.');
     if (preview.blockers.length) throw new Error('Not submitted: ' + preview.blockers.join(' '));
+    return await sendOnce(id, preview, d, { note: 'Explicitly authorized: ' + confirmationFor(id) });
+  } finally { locks.delete(id); }
+}
+
+// The one order request, recorded at every step. Callers hold the lock.
+async function sendOnce(id, preview, d, { note, approval = {} }) {
     const at = () => d.now().toISOString();
     let record = await d.ledger.read(id);
     record = transition(record, 'prepared',
       { provider: 'artelo', at: at(), fields: { receiptId: id, externalOrderId: preview._payload.orderId, planSignature: preview._planSignature } });
-    record = transition(record, 'queued', { provider: 'artelo', at: at(), note: 'Explicitly authorized: ' + confirmationFor(id) });
+    record = transition(record, 'queued', { provider: 'artelo', at: at(), note });
     // Persisted before the request: if the process stops, the order shows as
     // "submitting" and is treated as unknown, never sent again on its own.
     record = transition(record, 'submitting', { provider: 'artelo', at: at() });
@@ -266,8 +289,73 @@ export async function submitArteloOrder(receiptId, input = {}, { shopId, prefix 
     await d.ledger.write(id, record);
     const order = await d.readOrder(id);
     await d.saveReview(id, { ...order.review, status: 'supplier_submitted', supplierOrderId, updatedAt: at(),
-      approval: { ...(order.review?.approval || {}), supplierOrderSubmitted: true, supplier: 'artelo', submittedAt: at() } });
+      approval: { ...(order.review?.approval || {}), ...approval, supplierOrderSubmitted: true, supplier: 'artelo', submittedAt: at() } });
     return record;
+}
+
+// Automatic submission: since when it is on, and how many orders it sent each
+// day (fulfillment/auto-submit/state.json in R2).
+const AUTO_STATE_KEY = 'fulfillment/auto-submit/state.json';
+export function autoSubmitState({ get = getJsonObject, put = putJsonObject } = {}) {
+  return {
+    async read() {
+      try { return await get(AUTO_STATE_KEY); }
+      catch (error) { if (isMissingR2Object(error) || error?.code === 'missing') return {}; throw error; }
+    },
+    write: value => put(AUTO_STATE_KEY, value)
+  };
+}
+// At startup: switched on, it counts from now (orders placed before are never
+// sent automatically); switched off, the next switch-on starts afresh.
+export async function syncAutoSubmitActivation({ env = process.env, state = autoSubmitState(), now = () => new Date() } = {}) {
+  const current = await state.read();
+  if (!submissionSettings(env).autoEnabled) {
+    if (current.enabledSince) await state.write({ ...current, enabledSince: null });
+    return null;
+  }
+  if (current.enabledSince) return current.enabledSince;
+  await state.write({ ...current, enabledSince: now().toISOString() });
+  return now().toISOString();
+}
+
+// Sends a NEW paid order whose recommended supplier is Artelo, with no
+// person approving it, when every check passes: the switches
+// (FULFILLMENT_LIVE_SUBMISSION_ENABLED, ARTELO_FULFILLMENT_ENABLED,
+// ARTELO_AUTO_SUBMIT_ENABLED), placed after automatic submission was switched
+// on, under the daily limit, no submission record, and Preview's checks
+// (address, artwork, Artelo's exact price within the quote). An order that
+// fails a check is held for a person, once per recommendation.
+export async function autoSubmitArteloOrder(receiptId, { shopId, prefix = 'SAC', latestReceipt, deps = {} } = {}) {
+  const d = { ...defaultDeps(), autoState: autoSubmitState(), ...deps };
+  const id = validReceiptId(receiptId);
+  const settings = submissionSettings(d.env);
+  if (!settings.autoEnabled || !settings.masterEnabled || !settings.arteloEnabled) return { receiptId: id, status: 'off' };
+  const order = await d.readOrder(id);
+  const review = order?.review || {}, plan = review.regularPlan || null;
+  if (plan?.supplier !== 'artelo' || review.status !== 'awaiting_supplier_approval') return { receiptId: id, status: 'not_artelo' };
+  if (review.automaticSubmission?.planSignature && review.automaticSubmission.planSignature === plan.signature)
+    return { receiptId: id, status: 'already_held' };
+  const state = await d.autoState.read();
+  const receipt = latestReceipt || order?.staged?.receipt || {};
+  const placed = Number(receipt.create_timestamp || receipt.created_timestamp) * 1000;
+  if (!state.enabledSince || !(placed >= Date.parse(state.enabledSince))) return { receiptId: id, status: 'before_switch_on' };
+  const day = d.now().toISOString().slice(0, 10);
+  const hold = async reasons => {
+    await d.saveReview(id, { ...review, automaticSubmission: { status: 'held', planSignature: plan.signature, reasons, at: d.now().toISOString() } });
+    return { receiptId: id, status: 'held', reasons };
+  };
+  if ((state.days?.[day] || 0) >= settings.dailyLimit)
+    return { receiptId: id, status: 'daily_limit', reasons: [`${settings.dailyLimit} orders were already sent automatically today.`] };
+  if (locks.has(id)) return { receiptId: id, status: 'already_processing' };
+  locks.add(id);
+  try {
+    const preview = await previewArteloOrder(id, { shopId, prefix, latestReceipt, automatic: true, deps: d });
+    if (preview.switches.length || preview.blockers.length) return await hold([...preview.switches, ...preview.blockers]);
+    // Counted before the request, so a crash cannot exceed the limit.
+    await d.autoState.write({ ...state, days: { ...Object.fromEntries(Object.entries(state.days || {}).slice(-30)), [day]: (state.days?.[day] || 0) + 1 } });
+    const record = await sendOnce(id, preview, d, { note: 'Sent automatically: every check passed (price ' + preview.expectedCost.arteloPriceCheck?.total + ' USD).',
+      approval: { method: 'automatic', approvedAt: d.now().toISOString(), planSignature: plan.signature } });
+    return { receiptId: id, status: 'submitted', record };
   } finally { locks.delete(id); }
 }
 

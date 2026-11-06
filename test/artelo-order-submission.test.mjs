@@ -4,7 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { diagnoseOrder, previewArteloOrder, submitArteloOrder, verifyArteloSubmission, resolveSubmission,
-  otherSupplierHolds, buildArteloPayload, submissionSettings, confirmationFor, notReceivedConfirmation } from '../src/artelo-order-submission.mjs';
+  otherSupplierHolds, buildArteloPayload, submissionSettings, confirmationFor, notReceivedConfirmation,
+  autoSubmitArteloOrder, syncAutoSubmitActivation } from '../src/artelo-order-submission.mjs';
 import { transition, blockedBy } from '../src/supplier-order-ledger.mjs';
 import { automaticPreparationDecision, automaticallyPrepareReceipt, selectAutomaticCandidates } from '../src/auto-fulfillment.mjs';
 
@@ -300,4 +301,100 @@ test('submission record rules: one supplier, no resubmission, unknown leaves onl
   assert.throws(() => transition(u, 'queued', {}), /cannot go from unknown to queued/);
   assert.throws(() => transition(u, 'fulfilled_elsewhere', { provider: 'sensaria' }), /cannot go from unknown/);
   assert.throws(() => transition(transition(null, 'prepared', { provider: 'artelo' }), 'queued', { provider: 'sensaria' }), /assigned to artelo/);
+});
+
+// Automatic submission of new Artelo orders.
+const AUTO = { FULFILLMENT_LIVE_SUBMISSION_ENABLED: 'true', ARTELO_FULFILLMENT_ENABLED: 'true', ARTELO_AUTO_SUBMIT_ENABLED: 'true' };
+const newReview = (extra = {}) => ({ classification: 'regular', status: 'awaiting_supplier_approval', regularPlan: plan(), ...extra });
+function autoWorld({ env = AUTO, review = newReview(), since = '2025-10-01T00:00:00Z', days = {}, ...rest } = {}) {
+  const w = world({ env, review, ...rest });
+  w.state.auto = { enabledSince: since, days };
+  w.deps.autoState = { read: async () => w.state.auto, write: async value => { w.state.auto = value; } };
+  return w;
+}
+const auto = w => autoSubmitArteloOrder(RECEIPT, { shopId: SHOP, deps: w.deps });
+
+test('"all" lets any approved order be submitted from the app without the receipt list', async () => {
+  const w = world({ env: { ...LIVE, SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS: 'all' } });
+  const record = await submit(w);
+  assert.equal(record.state, 'submitted');
+  const listed = await previewArteloOrder(RECEIPT, { shopId: SHOP, deps: world({ env: { ...LIVE, SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS: '1' } }).deps });
+  assert.match(listed.switches.join(' '), /not in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS \(or set it to all\)/);
+});
+
+test('automatic: a new Artelo order that passes every check is sent once, with no person approving', async () => {
+  const w = autoWorld();
+  const result = await auto(w);
+  assert.equal(result.status, 'submitted');
+  assert.equal(w.state.created.length, 1);
+  assert.equal(w.state.created[0].payload.orderId, 'SAC-3456789012');
+  assert.match(result.record.history.find(h => h.to === 'queued').note, /Sent automatically/);
+  assert.equal(w.state.review.status, 'supplier_submitted');
+  assert.equal(w.state.review.approval.method, 'automatic');
+  assert.equal(Object.values(w.state.auto.days)[0], 1, 'counted for the daily limit');
+  // Never twice: the record (and the new status) stop a second run.
+  assert.equal((await auto(w)).status, 'not_artelo');
+  assert.equal(w.state.created.length, 1);
+});
+
+test('automatic is off without all three switches, and never sends orders placed before it was switched on', async () => {
+  for (const env of [LIVE, { ...AUTO, FULFILLMENT_LIVE_SUBMISSION_ENABLED: 'false' }, { ...AUTO, ARTELO_FULFILLMENT_ENABLED: '' }]) {
+    const w = autoWorld({ env });
+    assert.equal((await auto(w)).status, 'off');
+    assert.equal(w.state.created.length, 0);
+  }
+  const old = autoWorld({ since: '2026-10-30T00:00:00Z' }); // the receipt was placed in 2025
+  assert.equal((await auto(old)).status, 'before_switch_on');
+  assert.equal((await auto(autoWorld({ since: null }))).status, 'before_switch_on');
+  assert.equal(old.state.created.length, 0);
+});
+
+test('automatic holds an order for a person when a check fails, once, and never touches one with a record', async () => {
+  const framed = autoWorld({ artelo: { priceCheck: async () => ({ total: 140, productionCost: 112, shippingCost: 22, currency: 'USD' }) } });
+  const held = await auto(framed);
+  assert.equal(held.status, 'held');
+  assert.match(held.reasons.join(' '), /prices this product at \$112\.00/);
+  assert.equal(framed.state.created.length, 0);
+  assert.equal(framed.state.review.automaticSubmission.status, 'held');
+  assert.equal(framed.state.priceChecks, 1);
+  assert.equal((await auto(framed)).status, 'already_held', 'not re-checked every sweep');
+  assert.equal(framed.state.priceChecks, 1);
+
+  const rejected = autoWorld();
+  rejected.state.ledger = transition(transition(transition(transition(null, 'prepared', { provider: 'artelo', fields: { receiptId: RECEIPT } }), 'queued', {}), 'submitting', {}), 'rejected', {});
+  const r = await auto(rejected);
+  assert.equal(r.status, 'held');
+  assert.match(r.reasons.join(' '), /A submission record exists \(artelo · rejected\)/);
+  assert.equal(rejected.state.created.length, 0, 'a rejected order is never retried automatically');
+
+  const sensaria = autoWorld();
+  sensaria.state.ledger = transition(null, 'prepared', { provider: 'sensaria', fields: { receiptId: RECEIPT } });
+  assert.equal((await auto(sensaria)).status, 'held');
+  assert.equal(sensaria.state.created.length, 0);
+});
+
+test('automatic stops at the daily limit; the switch-on time is set once and cleared when switched off', async () => {
+  const today = '2026-10-31';
+  const full = autoWorld({ days: { [today]: 5 } });
+  assert.equal((await auto(full)).status, 'daily_limit');
+  assert.equal(full.state.created.length, 0);
+  const two = autoWorld({ env: { ...AUTO, ARTELO_AUTO_SUBMIT_DAILY_LIMIT: '2' }, days: { [today]: 1 } });
+  assert.equal((await auto(two)).status, 'submitted');
+
+  let stored = {};
+  const state = { read: async () => stored, write: async v => { stored = v; } };
+  const first = await syncAutoSubmitActivation({ env: AUTO, state, now: () => new Date('2026-11-01T10:00:00Z') });
+  assert.equal(first, '2026-11-01T10:00:00.000Z');
+  assert.equal(await syncAutoSubmitActivation({ env: AUTO, state, now: () => new Date('2026-11-05T10:00:00Z') }), first, 'a restart keeps it');
+  assert.equal(await syncAutoSubmitActivation({ env: {}, state }), null);
+  assert.equal(stored.enabledSince, null, 'switching off clears it, so switching on again starts from then');
+});
+
+test('the server sends automatically only inside the ARTELO_AUTO_SUBMIT_ENABLED sweep', () => {
+  const server = read('src/server.mjs');
+  assert.equal((server.match(/autoSubmitArteloOrder\(/g) || []).length, 1);
+  const sweep = server.indexOf('if(submissionSettings().autoEnabled){');
+  assert.ok(sweep > 0 && server.indexOf('autoSubmitArteloOrder(') > sweep);
+  for (const file of ['src/auto-fulfillment.mjs', 'src/regular-order-routing.mjs'])
+    assert.doesNotMatch(read(file), /autoSubmitArteloOrder/, file);
 });
