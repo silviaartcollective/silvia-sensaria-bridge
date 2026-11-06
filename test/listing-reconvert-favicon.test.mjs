@@ -60,7 +60,7 @@ test('reconversion reuses mapped artwork and prevents cross-listing mutations',(
 test('all app HTML pages include a shop-specific favicon, including login',()=>{
  const server=read('src/server.mjs');
  const favicon=read('src/favicon.svg').trim();
- assert.ok(server.includes("const source = decorateAdminHtml(html)"));
+ assert.ok(server.includes("const source = withAdminTheme(decorateAdminHtml(html))"));
  assert.ok(server.includes('/favicon-32.png?v=4'));
  assert.ok(server.includes('/favicon.ico?v=4'));
  assert.ok(server.includes("'/favicon.ico':[assets.ico,'image/x-icon']"));

@@ -1,3 +1,4 @@
+import { renderPrivacyPage, renderTermsPage } from './legal-pages.mjs';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -5,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
+import { zoomForThumbnail } from './thumbnail-zoom.mjs';
 import {getFaviconAssets} from './favicon-assets.mjs';
 import { renderDashboard } from './dashboard.mjs';
 import {workerUpdateBundle,latestWorkerVersion,heartbeatUpdate,workerUpdateText,compareWorkerVersions} from './worker-update.mjs';
@@ -24,7 +26,7 @@ import {
 import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement, listingSalesCount, getListingVideos } from './listing-reposter.mjs';
 import { startRenewal, resumeRenewal, stopRenewal, renewalRunning, checkRules, MAX_RENEWALS, DEFAULT_RENEWALS, DEFAULT_RULES } from './listing-renewer.mjs';
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
-import { decorateAdminHtml } from './admin-sidebar.mjs';
+import { decorateAdminHtml, withAdminTheme } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
 import {beginGmailAuthorization,finishGmailAuthorization,gmailConnectionStatus,disconnectGmail,gmailOAuthConfigured} from './gmail-oauth.mjs';
 import {scanSensariaGmail,gmailTrackingStatus,saveGmailTrackingSettings} from './sensaria-gmail-tracking.mjs';
@@ -155,7 +157,8 @@ import {
   claimNextCropJob,
   updateCropJobProgress,
   completeCropJob,
-  failCropJob
+  failCropJob,
+  releaseCropJobsNotHeld
 } from './crop-job-store.mjs';
 import { podProviderStatus, testPodProvider } from './pod-providers.mjs';
 import { verifyEtsyWebhook, receiptReferenceFromEtsyResource } from './etsy-webhook.mjs';
@@ -609,7 +612,7 @@ const FAVICON_LINKS = [
   '<link rel="apple-touch-icon" href="/favicon.png?v=4" sizes="64x64">'
 ].join('');
 function sendHtml(res, status, html) {
-  const source = decorateAdminHtml(html);
+  const source = withAdminTheme(decorateAdminHtml(html));
   // Real PNG and ICO favicons work in Chrome tabs, mobile and bookmarks.
   // Remove any previously embedded favicon links instead of serving duplicates.
   const body = source
@@ -668,6 +671,17 @@ function requireCropWorker(req, res) {
   if (isCropWorkerAuthorized(req)) return true;
   sendJson(res, 401, { ok: false, error: 'Invalid crop worker token.' });
   return false;
+}
+
+// Workers from v4.8.1 name the crop they hold in each heartbeat; any other crop
+// still marked as theirs is queued again (crop-job-store.mjs), at most once a minute.
+let abandonedCropCheckAt=0;
+function releaseAbandonedCrops(input={}){
+  if(!('cropJobId' in input)||Date.now()-abandonedCropCheckAt<60*1000)return;
+  abandonedCropCheckAt=Date.now();
+  void releaseCropJobsNotHeld(input.workerId,input.cropJobId).then(ids=>{
+    if(ids.length)console.log('Crop jobs queued again (the PC worker no longer holds them): '+ids.join(', '));
+  },error=>console.error('Crop jobs could not be checked:',error?.message||error));
 }
 
 function recordCropWorkerHeartbeat(input = {}) {
@@ -2110,7 +2124,10 @@ async function uploadPhotosToListing({session,listingId,altText='',photos,onUplo
     while(id<lanes&&next<photos.length){
       const index=next++;
       readAhead(index);readAhead(index+lanes);
-      const photo=photos[index],object=await reads.get(index);
+      const photo=photos[index];
+      let object=await reads.get(index);
+      // The listing's first photo (Etsy's thumbnail) goes up slightly zoomed.
+      if(photo.zoom)object={...object,body:await zoomForThumbnail(object.body),contentType:'image/jpeg'};
       if(typeof photo.rank==='function')photo.rank=photo.rank();
       let result;
       const attempt=lanes>1?send(photo,object,false):oneAtATime(()=>send(photo,object,true));
@@ -2169,7 +2186,9 @@ async function replaceListingPhotos({session,listingId,photos,altText=''}){
   const remove=image=>withEtsyListingRetry(()=>deleteListingImage({shopId,listingId,listingImageId:idOf(image),...args}),{attempts:4,baseDelayMs:220});
   const before=await read(),placed=[];
   for(const [index,photo] of photos.entries()){
-    const object=await photo.read(),rank=index+1,overwrite=rank<=before.length;
+    let object=await photo.read();const rank=index+1,overwrite=rank<=before.length;
+    // Photo 1 is Etsy's thumbnail: slightly zoomed.
+    if(rank===1)object={...object,body:await zoomForThumbnail(object.body),contentType:'image/jpeg'};
     const upload=replace=>withEtsyListingRetry(()=>uploadListingImage({shopId,listingId,imageBuffer:object.body,filename:photo.filename,
       contentType:object.contentType||'image/jpeg',rank,overwrite:replace,altText,...args}),{attempts:8,baseDelayMs:180});
     let result;
@@ -2217,6 +2236,8 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
       uploadedImages[index]={...previous,rank};return;
     }
     photos.push({index,item,rank,
+      // A preset photo is the thumbnail only when the chosen order puts it first.
+      zoom:(manifest.etsyPhotoOrder?.tiles||[])[0]==='key:'+item.key,
       filename:String(item.originalFilename||item.key.split('/').pop()||'listing-image.jpg'),
       read:async()=>{
         const object=plan.objectByKey.get(item.key)||await getArtworkObject(item.key);
@@ -3091,6 +3112,7 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[],in
       const uploadedReceipts=[];
       const {parallel}=await uploadPhotosToListing({session,listingId,altText:fresh.title||'',
         photos:pendingSelected.map(item=>({item,filename:item.originalFilename,rank:()=>rankFor(item),
+          zoom:placeOf('key:'+item.key)===0,
           read:()=>etsyReadyImage(item.key,{etsyKey:item.etsyKey||''})})),
         onUploaded:async(photo,listingImageId)=>{
           uploaded++;
@@ -3691,6 +3713,13 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, service: 'silvia-sensaria-bridge' });
   }
 
+  // Public (no sign-in): Google's consent screen links to these.
+  if (req.method === 'GET' && (url.pathname === '/privacy' || url.pathname === '/terms')) {
+    const body = url.pathname === '/privacy' ? renderPrivacyPage() : renderTermsPage();
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600', 'x-content-type-options': 'nosniff' });
+    return res.end(body);
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/crop-worker/heartbeat') {
     if (!requireCropWorker(req, res)) return;
     try {
@@ -3699,6 +3728,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { ok: false, error: 'workerId is required' });
       }
       logWorkerRestart(input.restart);
+      releaseAbandonedCrops(input);
       return sendJson(res, 200, {
         ok: true,
         worker: recordCropWorkerHeartbeat(input),
@@ -6019,10 +6049,10 @@ const server = http.createServer(async (req, res) => {
     if(url.searchParams.get('embedded')==='1'){
       // Same-origin converter tab reuses the complete, existing queue and UI,
       // but no nested admin sidebar or duplicate worker bootstrap.
-      const content=renderListingConverterPage().replace('</head>',
+      const content=withAdminTheme(renderListingConverterPage().replace('</head>',
         '<style>.app-shell{display:block!important;grid-template-columns:minmax(0,1fr)!important}'+
         '.app-sidebar{display:none!important}.shell{max-width:none!important;padding:12px 10px 30px!important}'+
-        '.top h1{font-size:30px!important}</style></head>');
+        '.top h1{font-size:30px!important}</style></head>'));
       res.writeHead(200,{'content-type':'text/html; charset=utf-8',
         'cache-control':'private, no-store','x-content-type-options':'nosniff'});
       return res.end(content);

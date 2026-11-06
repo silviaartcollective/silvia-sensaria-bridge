@@ -125,6 +125,37 @@ export function reclaimStaleJobs(store, now = new Date()) {
   return store;
 }
 
+// A crop marked as held by the PC worker that its heartbeats no longer name (it
+// finished or failed while this shop was restarting, or the worker restarted)
+// goes back in the queue after 2 minutes, instead of waiting for STALE_JOB_MS.
+export const ABANDONED_CROP_MS = 2 * 60 * 1000;
+export function releaseJobsNotHeld(store, workerId, heldJobId, now = new Date()) {
+  const worker = String(workerId || '').trim(), held = String(heldJobId || '').trim();
+  const released = [];
+  if (!worker) return released;
+  for (const job of store.jobs || []) {
+    if (!['claimed', 'processing', 'uploading'].includes(job.status)) continue;
+    if (job.workerId !== worker || job.id === held) continue;
+    const updated = Date.parse(job.updatedAt || 0);
+    if (Number.isFinite(updated) && now.getTime() - updated < ABANDONED_CROP_MS) continue;
+    job.status = 'pending';
+    job.workerId = '';
+    job.currentRatio = '';
+    job.message = 'The PC worker stopped working on this crop; queued again';
+    job.updatedAt = nowIso(now);
+    released.push(job.id);
+  }
+  return released;
+}
+export async function releaseCropJobsNotHeld(workerId, heldJobId) {
+  return withMutation(async () => {
+    const store = await readStore();
+    const released = releaseJobsNotHeld(store, workerId, heldJobId);
+    if (released.length) await writeStore(store);
+    return released;
+  });
+}
+
 export function claimPendingJob(store, workerId, now = new Date()) {
   reclaimStaleJobs(store, now);
   const worker = String(workerId || '').trim();
