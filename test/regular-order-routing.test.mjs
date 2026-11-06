@@ -37,12 +37,14 @@ test('quote approval fingerprint changes when supplier or price changes',()=>{
  assert.notEqual(quoteSignature(p),quoteSignature({...p,supplier:'prodigi'}));
  assert.notEqual(quoteSignature(p),quoteSignature({...p,quotedTotalUsd:30}));
 });
-test('review page is readable, shows checks and never submits orders',()=>{
+test('review page is readable, shows checks and never submits orders automatically',()=>{
  const html=renderFulfillmentReviewPage('Test Shop');
  assert.ok(html.includes('Supplier Fulfillment Review'));
- assert.ok(html.includes('No supplier orders are placed'));
+ assert.ok(html.includes('No supplier order is ever placed automatically'));
  assert.ok(html.includes('APPROVE FOR REVIEW'));
  assert.ok(!html.includes('submit-supplier-order'));
+ // The one way to send an order is the shared supplier-order panel (test/supplier-order-panel.test.mjs).
+ assert.ok(html.includes('<script src="/supplier-order-client.js"></script>'));
  const m=html.match(/<script>([\s\S]*?)<\/script>/);
  assert.ok(m);assert.doesNotThrow(()=>new vm.Script(m[1]));
 });

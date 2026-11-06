@@ -136,7 +136,7 @@ test('Artwork Files: the page, the two separate zips, Generate, and an original 
   assert.match(server, /url\.pathname\.match\(\/\^\\\/api\\\/artwork-files\\\/\(masters\|originals\)\\\.zip\$\/\)/);
   // New artworks (Product Creator, converter, Daily Listings) and replaced masters get their original.
   assert.match(server, /const manifest = await completeArtworkUpload\(artworkCompleteMatch\[1\]\.toUpperCase\(\)\);\n      queueOriginal\(manifest\.artworkId\);/);
-  assert.match(server, /const manifest=await completeArtworkUpload\(reservation\.artworkId\);\n      queueOriginal\(reservation\.artworkId\);/);
+  assert.match(server, /const manifest=await completeArtworkUpload\(artworkId\);\n      queueOriginal\(artworkId\);/);
   assert.match(server, /if\(!activated\.alreadyActive\)queueOriginal\(artworkId\);/);
   const page = read('src/artwork-files-page.mjs');
   assert.match(page, /href="\/api\/artwork-files\/masters\.zip" download/);

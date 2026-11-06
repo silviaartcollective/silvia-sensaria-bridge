@@ -1,3 +1,4 @@
+import { renderPrivacyPage, renderTermsPage } from './legal-pages.mjs';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -5,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
+import { zoomForThumbnail } from './thumbnail-zoom.mjs';
 import {getFaviconAssets} from './favicon-assets.mjs';
 import { renderDashboard } from './dashboard.mjs';
 import {workerUpdateBundle,latestWorkerVersion,heartbeatUpdate,workerUpdateText,compareWorkerVersions} from './worker-update.mjs';
@@ -13,6 +15,8 @@ import { renderListingReposterPage } from './listing-reposter-page.mjs';
 import { renderRepostListingsPage } from './repost-listings-page.mjs';
 import { renderListingFeesPage } from './listing-fees-page.mjs';
 import { ledgerEntries, summarizeFees, MAX_RANGE_SECONDS } from './listing-fees.mjs';
+import { recordOpenAiUsage, openAiUsageForMonth, openAiBilledCosts } from './openai-costs.mjs';
+import { usdRate } from './supplier-catalog-match.mjs';
 import { renderDailyListingsPage } from './daily-listings-page.mjs';
 import {
   cropOutputKeyForJob, isStagedRevisionJob, isStagedConverterCropJob, reserveArtworkRevision,
@@ -21,11 +25,14 @@ import {
 import { findCandidates, getDetails, reserveMockups, prepareReplacement, finalizeReplacement, listingSalesCount, getListingVideos } from './listing-reposter.mjs';
 import { startRenewal, resumeRenewal, stopRenewal, renewalRunning, checkRules, MAX_RENEWALS, DEFAULT_RENEWALS, DEFAULT_RULES } from './listing-renewer.mjs';
 import { supplierOrderEndpointStatus } from './order-endpoints.mjs';
-import { decorateAdminHtml } from './admin-sidebar.mjs';
+import { decorateAdminHtml, withAdminTheme } from './admin-sidebar.mjs';
 import { renderTrackingPage } from './tracking-page.mjs';
 import {beginGmailAuthorization,finishGmailAuthorization,gmailConnectionStatus,disconnectGmail,gmailOAuthConfigured} from './gmail-oauth.mjs';
 import {scanSensariaGmail,gmailTrackingStatus,saveGmailTrackingSettings} from './sensaria-gmail-tracking.mjs';
-import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy } from './order-tracking.mjs';
+import { listTrackingRecords, linkTrackingOrder, checkSupplierTracking, checkEtsyShipmentStatus, sensariaCandidates, stageShipment, sendStagedShipmentToEtsy, readTrackingRecord } from './order-tracking.mjs';
+import { diagnoseOrder, previewArteloOrder, submitArteloOrder, verifyArteloSubmission, resolveSubmission, otherSupplierHolds } from './artelo-order-submission.mjs';
+import { ledgerStore, transition } from './supplier-order-ledger.mjs';
+import { syncArteloTracking, autoTrackingSettings, ARTELO_TRACKING_INTERVAL_MS } from './artelo-auto-tracking.mjs';
 
 const TRACKING_SHOP_NAME="Silvia Art Collective";
 import { renderDescriptionUpdaterPage } from './description-updater-page.mjs';
@@ -57,14 +64,14 @@ import {
 } from './master-listings.mjs';
 import {originalEtsyCreationTimestamp,sortConverterListingsOldestFirst} from './converter-listing-order.mjs';
 import { listingSeoPreservation, describeEtsyDescriptionDifference, sameEtsyDescription } from './converter-description.mjs';
-import { hasAuthorizedConverterLink } from './listing-converter-link.mjs';
+import { hasAuthorizedConverterLink, linkedListingArtwork, unlinkedListingReason } from './listing-converter-link.mjs';
 import {
  enqueueConversion,getConversionJob,getConversionQueueSummary,claimNextConversion,
  updateConversionJob,cancelConversion
 } from './listing-conversion-queue.mjs';
 import {
  reserveConverterArtworkRevision,reserveConverterArtworkRegeneration,startConverterArtworkCrop,getConverterArtworkRevisionStatus,getConverterArtworkRevisionStatuses,
- assertConverterArtworkReady,activateConverterArtworkRevision
+ assertConverterArtworkReady,activateConverterArtworkRevision,reserveOwnCrops,verifyOwnCrops
 } from './converter-artwork-revision.mjs';
 import { renderShippingProfilePage } from './shipping-profile-page.mjs';
 import {renderInternationalShippingPage} from './international-shipping-page.mjs';
@@ -151,7 +158,8 @@ import {
   claimNextCropJob,
   updateCropJobProgress,
   completeCropJob,
-  failCropJob
+  failCropJob,
+  releaseCropJobsNotHeld
 } from './crop-job-store.mjs';
 import { podProviderStatus, testPodProvider } from './pod-providers.mjs';
 import { verifyEtsyWebhook, receiptReferenceFromEtsyResource } from './etsy-webhook.mjs';
@@ -521,26 +529,9 @@ const MASTER_PAGE_TTL_MS=2*60*1000;
 // Verified listing → artwork link for edits that touch artwork files: either a
 // converted listing in the converter map, or a Product Creator listing whose
 // artwork manifest records this Etsy listing ID.
+// The artwork a listing's edits may change (listing-converter-link.mjs).
 async function resolveListingArtwork({listingId,listing,map}){
- const id=Number(listingId);
- const mapping=map?.listings?.[String(id)];
- if(mapping?.status==='converted'&&mapping.artworkId){
-  const artworkId=String(mapping.artworkId).toUpperCase();
-  const manifest=await loadArtworkManifest(artworkId).catch(()=>null);
-  if(manifest?.master?.key&&manifest.status==='ready'&&hasAuthorizedConverterLink({
-    listingId:id,sourceListingId:manifest.sourceEtsyListingId,artworkId,
-    reconvert:true,mappings:map.listings}))
-   return {artworkId,source:'converter',manifest};
- }
- const fromSku=artworkIdFromSkus(listing?.skus);
- if(fromSku){
-  const manifest=await loadArtworkManifest(fromSku).catch(()=>null);
-  const recorded=[manifest?.etsyDraftListingId,manifest?.etsyConfiguration?.listingId,manifest?.sourceEtsyListingId]
-   .some(value=>Number(value)===id);
-  if(manifest?.master?.key&&manifest.status==='ready'&&recorded)
-   return {artworkId:fromSku,source:'product-creator',manifest};
- }
- return null;
+ return linkedListingArtwork({listingId,listing,map,loadManifest:loadArtworkManifest});
 }
 async function masterListingPage(session,offset=0){
  const safeOffset=Number(offset);
@@ -566,6 +557,8 @@ async function masterListingPage(session,offset=0){
        const mapping=map.listings?.[String(x.listing_id)];
        return {listingId:Number(x.listing_id),title:String(x.title||''),state:x.state,
          artworkId:mapping?.artworkId||artworkIdFromSkus(x.skus),converted:mapping?.status==='converted',
+         // Reserved in the converter but never converted: its SKUs are still Gelato's.
+         conversionUnfinished:mapping?.status==='reserved'&&!artworkIdFromSkus(x.skus),
          originalCreationTimestamp:originalEtsyCreationTimestamp(x)};
      });
    return {listings:sortConverterListingsOldestFirst(rows),offset:safeOffset,
@@ -623,7 +616,7 @@ const FAVICON_LINKS = [
   '<link rel="apple-touch-icon" href="/favicon.png?v=4" sizes="64x64">'
 ].join('');
 function sendHtml(res, status, html) {
-  const source = decorateAdminHtml(html);
+  const source = withAdminTheme(decorateAdminHtml(html));
   // Real PNG and ICO favicons work in Chrome tabs, mobile and bookmarks.
   // Remove any previously embedded favicon links instead of serving duplicates.
   const body = source
@@ -682,6 +675,17 @@ function requireCropWorker(req, res) {
   if (isCropWorkerAuthorized(req)) return true;
   sendJson(res, 401, { ok: false, error: 'Invalid crop worker token.' });
   return false;
+}
+
+// Workers from v4.8.1 name the crop they hold in each heartbeat; any other crop
+// still marked as theirs is queued again (crop-job-store.mjs), at most once a minute.
+let abandonedCropCheckAt=0;
+function releaseAbandonedCrops(input={}){
+  if(!('cropJobId' in input)||Date.now()-abandonedCropCheckAt<60*1000)return;
+  abandonedCropCheckAt=Date.now();
+  void releaseCropJobsNotHeld(input.workerId,input.cropJobId).then(ids=>{
+    if(ids.length)console.log('Crop jobs queued again (the PC worker no longer holds them): '+ids.join(', '));
+  },error=>console.error('Crop jobs could not be checked:',error?.message||error));
 }
 
 function recordCropWorkerHeartbeat(input = {}) {
@@ -977,12 +981,23 @@ function batchDeps(){
     loadJob:async()=>{try{return await getJsonObject(BATCH_JOB_KEY)}catch(error){if(isMissingR2Object(error))return null;throw error}},
     saveJob:job=>putJsonObject(BATCH_JOB_KEY,job),
     pause:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
-    reserveArtwork:async item=>{
-      const reservation=await reserveArtworkUpload({title:'',orientation:'auto',
-        master:{filename:item.filename,contentType:item.contentType,size:item.size},mockups:[],stagedMaster:{stageId:item.stageId}});
-      const manifest=await completeArtworkUpload(reservation.artworkId);
-      queueOriginal(reservation.artworkId);
-      return {artworkId:reservation.artworkId,orientation:listingLayoutForManifest(manifest)};
+    // onReserved keeps the new ID with the batch item, so a retry finishes that
+    // artwork: reserving moves the upload out of temporary storage into it.
+    reserveArtwork:async(item,onReserved=async()=>{})=>{
+      let artworkId=item.reservedArtworkId||'';
+      if(!artworkId){
+        const staged=stagedMasterObjectKey(item.stageId,item.filename);
+        const info=await artworkObjectInfo(staged).catch(()=>null);
+        if(!info)throw Error('The uploaded file is no longer in temporary storage (kept 3 days). Start over and add this artwork again.');
+        if(item.size&&Number(info.size)!==Number(item.size))
+          throw Error('The upload of this file did not finish ('+Math.round(Number(info.size)/1048576)+' of '+Math.round(Number(item.size)/1048576)+' MB arrived). Start over and add this artwork again.');
+        artworkId=(await reserveArtworkUpload({title:'',orientation:'auto',
+          master:{filename:item.filename,contentType:item.contentType,size:item.size},mockups:[],stagedMaster:{stageId:item.stageId}})).artworkId;
+        await onReserved(artworkId);
+      }
+      const manifest=await completeArtworkUpload(artworkId);
+      queueOriginal(artworkId);
+      return {artworkId,orientation:listingLayoutForManifest(manifest)};
     },
     // From the staged master (no artwork ID yet), or from the artwork when it has one.
     startMockups:async item=>{
@@ -1033,7 +1048,7 @@ function batchDeps(){
         const manifest=await loadArtworkManifest(item.artworkId);
         picture=(await getArtworkObject(manifest.master.key)).body;
       }
-      return generateEtsySeo({image:await seoImage(picture),orientation:item.orientation,...(await seoShopContext(await getEtsySession()))});
+      return generateEtsySeo({onUsage:recordOpenAiUsage,image:await seoImage(picture),orientation:item.orientation,...(await seoShopContext(await getEtsySession()))});
     },
     attachMockups:(artworkId,jobId,templateIds)=>syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds}),
     // The order arranged for the preset and shape goes on the artwork, as the
@@ -1221,7 +1236,7 @@ async function renewalSeo(listingId){
   try{manifest=await loadArtworkManifest(artworkIdFromInventory(await getListingInventory({listingId,...args})))}catch{}
   const layout=manifest?listingLayoutForManifest(manifest):'';
   const context=await seoShopContext(session);
-  const seo=await generateEtsySeo({image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
+  const seo=await generateEtsySeo({onUsage:recordOpenAiUsage,image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
     orientation:layout,previous:{title:listing.title,tags:listing.tags||[]},...context});
   if(!manifest)return {title:seo.title,tags:seo.tags,style:seo.style,description:String(listing.description||''),descriptionKept:true};
   const current=context.sections.find(item=>String(item.shop_section_id)===String(listing.shop_section_id||''));
@@ -1290,7 +1305,7 @@ async function refreshSeo(listingId){
   let layout='';
   try{layout=listingLayoutForManifest(await loadArtworkManifest(artworkIdFromInventory(await getListingInventory({listingId,...args}))))}catch{}
   const context=await seoShopContext(session);
-  const seo=await generateEtsySeo({image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
+  const seo=await generateEtsySeo({onUsage:recordOpenAiUsage,image:await seoImage(await etsyPhotoBuffer(first.url_fullxfull||first.url_570xN)),
     orientation:layout,previous:{title:listing.title,tags:listing.tags||[]},...context});
   const current=context.sections.find(item=>String(item.shop_section_id)===String(listing.shop_section_id||''));
   return {title:seo.title,tags:seo.tags,style:seo.style,description:seo.description,
@@ -2113,7 +2128,10 @@ async function uploadPhotosToListing({session,listingId,altText='',photos,onUplo
     while(id<lanes&&next<photos.length){
       const index=next++;
       readAhead(index);readAhead(index+lanes);
-      const photo=photos[index],object=await reads.get(index);
+      const photo=photos[index];
+      let object=await reads.get(index);
+      // The listing's first photo (Etsy's thumbnail) goes up slightly zoomed.
+      if(photo.zoom)object={...object,body:await zoomForThumbnail(object.body),contentType:'image/jpeg'};
       if(typeof photo.rank==='function')photo.rank=photo.rank();
       let result;
       const attempt=lanes>1?send(photo,object,false):oneAtATime(()=>send(photo,object,true));
@@ -2172,7 +2190,9 @@ async function replaceListingPhotos({session,listingId,photos,altText=''}){
   const remove=image=>withEtsyListingRetry(()=>deleteListingImage({shopId,listingId,listingImageId:idOf(image),...args}),{attempts:4,baseDelayMs:220});
   const before=await read(),placed=[];
   for(const [index,photo] of photos.entries()){
-    const object=await photo.read(),rank=index+1,overwrite=rank<=before.length;
+    let object=await photo.read();const rank=index+1,overwrite=rank<=before.length;
+    // Photo 1 is Etsy's thumbnail: slightly zoomed.
+    if(rank===1)object={...object,body:await zoomForThumbnail(object.body),contentType:'image/jpeg'};
     const upload=replace=>withEtsyListingRetry(()=>uploadListingImage({shopId,listingId,imageBuffer:object.body,filename:photo.filename,
       contentType:object.contentType||'image/jpeg',rank,overwrite:replace,altText,...args}),{attempts:8,baseDelayMs:180});
     let result;
@@ -2211,7 +2231,8 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
     accessToken:session.accessToken
   });
-  const initialRemoteIds=receivedEtsyImageIds(await readRemoteImages());
+  const initialRemote=await readRemoteImages();
+  const initialRemoteIds=receivedEtsyImageIds(initialRemote);
   const photos=[];
   imageItems.forEach(({item,rank},index)=>{
     const previous=existingImages.get(item.key);
@@ -2219,6 +2240,8 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
       uploadedImages[index]={...previous,rank};return;
     }
     photos.push({index,item,rank,
+      // A preset photo is the thumbnail only when the chosen order puts it first.
+      zoom:(manifest.etsyPhotoOrder?.tiles||[])[0]==='key:'+item.key,
       filename:String(item.originalFilename||item.key.split('/').pop()||'listing-image.jpg'),
       read:async()=>{
         const object=plan.objectByKey.get(item.key)||await getArtworkObject(item.key);
@@ -2227,6 +2250,12 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
         return {...object,contentType:object.contentType||item.contentType||'image/jpeg'};
       }});
   });
+  // Etsy keeps 20 photos: a draft set up again after an interruption may
+  // already be full, and then the preset photos that do not fit stay off
+  // instead of failing the setup.
+  const presetPhotosNotAdded=photos.splice(Math.max(0,ETSY_PHOTO_LIMIT-initialRemote.length)).length;
+  if(presetPhotosNotAdded)console.warn('[draft setup] '+manifest.artworkId+': listing '+listingId+' already has '+initialRemote.length+
+    ' photos; '+presetPhotosNotAdded+' preset photo(s) not added.');
   const {parallel}=await uploadPhotosToListing({session,listingId,altText:manifest.title||'',photos,
     onUploaded:async(photo,listingImageId)=>{
       const receipt={listingImageId,key:photo.item.key,filename:photo.filename,rank:photo.rank};
@@ -2269,6 +2298,7 @@ async function uploadPreparedMediaToEtsy({ session, listingId, manifest, plan })
     verifiedImageCount: confirmed.verified,
     verificationRemoteCount: confirmed.remoteCount,
     missingPresetRoles:plan.missingPresetRoles||[],
+    presetPhotosNotAdded,
     videoUploaded: Boolean(manifest.etsyMedia.video?.videoId),
     uploadMs: Date.now() - uploadStartedAt,
     originalImageBytes,
@@ -2917,6 +2947,8 @@ async function runPendingListingConversions(){
    try{
     const result=await performListingConversion(job.request);
     await updateConversionJob(job.id,{status:'completed',progress:'Etsy conversion verified',result});
+    // The Listings page shows the listing as converted on its next refresh.
+    masterListingPageCache.clear();
    }catch(error){
     console.error('[Etsy converter queue] listing '+job.request.listingId+': '+error.message);
     await updateConversionJob(job.id,{status:'failed',progress:'Conversion requires attention',error:error.message});
@@ -3084,6 +3116,7 @@ async function syncGeneratedMockupsForArtwork({artworkId,jobId,templateIds=[],in
       const uploadedReceipts=[];
       const {parallel}=await uploadPhotosToListing({session,listingId,altText:fresh.title||'',
         photos:pendingSelected.map(item=>({item,filename:item.originalFilename,rank:()=>rankFor(item),
+          zoom:placeOf('key:'+item.key)===0,
           read:()=>etsyReadyImage(item.key,{etsyKey:item.etsyKey||''})})),
         onUploaded:async(photo,listingImageId)=>{
           uploaded++;
@@ -3684,6 +3717,13 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, service: 'silvia-sensaria-bridge' });
   }
 
+  // Public (no sign-in): Google's consent screen links to these.
+  if (req.method === 'GET' && (url.pathname === '/privacy' || url.pathname === '/terms')) {
+    const body = url.pathname === '/privacy' ? renderPrivacyPage() : renderTermsPage();
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600', 'x-content-type-options': 'nosniff' });
+    return res.end(body);
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/crop-worker/heartbeat') {
     if (!requireCropWorker(req, res)) return;
     try {
@@ -3692,6 +3732,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { ok: false, error: 'workerId is required' });
       }
       logWorkerRestart(input.restart);
+      releaseAbandonedCrops(input);
       return sendJson(res, 200, {
         ok: true,
         worker: recordCropWorkerHeartbeat(input),
@@ -4424,6 +4465,47 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/fulfillment-review'))return;
     return sendHtml(res,200,renderFulfillmentReviewPage('Silvia Art Collective'));
   }
+  // One regular order's supplier submission (artelo-order-submission.mjs).
+  // diagnose and artelo-preview only read; artelo-submit sends ONE order and
+  // needs the live switches, the receipt in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS
+  // and a typed confirmation. Nothing here runs on its own.
+  const submissionRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})\/(diagnose|artelo-preview|artelo-submit|artelo-verify|submission-resolve)$/);
+  if(submissionRoute){
+    if(!requireAdminApi(req,res))return;
+    const [,id,action]=submissionRoute;
+    const post=['artelo-submit','artelo-verify','submission-resolve'].includes(action);
+    if(post!==(req.method==='POST'))return sendJson(res,405,{ok:false,error:'Method not allowed.'});
+    if(post){
+      const origin=String(req.headers.origin||'');
+      const expected=(req.headers['x-forwarded-proto']||'https')+'://'+String(req.headers.host||'');
+      if((origin&&origin!==expected)||req.headers['sec-fetch-site']==='cross-site')
+        return sendJson(res,403,{ok:false,error:'Cross-site request blocked.'});
+      if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
+        return sendJson(res,415,{ok:false,error:'JSON request required.'});
+    }
+    try{
+      const session=await getEtsySession();
+      const shopId=Number(session.shop.shop_id);
+      const deps={trackingRecord:readTrackingRecord};
+      if(action==='diagnose')return sendJson(res,200,{ok:true,diagnosis:await diagnoseOrder(id,{shopId,deps})});
+      if(action==='artelo-verify')return sendJson(res,200,{ok:true,...await verifyArteloSubmission(id)});
+      if(action==='submission-resolve')return sendJson(res,200,{ok:true,submission:await resolveSubmission(id,await readJsonBody(req))});
+      // The live Etsy receipt: payment, shipping state and address as of now.
+      const latest=await getShopReceipt({shopId,receiptId:id,keystring:session.keystring,
+        sharedSecret:session.sharedSecret,accessToken:session.accessToken});
+      if(!Array.isArray(latest.transactions)||!latest.transactions.length)
+        latest.transactions=await receiptTransactions(session,id);
+      if(action==='artelo-preview'){
+        const preview=await previewArteloOrder(id,{shopId,latestReceipt:latest,deps});
+        delete preview._payload;delete preview._planSignature;
+        return sendJson(res,200,{ok:true,preview});
+      }
+      const submission=await submitArteloOrder(id,await readJsonBody(req),{shopId,latestReceipt:latest,deps});
+      return sendJson(res,200,{ok:true,submission});
+    }catch(error){
+      return sendJson(res,400,{ok:false,error:String(error.message||error),...(error.record?{submission:error.record}:{})});
+    }
+  }
   const regularRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})(?:\/(prepare|approve))?$/);
   if(regularRoute && req.method==='GET' && !regularRoute[2]){
     if(!requireAdminApi(req,res))return;
@@ -4540,6 +4622,13 @@ const server = http.createServer(async (req, res) => {
       if(url.searchParams.get('download')==='1'){
         const csv=csvJobResult(id);
         if(!csv)return sendJson(res,409,{ok:false,error:'CSV not yet ready. Wait for preparation to finish.'});
+        // The order's one supplier becomes Sensaria (supplier-order-ledger.mjs),
+        // so it is not also sent to Artelo; reassigning it takes a typed confirmation.
+        try{
+          const ledger=ledgerStore(),record=await ledger.read(id);
+          if(!record||(record.state==='prepared'&&record.provider!=='sensaria'))
+            await ledger.write(id,transition(record,'prepared',{provider:'sensaria',fields:{receiptId:id},note:'Sensaria CSV downloaded for a manual order.'}));
+        }catch(error){console.warn('[supplier ledger] '+id+': '+String(error.message||error));}
         res.writeHead(200,{
           'content-type':'text/csv; charset=utf-8',
           'content-disposition':'attachment; filename="sensaria-etsy-'+id+'.csv"',
@@ -4560,6 +4649,8 @@ const server = http.createServer(async (req, res) => {
     if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))
       return sendJson(res,415,{ok:false,error:'JSON request required.'});
     try{
+      const held=await otherSupplierHolds(id,'sensaria');
+      if(held)return sendJson(res,409,{ok:false,error:held});
       const job=startCsvJob(id,async stage=>{
         stage('Checking Etsy payment and current order details');
         const session=await getEtsySession();
@@ -4968,7 +5059,10 @@ const server = http.createServer(async (req, res) => {
         printshrimp: Boolean(providers?.PrintShrimp?.ready),
         printify: Boolean(providers?.Printify?.ready),
         gelato: Boolean(providers?.Gelato?.ready),
-        artelo: Boolean(providers?.Artelo?.ready)
+        artelo: Boolean(providers?.Artelo?.ready),
+        printful: Boolean(providers?.Printful?.ready),
+        lumaprints: Boolean(providers?.Lumaprints?.ready),
+        gooten: Boolean(providers?.Gooten?.ready)
       }
     }));
   }
@@ -5398,7 +5492,7 @@ const server = http.createServer(async (req, res) => {
     if(!requireAdminPage(req,res,'/daily-listings'))return;
     return sendHtml(res,200,renderDailyListingsPage());
   }
-  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js','/artwork-files-client.js','/artwork-library-client.js','/shop-data-client.js'].includes(url.pathname)){
+  if(req.method==='GET'&&['/ai-seo-client.js','/mockup-presets-client.js','/daily-batch-client.js','/repost-listings-client.js','/listing-fees-client.js','/artwork-files-client.js','/artwork-library-client.js','/supplier-order-client.js','/shop-data-client.js'].includes(url.pathname)){
     if(!requireAdminApi(req,res))return;
     const js=readFileSync(new URL('.'+url.pathname,import.meta.url),'utf8');
     res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
@@ -5691,6 +5785,29 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res,200,value);
     }catch(error){return sendJson(res,502,{ok:false,error:String(error?.message||error).slice(0,400)})}
   }
+  // Fees & Expenses: the month's ChatGPT costs (recorded per request, and
+  // what OpenAI billed when OPENAI_ADMIN_KEY is set).
+  // How many of the shop's currency one US$ buys, so ChatGPT's US$ cost can be
+  // added to Etsy's fees (e.g. CA$) for one total. Frankfurter, cached 6 hours.
+  if (req.method === 'GET' && url.pathname === '/api/expenses/fx') {
+    if (!requireAdminApi(req,res)) return;
+    try{
+      const currency=String(url.searchParams.get('currency')||'').toUpperCase();
+      const fx=await usdRate(currency);
+      return sendJson(res,200,{ok:true,currency,perUsd:Number((1/fx.rate).toFixed(6)),date:fx.date,source:fx.source});
+    }catch(error){return sendJson(res,502,{ok:false,error:'Exchange rate unavailable: '+String(error?.message||error).slice(0,200)})}
+  }
+  if (req.method === 'GET' && url.pathname === '/api/expenses/chatgpt') {
+    if (!requireAdminApi(req,res)) return;
+    try{
+      const month=String(url.searchParams.get('month')||''),min=Number(url.searchParams.get('min')),max=Number(url.searchParams.get('max'));
+      const usage=await openAiUsageForMonth(month);
+      let billed=null,billedError='';
+      if(Number.isSafeInteger(min)&&Number.isSafeInteger(max)&&max>min&&max-min<=MAX_RANGE_SECONDS)
+        billed=await openAiBilledCosts({min,max}).catch(error=>{billedError=String(error?.message||error).slice(0,300);return null;});
+      return sendJson(res,200,{ok:true,month,usage,billed,billedError,adminKeyConfigured:Boolean(String(process.env.OPENAI_ADMIN_KEY||'').trim())});
+    }catch(error){return sendJson(res,400,{ok:false,error:String(error?.message||error).slice(0,300)})}
+  }
   if (req.method === 'GET' && url.pathname === '/listing-reposter') {
     if (!requireAdminPage(req,res,'/listing-reposter')) return;
     return sendHtml(res,200,renderRepostListingsPage());
@@ -5941,10 +6058,10 @@ const server = http.createServer(async (req, res) => {
     if(url.searchParams.get('embedded')==='1'){
       // Same-origin converter tab reuses the complete, existing queue and UI,
       // but no nested admin sidebar or duplicate worker bootstrap.
-      const content=renderListingConverterPage().replace('</head>',
+      const content=withAdminTheme(renderListingConverterPage().replace('</head>',
         '<style>.app-shell{display:block!important;grid-template-columns:minmax(0,1fr)!important}'+
         '.app-sidebar{display:none!important}.shell{max-width:none!important;padding:12px 10px 30px!important}'+
-        '.top h1{font-size:30px!important}</style></head>');
+        '.top h1{font-size:30px!important}</style></head>'));
       res.writeHead(200,{'content-type':'text/html; charset=utf-8',
         'cache-control':'private, no-store','x-content-type-options':'nosniff'});
       return res.end(content);
@@ -6009,7 +6126,9 @@ const server = http.createServer(async (req, res) => {
   if ((req.method==='POST'&&(
      url.pathname==='/api/listing-converter/reconvert/reserve'||
      url.pathname==='/api/listing-converter/reconvert/crop'||
-     url.pathname==='/api/listing-converter/reconvert/activate'
+     url.pathname==='/api/listing-converter/reconvert/activate'||
+     url.pathname==='/api/listing-converter/reconvert/own-crops'||
+     url.pathname==='/api/listing-converter/reconvert/own-crops/verify'
   ))||(req.method==='GET'&&url.pathname==='/api/listing-converter/reconvert/status')){
     if(!requireAdminApi(req,res))return;
     if(req.method==='POST'){
@@ -6030,17 +6149,24 @@ const server = http.createServer(async (req, res) => {
      const map=await loadListingConverterMap();
      // A status read uses the cached Etsy login; changes refresh it.
      const session=await getEtsySession({forceRefresh:req.method==='POST'}),shopId=String(session.shop.shop_id);
-     // Converted listings are verified through the converter map; Product
-     // Creator listings through their artwork manifest and Etsy SKUs.
-     const etsyListing=map.listings?.[String(listingId)]?.status==='converted'?null:
-      await getListing({listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
+     // Converted listings are verified through the converter map; others, or a
+     // converted one whose link no longer checks out, through their Etsy SKUs.
+     const readListing=()=>getListing({listingId,keystring:session.keystring,sharedSecret:session.sharedSecret,
        accessToken:session.accessToken}).catch(()=>null);
+     let etsyListing=map.listings?.[String(listingId)]?.status==='converted'?null:await readListing();
+     let linked=await resolveListingArtwork({listingId,listing:etsyListing,map});
+     if(!linked&&!etsyListing){
+      etsyListing=await readListing();
+      if(etsyListing)linked=await resolveListingArtwork({listingId,listing:etsyListing,map});
+     }
      if(etsyListing&&Number(etsyListing.shop_id)!==Number(session.shop.shop_id))
       return sendJson(res,403,{ok:false,error:'Listing does not belong to the connected Silvia Etsy shop.'});
-     const linked=await resolveListingArtwork({listingId,listing:etsyListing,map});
      if(!linked||!new RegExp('^SAC\\d+$').test(linked.artworkId))
-      return sendJson(res,409,{ok:false,error:'Artwork ownership could not be verified for this listing.'});
+      return sendJson(res,409,{ok:false,error:await unlinkedListingReason({listingId,listing:etsyListing,map,loadManifest:loadArtworkManifest})});
      const artworkId=linked.artworkId;
+     // The artwork the page asked to replace (named in its confirmation) must be the verified one.
+     if(req.method==='POST'&&body.artworkId&&String(body.artworkId).toUpperCase()!==artworkId)
+      return sendJson(res,409,{ok:false,error:'This listing\'s artwork is '+artworkId+', not '+String(body.artworkId).toUpperCase()+'. Refresh the page and check the listing before replacing its artwork.'});
      if(req.method==='GET')
       return sendJson(res,200,{ok:true,...await getConverterArtworkRevisionStatus(shopId,listingId)});
      if(url.pathname.endsWith('/reserve')){
@@ -6060,6 +6186,11 @@ const server = http.createServer(async (req, res) => {
      }
      if(!/^[0-9a-f-]{36}$/i.test(String(body.revision||'')))
       return sendJson(res,400,{ok:false,error:'Missing artwork revision ID.'});
+     // Your own crops (one JPEG per ratio) instead of the PC worker's.
+     if(url.pathname.endsWith('/own-crops'))
+      return sendJson(res,200,{ok:true,...await reserveOwnCrops({shopId,listingId,artworkId,revision:String(body.revision),crops:body.crops})});
+     if(url.pathname.endsWith('/own-crops/verify'))
+      return sendJson(res,200,{ok:true,...await verifyOwnCrops({shopId,listingId,artworkId,revision:String(body.revision)})});
      if(url.pathname.endsWith('/activate')){
       // Listings editor "Re-upload artwork": Etsy variants, SKUs and prices are
       // unchanged, so the verified master + crops are promoted into the
@@ -6429,7 +6560,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (picture.length < 100) return sendJson(res, 400, { ok: false, error: 'Choose the master artwork first.' });
       const session = await getEtsySession();
-      const seo = await generateEtsySeo({ image: await seoImage(picture), orientation: String(body.orientation || ''),
+      const seo = await generateEtsySeo({ onUsage: recordOpenAiUsage, image: await seoImage(picture), orientation: String(body.orientation || ''),
         ...(await seoShopContext(session)) });
       return sendJson(res, 200, { ok: true, seo, pasteText: seoPasteText(seo) });
     } catch (error) {
@@ -7017,6 +7148,18 @@ server.listen(port, '0.0.0.0', () => {
   if(AUTO_REVIEW_ENABLED){
     setTimeout(()=>{void reconcileNewEtsyPaidOrders();},30000).unref();
     setInterval(()=>{void reconcileNewEtsyPaidOrders();},AUTO_REVIEW_INTERVAL_MS).unref();
+  }
+  // Etsy tracking for orders this app sent to Artelo (artelo-auto-tracking.mjs),
+  // only with ARTELO_AUTO_TRACKING_ENABLED=true.
+  if(autoTrackingSettings().enabled){
+    const track=async()=>{
+      try{
+        const {results}=await syncArteloTracking(await getEtsySession());
+        for(const r of results)console.log('[artelo tracking] '+r.receiptId+': '+r.outcome+(r.trackingNumber?' '+r.carrier+' '+r.trackingNumber:'')+(r.reason?' · '+r.reason:'')+(r.artelo?' · Artelo '+r.artelo:''));
+      }catch(error){console.error('[artelo tracking] run failed: '+String(error.message||error));}
+    };
+    setTimeout(()=>{void track();},3*60*1000).unref();
+    setInterval(()=>{void track();},ARTELO_TRACKING_INTERVAL_MS).unref();
   }
   if(gmailOAuthConfigured()){
     const poll=async()=>{

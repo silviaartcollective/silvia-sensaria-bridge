@@ -1,7 +1,7 @@
 (() => {
 'use strict';
 const $=id=>document.getElementById(id);
-let orders=[], selectedId='', loadingDetail=0;
+let orders=[], selectedId='', loadingDetail=0, supplierPanel=null;
 function text(value){return String(value ?? '');}
 function set(id,value){$(id).textContent=text(value);}
 function report(message,failed=false){set('message',message);$('message').className='status'+(failed?' error':'');}
@@ -60,9 +60,9 @@ function renderOrders(){
     btn.append(headline,item,status);
     if(o.status==='awaiting_supplier_approval' || o.status==='approved_for_manual_order'){
       const supplier=String(o.supplier||'').trim();
-      if(supplier.toLowerCase()==='sensaria'){
+      if(supplier){
         const name=document.createElement('strong');
-        name.className='supplier-name';name.textContent='SENSARIA';
+        name.className='supplier-name';name.textContent=supplier.toUpperCase();
         btn.append(name);
       }
     }
@@ -93,15 +93,28 @@ async function openOrder(id){
   const date=created?(typeof created==='number'?new Date(created*1000):new Date(created)).toLocaleString():'Date unavailable';
   set('order-meta',date+' · '+(shipped?'Shipped / completed':'Not yet shipped')+
     ' · '+(review.classification||'Not classified'));
+  // The order goes to whichever supplier its recommendation names: Sensaria by
+  // CSV, Artelo through the supplier-order panel, any other by hand.
   const plan=review.regularPlan||{};
-  const sensaria=String(plan.supplier||'').toLowerCase()==='sensaria' &&
-    review.classification==='regular' &&
+  const supplier=String(plan.supplier||'').toLowerCase();
+  const open=Boolean(supplier) && review.classification==='regular' &&
     ['awaiting_supplier_approval','approved_for_manual_order'].includes(review.status) &&
     !shipped && !receipt.was_canceled && !receipt.is_canceled;
-  $('supplier-banner').classList.toggle('hidden',!sensaria);
+  const sensaria=open&&supplier==='sensaria',artelo=open&&supplier==='artelo';
+  $('supplier-banner').classList.toggle('hidden',!open);
   $('sensaria-csv').classList.toggle('hidden',!sensaria);
   $('sensaria-csv').disabled=false;
-  $('supplier-name').textContent=sensaria?'SENSARIA':String(plan.supplier||'');
+  $('supplier-name').textContent=open?String(plan.provider||supplier).toUpperCase():'';
+  $('supplier-note').textContent=!open?'':sensaria
+    ? 'Manual supplier order · Download the Sensaria CSV below and check artwork, variant and shipping before submitting'
+    : artelo
+      ? (review.status==='approved_for_manual_order'
+        ? 'Approved · Preview the Artelo order below, then submit this one order once it is authorized in Render'
+        : 'Approve this supplier on Fulfillment Review first, then preview and submit the Artelo order below')
+      : 'Manual supplier order · Place this order in the '+(plan.provider||supplier)+' dashboard; the app cannot submit it there yet';
+  $('supplier-order-row').classList.remove('hidden');
+  supplierPanel?.reset();
+  supplierPanel?.showArtelo(artelo);
   const quoteExpired=Number.isFinite(Date.parse(plan.expiresAt)) &&
     Date.now()>Date.parse(plan.expiresAt);
   $('sensaria-csv-status').className= sensaria && quoteExpired ? '' : 'hidden';
@@ -205,6 +218,8 @@ $('sensaria-csv').addEventListener('click',async()=>{
     button.disabled=false;
   }
 });
+// Diagnose / Preview / Submit for the selected order (supplier-order-client.js).
+supplierPanel=window.SupplierOrderPanel?.mount($('supplier-order-panel'),{receipt:()=>selectedId,report})||null;
 $('search').addEventListener('input',renderOrders);
 $('filter').addEventListener('change',renderOrders);
 $('refresh').addEventListener('click',async()=>{

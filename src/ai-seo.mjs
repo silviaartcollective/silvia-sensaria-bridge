@@ -192,7 +192,8 @@ function replyText(data) {
 // is being renewed, so the new SEO is different.
 export async function generateEtsySeo({
   image, orientation = '', sections = [], shopName = '', previous = null,
-  settings = null, apiKey = process.env.OPENAI_API_KEY, fetchImpl = fetch, timeoutMs = 120000
+  settings = null, apiKey = process.env.OPENAI_API_KEY, fetchImpl = fetch, timeoutMs = 120000,
+  onUsage = () => {}
 } = {}) {
   if (!String(apiKey || '').trim()) throw new Error('ChatGPT is not connected: add OPENAI_API_KEY in Render.');
   if (!image?.base64) throw new Error('An artwork image is needed to write the SEO.');
@@ -236,6 +237,8 @@ export async function generateEtsySeo({
     if (!response.ok) throw new Error(openAiError(response.status, data));
     usage.input_tokens += Number(data?.usage?.input_tokens || 0);
     usage.output_tokens += Number(data?.usage?.output_tokens || 0);
+    // Each response is billed, a retried one too: recorded for Fees & Expenses.
+    void onUsage({ model: data?.model || options.model, input_tokens: data?.usage?.input_tokens, output_tokens: data?.usage?.output_tokens });
     let reply;
     try { reply = JSON.parse(replyText(data)); }
     catch (error) { if (attempt === 2) throw error; problems = [String(error.message || error)]; continue; }
