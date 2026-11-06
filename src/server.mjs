@@ -1,3 +1,4 @@
+import { renderPrivacyPage, renderTermsPage } from './legal-pages.mjs';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -3709,6 +3710,13 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/health') {
     return sendJson(res, 200, { ok: true, service: 'silvia-sensaria-bridge' });
+  }
+
+  // Public (no sign-in): Google's consent screen links to these.
+  if (req.method === 'GET' && (url.pathname === '/privacy' || url.pathname === '/terms')) {
+    const body = url.pathname === '/privacy' ? renderPrivacyPage() : renderTermsPage();
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600', 'x-content-type-options': 'nosniff' });
+    return res.end(body);
   }
 
   if (req.method === 'POST' && url.pathname === '/api/crop-worker/heartbeat') {
