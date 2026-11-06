@@ -30,6 +30,9 @@ export function landedCostPolicy() {
     arteloUsReserve: percent('SAC_ARTELO_US_RESERVE_PERCENT', 10),
     printifyReserve: percent('SAC_PRINTIFY_RESERVE_PERCENT', 20),
     gelatoReserve: percent('SAC_GELATO_RESERVE_PERCENT', 20),
+    printfulReserve: percent('SAC_PRINTFUL_RESERVE_PERCENT', 20),
+    lumaprintsReserve: percent('SAC_LUMAPRINTS_RESERVE_PERCENT', 20),
+    gootenReserve: percent('SAC_GOOTEN_RESERVE_PERCENT', 20),
     printShrimpGbpFxReserve: percent('SAC_PRINTSHRIMP_GBP_FX_RESERVE_PERCENT', 2)
   };
 }
@@ -78,6 +81,10 @@ export function estimateSupplierLandedCost(record, { countryCode, policy = lande
     rate = policy.gelatoReserve;
     confidence = 'estimated';
     assumptions = 'Country-level product and shipment pricing is live supplier data. Final address routing, taxes and regional production can vary, so a planning reserve is added.';
+  } else if (provider === 'Printful' || provider === 'Lumaprints' || provider === 'Gooten') {
+    rate = policy[provider.toLowerCase() + 'Reserve'];
+    confidence = 'estimated';
+    assumptions = 'Live supplier product price + shipping quote to a reference address in the destination country. Taxes, duties and the buyer\'s exact address can change the final charge, so a planning reserve is added.';
   } else {
     return { ...record, modeledLandedUsd: null, contingencyUsd: null, contingencyRate: null, costConfidence: 'unknown-provider' };
   }

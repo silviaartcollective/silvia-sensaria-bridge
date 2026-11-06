@@ -6,10 +6,10 @@ import { createProdigiOrder } from '../src/prodigi.mjs';
 import { createArteloOrder } from '../src/artelo.mjs';
 import { createPrintShrimpOrder } from '../src/printshrimp.mjs';
 import { readFileSync } from 'node:fs';
-test('all five supplier order API clients inventoried; Sensaria stays manual CSV',()=>{
+test('all eight supplier order API clients inventoried; Sensaria stays manual CSV',()=>{
  const d=supplierOrderEndpointStatus();
- assert.equal(d.suppliers.length,6);
- assert.equal(d.suppliers.filter(x=>x.apiAvailable).length,5);
+ assert.equal(d.suppliers.length,9);
+ assert.equal(d.suppliers.filter(x=>x.apiAvailable).length,8);
  assert.equal(d.suppliers.find(x=>x.name==='Sensaria').apiAvailable,false);
  assert.ok(d.suppliers.every(x=>!x.orderSubmissionWorkflowConnected));
 });

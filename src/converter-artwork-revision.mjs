@@ -5,9 +5,11 @@ import { loadArtworkManifest,saveArtworkManifest } from './artwork-storage.mjs';
 import { createCropJob,getCropJob,readCropJobStore } from './crop-job-store.mjs';
 import { checkedRevisionAssets } from './artwork-revision.mjs';
 import {inspectStoredMasterGeometry} from './master-geometry.mjs';
-import {FULFILLMENT_RATIOS,SQUARE_FULFILLMENT_RATIOS,PANORAMIC_FULFILLMENT_RATIOS,fulfillmentRatioObjectKey,fulfillmentRatiosForOrientation} from './artwork-ratios.mjs';
+import sharp from 'sharp';
+import {FULFILLMENT_RATIOS,SQUARE_FULFILLMENT_RATIOS,PANORAMIC_FULFILLMENT_RATIOS,FULFILLMENT_RATIO_DIMENSIONS,FULFILLMENT_RATIO_MIN_PIXELS,
+  fulfillmentRatioObjectKey,fulfillmentRatiosForOrientation} from './artwork-ratios.mjs';
 import { getJsonObject,putJsonObject,artworkObjectExists,artworkObjectInfo,signedArtworkUploadUrl,
-  copyArtworkObject,deleteArtworkObject,listArtworkObjectKeys,listArtworkObjects } from './r2.mjs';
+  copyArtworkObject,deleteArtworkObject,listArtworkObjectKeys,listArtworkObjects,getArtworkObjectStart } from './r2.mjs';
 
 const TYPES={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',tif:'image/tiff',tiff:'image/tiff'};
 const textId=value=>{
@@ -145,6 +147,8 @@ export async function startConverterArtworkCrop({shopId,listingId,revision,artwo
     '. The app will not crop horizontal artwork into vertical ratios.');
  record.orientation=geometry.orientation;
  record.masterGeometry=geometry;
+ // Cropping on the PC replaces any crops uploaded by hand for this revision.
+ delete record.ownCrops;
  if(record.jobId){
   const job=await getCropJob(record.jobId);
   if(!job)throw Error('Previously queued crop job could not be found. Review the listing before retrying.');
@@ -156,9 +160,110 @@ export async function startConverterArtworkCrop({shopId,listingId,revision,artwo
  await putJsonObject(keyFor(shopId,listingId),record);
  return {record,job:result.job,reused:result.reused};
 }
+// ---- Own crops: the person uploads the production crops (one JPEG per ratio
+// the listing sells) instead of the PC worker making them from the master.
+// They go to the same staging folder and are checked like the worker's
+// (exact aspect ratio, JPEG, within Sensaria's 17,500 px), then promoted by
+// the same activation, with the same backups and rollback.
+const OWN_CROP_MAX_PX=17500,OWN_CROP_MIN_SHORT_PX=1000,OWN_CROP_ASPECT_TOLERANCE=0.005;
+const ownCropKey=(record,ratio)=>pendingRoot(record)+'fulfillment/'+ratio+'.jpg';
+async function readyOwnCropRecord(shopId,listingId,revision,artworkId){
+ const record=await getConverterArtworkRevision(shopId,listingId);
+ if(!record||record.revision!==String(revision)||record.artworkId!==artId(artworkId))
+  throw Error('The replacement reservation is missing or changed. Refresh this listing.');
+ if(['activated','promoting'].includes(record.status))throw Error('This artwork revision is already being activated.');
+ const job=record.jobId?await getCropJob(record.jobId):null;
+ if(job&&['pending','claimed','processing','uploading'].includes(job.status))
+  throw Error('The PC worker is already cropping this artwork. Wait for it, or start again with your own crops.');
+ return record;
+}
+export async function reserveOwnCrops({shopId,listingId,revision,artworkId,crops}){
+ const record=await readyOwnCropRecord(shopId,listingId,revision,artworkId);
+ const manifest=await loadArtworkManifest(record.artworkId);
+ if(manifest.master?.key!==record.originalMasterKey)throw Error('The existing master changed. Refresh this listing.');
+ if(!await artworkObjectExists(record.masterKey)||(await artworkObjectInfo(record.masterKey)).size!==record.size)
+  throw Error('Finish uploading the master before the crops.');
+ const geometry=await inspectStoredMasterGeometry(record.masterKey);
+ if(geometry.orientation!==manifest.orientation)
+  throw Error('The master is '+geometry.orientation+' but the listing is '+manifest.orientation+'.');
+ const required=fulfillmentRatiosForOrientation(geometry.orientation,geometry);
+ const list=Array.isArray(crops)?crops:[];
+ const byRatio=new Map();
+ for(const crop of list){
+  const ratio=String(crop?.ratio||''),filename=String(crop?.filename||'').trim().slice(0,180),size=Number(crop?.size);
+  if(!required.includes(ratio))throw Error('This listing has no '+ratio+' crop; it needs '+required.join(', ')+'.');
+  if(byRatio.has(ratio))throw Error('Two files were given for '+ratio+'.');
+  if(!/\.jpe?g$/i.test(filename))throw Error(ratio+': crops must be JPEG files (.jpg).');
+  if(!Number.isSafeInteger(size)||size<10*1024||size>150*1024*1024)throw Error(ratio+': the crop must be between 10 KB and 150 MB.');
+  byRatio.set(ratio,{filename,size});
+ }
+ const missing=required.filter(ratio=>!byRatio.has(ratio));
+ if(missing.length)throw Error('Add a crop for every size ratio this listing sells: missing '+missing.join(', ')+'.');
+ Object.assign(record,{orientation:geometry.orientation,masterGeometry:geometry,
+  ownCrops:{status:'awaiting_upload',files:Object.fromEntries(byRatio),reservedAt:new Date().toISOString()}});
+ await putJsonObject(keyFor(shopId,listingId),record);
+ return {revision:record.revision,required,uploads:await Promise.all(required.map(async ratio=>({ratio,key:ownCropKey(record,ratio),
+  contentType:'image/jpeg',uploadUrl:await signedArtworkUploadUrl(ownCropKey(record,ratio),'image/jpeg',45*60)})))};
+}
+// The checks for one uploaded crop: present, the reserved size, a JPEG of the
+// ratio's exact shape (within half a percent), within Sensaria's limit.
+export function checkOwnCrop(ratio,{format,width,height},info,expectedSize){
+ if(info.size!==expectedSize)throw Error(ratio+': the upload did not finish ('+info.size+' of '+expectedSize+' bytes). Upload it again.');
+ if(format!=='jpeg')throw Error(ratio+': the file is not a JPEG.');
+ const [a,b]=FULFILLMENT_RATIO_DIMENSIONS[ratio],w=Number(width),h=Number(height);
+ if(!(w>0&&h>0))throw Error(ratio+': the image size could not be read.');
+ // The ratio is short side : long side, whichever way the artwork is turned.
+ const short=Math.min(w,h),long=Math.max(w,h);
+ if(Math.abs(short/long-a/b)>OWN_CROP_ASPECT_TOLERANCE*(a/b))
+  throw Error(ratio+': the image is '+w+'×'+h+', not a '+a+':'+b+' shape. Crop it exactly to '+a+':'+b+'.');
+ if(long>OWN_CROP_MAX_PX)throw Error(ratio+': the image is '+w+'×'+h+'; Sensaria accepts at most '+OWN_CROP_MAX_PX+' px on a side.');
+ if(short<OWN_CROP_MIN_SHORT_PX)throw Error(ratio+': the image is '+w+'×'+h+', too small to print.');
+ const [rw,rh]=FULFILLMENT_RATIO_MIN_PIXELS[ratio];
+ return {width:w,height:h,recommendedPixelsMet:short>=Math.min(rw,rh)*0.98};
+}
+async function cropHeader(key){
+ const {body}=await getArtworkObjectStart(key,1024*1024);
+ return sharp(body,{limitInputPixels:false}).metadata();
+}
+export async function verifyOwnCrops({shopId,listingId,revision,artworkId,readHeader=cropHeader}){
+ const record=await readyOwnCropRecord(shopId,listingId,revision,artworkId);
+ if(!record.ownCrops?.files)throw Error('Choose your crops first.');
+ const assets={},now=new Date().toISOString();
+ for(const [ratio,file] of Object.entries(record.ownCrops.files)){
+  const key=ownCropKey(record,ratio);
+  if(!await artworkObjectExists(key))throw Error(ratio+': the crop has not been uploaded.');
+  const checked=checkOwnCrop(ratio,await readHeader(key),await artworkObjectInfo(key),file.size);
+  const [a,b]=FULFILLMENT_RATIO_DIMENSIONS[ratio];
+  assets[ratio]={ratio,key,width:checked.width,height:checked.height,requiredWidth:a,requiredHeight:b,
+   orientation:record.orientation,productionReady:true,generatedFromMaster:false,uploadedByOwner:true,cropMode:'uploaded',
+   originalFilename:file.filename,sourceMasterKey:record.masterKey,density:300,sizeBytes:file.size,
+   recommendedPixelsMet:checked.recommendedPixelsMet,downscaled:false,upscaled:false,updatedAt:now};
+ }
+ record.ownCrops={...record.ownCrops,status:'verified',assets,verifiedAt:now};
+ record.jobId=null;record.status='own_crops_ready';
+ await putJsonObject(keyFor(shopId,listingId),record);
+ return {revision:record.revision,ready:true,ratios:Object.keys(assets),
+  belowRecommended:Object.values(assets).filter(asset=>!asset.recommendedPixelsMet).map(asset=>asset.ratio)};
+}
+// Verified own crops still in place, as the activation uses them.
+async function checkedOwnCropAssets(record){
+ const assets={};
+ for(const ratio of fulfillmentRatiosForOrientation(record.orientation,record.masterGeometry)){
+  const asset=record.ownCrops?.assets?.[ratio];
+  if(!asset||asset.key!==ownCropKey(record,ratio)||asset.sourceMasterKey!==record.masterKey)throw Error('Your '+ratio+' crop is not verified.');
+  if(!await artworkObjectExists(asset.key)||(await artworkObjectInfo(asset.key)).size!==asset.sizeBytes)throw Error('Your '+ratio+' crop changed after it was checked.');
+  assets[ratio]=asset;
+ }
+ if(!await artworkObjectExists(record.masterKey))throw Error('Replacement master missing.');
+ return assets;
+}
+const ownCropsReady=record=>record?.ownCrops?.status==='verified';
 export async function getConverterArtworkRevisionStatus(shopId,listingId){
  const record=await getConverterArtworkRevision(shopId,listingId);
  if(!record)return {exists:false};
+ if(ownCropsReady(record)&&record.status!=='activated')
+  return {exists:true,revision:record.revision,artworkId:record.artworkId,filename:record.filename,jobId:null,
+   status:'own_crops_ready',ready:true,progress:100,currentRatio:'',message:'Your crops are checked.',source:'own-crops'};
  const job=record.jobId?await getCropJob(record.jobId):null;
  let ready=false,error='';
  if(job?.status==='completed'&&record.status!=='activated')
@@ -181,6 +286,12 @@ export async function getConverterArtworkRevisionStatuses(shopId,listingIds){
  const statuses={};
  for(const [index,record] of records.entries()){
   if(!record){statuses[ids[index]]={exists:false};continue}
+  if(ownCropsReady(record)&&record.status!=='activated'){
+   statuses[ids[index]]={exists:true,revision:record.revision,artworkId:record.artworkId,filename:record.filename,
+    source:'own-crops',jobId:null,status:'own_crops_ready',ready:true,progress:100,queuePosition:0,
+    queuedAt:record.ownCrops.verifiedAt||null,currentRatio:'',message:''};
+   continue;
+  }
   const job=record.jobId?jobs.find(item=>item.id===record.jobId)||null:null;
   let ready=false,error='';
   if(job?.status==='completed'&&record.status!=='activated')
@@ -201,8 +312,8 @@ export async function assertConverterArtworkReady({shopId,listingId,revision,art
  if(!record||record.revision!==String(revision)||record.artworkId!==artId(artworkId))
   throw Error('The reconversion master upload does not match this listing.');
  if(record.status==='activated')throw Error('This artwork revision has already been activated. Select a new master for another reconversion.');
- const job=record.jobId?await getCropJob(record.jobId):null;
- const assets=await checkedRevisionAssets({...record,jobId:record.jobId},job);
+ const assets=ownCropsReady(record)?await checkedOwnCropAssets(record)
+  :await checkedRevisionAssets({...record,jobId:record.jobId},record.jobId?await getCropJob(record.jobId):null);
  const uploaded=await artworkObjectInfo(record.masterKey);
  if(uploaded.size!==record.size)
   throw Error('Replacement master differs from the verified upload. Production artwork was not activated.');

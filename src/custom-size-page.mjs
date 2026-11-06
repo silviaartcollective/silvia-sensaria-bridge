@@ -211,7 +211,7 @@ function render(data){
  const option=data.shippingOptions?.[activeMode];
  const pCurrent=option?option.pricing:data.pricing;
  const providerProfits=option?option.providerProfits:(data.providerProfits||{});
- const suppliers=data.suppliers||{};const ranking=new Map((data.ranking||[]).map(x=>[x.provider,x.rank]));const fallback=['Sensaria','Prodigi','PrintShrimp','Printify','Gelato','Artelo'];
+ const suppliers=data.suppliers||{};const ranking=new Map((data.ranking||[]).map(x=>[x.provider,x.rank]));const fallback=['Sensaria','Prodigi','PrintShrimp','Printify','Gelato','Artelo','Printful','Lumaprints','Gooten'];
  const byProvider=Object.fromEntries(Object.values(suppliers).map(r=>[r.provider,r]));
  const order=fallback.slice().sort((a,b)=>{const ra=ranking.get(a),rb=ranking.get(b);if(ra!=null&&rb!=null)return ra-rb;if(ra!=null)return -1;if(rb!=null)return 1;return fallback.indexOf(a)-fallback.indexOf(b);});
  const printifyRow=byProvider.Printify||{};

@@ -1,14 +1,18 @@
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { r2Client, r2Config, getJsonObject, putJsonObject } from './r2.mjs';
 import { getShopReceipt, createReceiptShipment } from './etsy.mjs';
+import { etsyCarrierCodeFor } from './etsy-carriers.mjs';
 import { getGelatoOrderTracking } from './gelato.mjs';
 import { getPrintifyOrderTracking } from './printify.mjs';
 import { getProdigiOrder } from './prodigi.mjs';
 import { getArteloOrder } from './artelo.mjs';
 import { getPrintShrimpOrder } from './printshrimp.mjs';
+import { getPrintfulOrderTracking, printfulShipments } from './printful.mjs';
+import { getLumaprintsOrderTracking, lumaprintsShipments } from './lumaprints.mjs';
+import { getGootenOrder, gootenShipments } from './gooten.mjs';
 
 const base = 'tracking/etsy/';
-const SUPPLIERS = new Set(['sensaria','gelato','printify','prodigi','artelo','printshrimp']);
+const SUPPLIERS = new Set(['sensaria','gelato','printify','prodigi','artelo','printshrimp','printful','lumaprints','gooten']);
 const text = value => String(value ?? '').trim();
 export function receiptId(value) {
   const id = text(value);
@@ -121,7 +125,7 @@ export function suggestCarrier(url) {
     [/^(.*\.)?usps\.com$/,'USPS'],[/^(.*\.)?dhl\.com$/,'DHL'],
     [/^(.*\.)?canadapost(?:-postescanada)?\.ca$/,'Canada Post'],
     [/^(.*\.)?purolator\.com$/,'Purolator'],[/^(.*\.)?ontrac\.com$/,'OnTrac'],
-    [/^(.*\.)?dpd\.(com|co\.uk|de|fr)$/,'DPD']];
+    [/^(.*\.)?dpd\.(com|co\.uk|de|fr)$/,'DPD'],[/^(track\.)?amazon\.com$/,'Amazon Logistics US']];
   return rules.find(([re])=>re.test(host))?.[1] || '';
 }
 export function normalizedShipment(input) {
@@ -272,6 +276,10 @@ export function supplierShipments(supplier,payload) {
       .map(s=>({trackingNumber:s.tracking_number,trackingUrl:s.tracking_url||'',
         carrier:text(s.carrier),shipmentId:text(s.id),status:'shipped',source:'printshrimp_api'}))};
   }
+  // Printful, Lumaprints and Gooten: only packages with a tracking number count as shipped.
+  if(supplier==='printful')return printfulShipments(payload);
+  if(supplier==='lumaprints')return lumaprintsShipments(payload);
+  if(supplier==='gooten')return gootenShipments(payload);
   return {status:'api_adapter_pending',shipments:[]};
 }
 export async function checkSupplierTracking(session,id) {
@@ -284,6 +292,9 @@ export async function checkSupplierTracking(session,id) {
   else if(doc.supplier==='prodigi')fetched=await getProdigiOrder(doc.supplierOrderId);
   else if(doc.supplier==='artelo')fetched=await getArteloOrder(doc.supplierOrderId);
   else if(doc.supplier==='printshrimp')fetched=await getPrintShrimpOrder({orderId:doc.supplierOrderId});
+  else if(doc.supplier==='printful')fetched=await getPrintfulOrderTracking(doc.supplierOrderId);
+  else if(doc.supplier==='lumaprints')fetched=await getLumaprintsOrderTracking(doc.supplierOrderId);
+  else if(doc.supplier==='gooten')fetched=await getGootenOrder(doc.supplierOrderId);
   else throw new Error('This provider needs a CSV upload or a tracking adapter. API lookup is not active yet.');
   const normalized=supplierShipments(doc.supplier,fetched);
   const saved=[];
@@ -316,18 +327,8 @@ export async function checkEtsyShipmentStatus(session,id) {
 }
 
 const pendingEtsyShipments = new Set();
-export function etsyCarrierCode(carrier) {
-  const values = {
-    'USPS':'usps','UPS':'ups','FEDEX':'fedex','DHL':'dhl',
-    'CANADA POST':'canada-post','PUROLATOR':'purolator',
-    'DPD':'dpd','ONTRAC':'ontrac','OTHER':'other'
-  };
-  // A service name such as "USPS Ground Advantage" counts as its carrier.
-  const name=text(carrier).toUpperCase().replace(/\s+/g,' ');
-  const code=values[name]||values[Object.keys(values).find(k=>name.startsWith(k+' '))];
-  if(!code)throw new Error('Unknown Etsy carrier. Confirm tracking manually in Etsy.');
-  return code;
-}
+// Etsy's own carrier code, so Etsy can follow the package (etsy-carriers.mjs).
+export function etsyCarrierCode(carrier) { return etsyCarrierCodeFor(carrier); }
 export function prepareStagedEtsyShipment(record, receipt, input, shopId) {
   const id=receiptId(input?.receiptId);
   if(!record||record.receiptId!==id||String(record.shopId)!==String(shopId))

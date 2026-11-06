@@ -40,3 +40,32 @@ test('every page of the ledger is read', async () => {
   assert.equal(entries.length, 230);
   assert.deepEqual(asked, [[5, 9, 100, 0], [5, 9, 100, 100], [5, 9, 100, 200]]);
 });
+
+test('fees given back on refunds are taken off; balance recovery and chargebacks are not fees; every entry is accounted for', () => {
+  const s = summarizeFees([
+    entry('transaction', -65), entry('PAYMENT_PROCESSING_FEE', -120),
+    entry('REFUND_PROCESSING_FEE', 40), entry('transaction_refund', 65),
+    entry('RECOUP', -1500), entry('chargeback', -2500), entry('vat_tax_ep', -12),
+    entry('PAYMENT_GROSS', 2500), entry('DISBURSE2', -5000), entry('REFUND_GROSS', -800),
+    entry('listing', -20)
+  ], { min: 0, max: 1000, now: 2000 });
+  const other = Object.fromEntries(s.other.map(row => [row.type, row.total]));
+  assert.deepEqual(other, { transaction: 65, PAYMENT_PROCESSING_FEE: 120, REFUND_PROCESSING_FEE: -40, transaction_refund: -65, vat_tax_ep: 12 });
+  assert.equal(s.other.reduce((sum, row) => sum + row.total, 0), 92, 'net other fees');
+  assert.equal(s.feeCredits, 105);
+  assert.deepEqual(s.skipped.map(row => [row.type, row.total]).sort(),
+    [['DISBURSE2', -5000], ['PAYMENT_GROSS', 2500], ['RECOUP', -1500], ['REFUND_GROSS', -800], ['chargeback', -2500]].sort());
+  // Each entry lands in exactly one place.
+  const placed = s.listing.byType.reduce((n, r) => n + 1, 0) + s.other.reduce((n, r) => n + r.count, 0) + s.skipped.reduce((n, r) => n + r.count, 0);
+  assert.equal(placed, 11);
+  assert.equal(feeLabel('RECOUP'), 'Balance recovered by Etsy');
+});
+
+test('a renewal described in words is a listing fee; other entries are not', () => {
+  assert.equal(isListingFee({ description: 'Auto-renew sold' }), true);
+  assert.equal(isListingFee({ ledger_type: 'renew_expired_auto' }), true);
+  assert.equal(isListingFee({ ledger_type: 'listing_private' }), true);
+  assert.equal(isListingFee({ ledger_type: 'transaction' }), false);
+  assert.equal(isListingFee({ ledger_type: 'offsite_ads_fee' }), false);
+  assert.equal(isListingFee({ ledger_type: 'shipping_labels' }), false);
+});

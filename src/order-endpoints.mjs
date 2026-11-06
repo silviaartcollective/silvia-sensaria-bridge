@@ -8,6 +8,9 @@ export function supplierOrderEndpointStatus() {
     ['Prodigi','POST /v4.0/orders','PRODIGI_FULFILLMENT_ENABLED',true,true],
     ['Artelo','POST /orders/create','ARTELO_FULFILLMENT_ENABLED',true,true],
     ['PrintShrimp','POST /api-create-order','PRINTSHRIMP_FULFILLMENT_ENABLED',true,true],
+    ['Printful','POST https://api.printful.com/v2/orders (draft) + POST /v2/orders/{id}/confirmation','PRINTFUL_FULFILLMENT_ENABLED',true,true],
+    ['Lumaprints','POST https://us.api.lumaprints.com/api/v1/orders','LUMAPRINTS_FULFILLMENT_ENABLED',true,true],
+    ['Gooten','POST https://api.print.io/api/v/5/source/api/orders','GOOTEN_FULFILLMENT_ENABLED',true,true],
     ['Sensaria','Sensaria GO CSV export and shipment report CSV',null,false,false]
   ];
   return {masterLiveSubmissionEnabled:master,

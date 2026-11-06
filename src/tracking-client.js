@@ -125,7 +125,9 @@ $('preview-csv').addEventListener('click',()=>run(async()=>{
     tr.append(textNode('td','#'+r.receiptId),textNode('td',r.supplierOrderId),textNode('td',r.shipmentId||'—'),textNode('td',r.trackingNumber,'mono'));
     const c=document.createElement('td');const select=document.createElement('select');
     select.className='csv-carrier';select.dataset.receipt=r.receiptId;select.dataset.tracking=r.trackingNumber;
-    const names=['','USPS','UPS','FedEx','DHL','Canada Post','Purolator','DPD','OnTrac','Other'];
+    const names=['','USPS','UPS','FedEx','DHL','Canada Post','Purolator','DPD','OnTrac','Amazon Logistics US','Other'];
+    // Any other carrier the supplier named (the app maps it to Etsy's list).
+    if(r.carrier&&!names.includes(r.carrier))names.splice(names.length-1,0,r.carrier);
     names.forEach(v=>select.append(new Option(v||'Confirm carrier…',v)));
     select.value=names.includes(r.carrier)?r.carrier:'';
     c.append(select);tr.append(c);
