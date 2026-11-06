@@ -8,6 +8,7 @@ export const ADMIN_LINKS = Object.freeze([
   { href:'/listing-reposter', label:'Listing Reposter' },
   { href:'/listing-fees', label:'Fees & Expenses' },
   { href:'/listings', label:'Listings' },
+  { href:'/shop-data', label:'Shop Data' },
   { href:'/artwork-files', label:'Artwork Files' },
   { href:'/shipping-profile', label:'Shipping Profile' },
   { href:'/international-shipping', label:'International Shipping Planner' },
