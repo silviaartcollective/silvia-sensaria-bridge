@@ -108,7 +108,7 @@ export function suggestedCustomRetail({
   const shippingCharged = validMoney(customerShippingUsd);
   if (cost === null || shippingCharged === null) return null;
   const discountPercent = Number(storeDiscountPercent);
-  const feePercent = Number(policy.etsyFeeReservePercent ?? 10);
+  const feePercent = Number(policy.etsyFeeReservePercent ?? 12);
   const contributionMinimum = Number(policy.minimumMarginUsd ?? 7.5);
   const marginPercent = Number(policy.minimumMarginPercent ?? 10);
   const fx = Number(policy.cadPerUsd ?? 1.39);

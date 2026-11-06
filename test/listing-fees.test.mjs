@@ -69,3 +69,23 @@ test('a renewal described in words is a listing fee; other entries are not', () 
   assert.equal(isListingFee({ ledger_type: 'offsite_ads_fee' }), false);
   assert.equal(isListingFee({ ledger_type: 'shipping_labels' }), false);
 });
+
+test('an order\'s fees as Etsy shows them: tax paid by the buyer is not the shop\'s cost, tax on Etsy\'s fees is', () => {
+  // The US$57.43 order: transaction 3.73, processing 1.99, regulatory 0.29, tax paid by buyer 4.42, VAT on the three fees 0.72.
+  for (const buyerTax of ['sales_tax', 'TAX', 'tax_paid_by_buyer', 'MARKETPLACE_TAX', 'buyer_tax']) {
+    const s = summarizeFees([
+      entry('PAYMENT_GROSS', 6197), entry('transaction', -373), entry('PAYMENT_PROCESSING_FEE', -199), entry('regulatory_operating_fee', -29),
+      entry(buyerTax, -442), entry('vat_transaction', -44), entry('vat_processing_fee', -24), entry('vat_regulatory_operating_fee', -4)
+    ], { min: 0, max: 1000, now: 2000 });
+    assert.equal(s.other.reduce((sum, row) => sum + row.total, 0), 673, buyerTax);
+    assert.ok(s.skipped.some(row => row.type === buyerTax && row.total === -442), buyerTax);
+  }
+});
+
+test('the profit calculators reserve 12% for Etsy fees by default, as one real order cost (11.7%)', async () => {
+  const { profitScenarioPolicy } = await import('../src/retail-margin.mjs');
+  const saved = process.env.SAC_ETSY_FEE_RESERVE_PERCENT; delete process.env.SAC_ETSY_FEE_RESERVE_PERCENT;
+  try { assert.equal(profitScenarioPolicy().etsyFeeReservePercent, 12); }
+  finally { if (saved !== undefined) process.env.SAC_ETSY_FEE_RESERVE_PERCENT = saved; }
+  assert.ok(Math.abs((373 + 199 + 29 + 44 + 24 + 4) / 5743 - 0.117) < 0.001);
+});
