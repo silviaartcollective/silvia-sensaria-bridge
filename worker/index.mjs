@@ -30,7 +30,7 @@ import {startLocalIntake} from './local-intake.mjs';
 import {patchAgPsd} from './patch-ag-psd.mjs';
 import {downloadCached,cachedFilePath} from './asset-cache.mjs';
 import {keepForFullUpload,pendingFullUploads,dropFullUpload,sendFullUpload} from './full-uploads.mjs';
-import {isTransientError,withUploadRetries} from './retry.mjs';
+import {isTransientError,withUploadRetries,withReportRetries} from './retry.mjs';
 import {mockupArtwork} from './mockup-artwork.mjs';
 import sharp from 'sharp';
 import { spawn } from 'node:child_process';
@@ -247,11 +247,12 @@ async function processJob(app, job) {
       lastWorkAt = Date.now();
     }
 
-    await api.completeJob(job.id, assets);
+    // Reported until the shop answers (a deploy can take a minute or two).
+    await withReportRetries(() => api.completeJob(job.id, assets));
     console.log(`[${app.name}] Completed ${job.artworkId}: ${job.id}`);
   } catch (error) {
     console.error(`[${app.name}] Crop job ${job.id} failed:`, error.message);
-    await api.failJob(job.id, error).catch(() => {});
+    await withReportRetries(() => api.failJob(job.id, error)).catch(() => {});
   } finally {
     if (masterPath) {
       await rm(masterPath, { force: true }).catch(() => {});
@@ -443,6 +444,8 @@ async function heartbeatAll(){
     await Promise.allSettled(APP_CONNECTIONS.map(async app=>{
       try{
         const reply=await clientFor(app).heartbeat({...heartbeatFor(app,activeFor(app)),update:updateState,autoUpdate:AUTO_UPDATE,
+          // The crop this worker holds for the shop (the shop queues again any other it thinks is held).
+          cropJobId:[...active].find(a=>a.type==='crop'&&a.app.appUrl===app.appUrl)?.job.id||'',
           ...(RESTART&&Date.now()-STARTED_AT<RESTART_REPORT_MS?{restart:RESTART}:{}),
           mockupFolder:app.mockupFolder?{path:app.mockupFolder,count:folderStatus.get(app.appUrl)?.count||0,
             error:folderStatus.get(app.appUrl)?.error||'',fromConfig:!!app.configMockupFolder}:null});

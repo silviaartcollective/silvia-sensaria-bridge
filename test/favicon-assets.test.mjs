@@ -44,7 +44,7 @@ test('ICO contains valid 16px and 32px PNG frames, not a redirect',async()=>{
 
 test('favicon links are cache-busted on all HTML pages and ICO is served directly',()=>{
  const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
- assert.ok(server.includes("const source = decorateAdminHtml(html)"),'central HTML response');
+ assert.ok(server.includes("const source = withAdminTheme(decorateAdminHtml(html))"),'central HTML response');
  assert.ok(server.includes("FAVICON_LINKS+'</head>'"));
  assert.ok(server.includes('/favicon-32.png?v=4'));
  assert.ok(server.includes('/favicon.ico?v=4'));

@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { syncArteloTracking, autoTrackingSettings } from '../src/artelo-auto-tracking.mjs';
-import { etsyCarrierCode, supplierShipments } from '../src/order-tracking.mjs';
+import { etsyCarrierCode, supplierShipments, suggestCarrier } from '../src/order-tracking.mjs';
+import { ETSY_CARRIERS } from '../src/etsy-carriers.mjs';
 
 const ON = { ARTELO_AUTO_TRACKING_ENABLED: 'true' };
 const NOW = Date.parse('2026-11-02T12:00:00Z');
@@ -98,10 +99,27 @@ test('one failing order is reported and the others still run', async () => {
 test('Artelo shipments and carrier service names map to Etsy', () => {
   assert.equal(etsyCarrierCode('USPS Ground Advantage'), 'usps');
   assert.equal(etsyCarrierCode('ups'), 'ups');
-  assert.throws(() => etsyCarrierCode('Pigeon Express'), /Unknown Etsy carrier/);
+  // Etsy's own codes, so Etsy can follow the package: Amazon Logistics US is "amazon".
+  assert.equal(etsyCarrierCode('Amazon Logistics US - Amazon Shipping Ground'), 'amazon');
+  assert.equal(etsyCarrierCode('Amazon Logistics UK'), 'amazon-uk-api');
+  // Carriers Etsy has no code for are sent as "other", so the tracking still reaches Etsy.
+  assert.equal(etsyCarrierCode('Pigeon Express'), 'other');
   assert.deepEqual(supplierShipments('artelo', { order: { status: 'Processing', shipments: [] } }), { status: 'processing', shipments: [] });
   assert.deepEqual(supplierShipments('artelo', { status: 'Shipped', shipments: [{ id: 's1', trackingNumber: '9400111899223344556677', carrier: 'USPS' }] }).shipments,
     [{ trackingNumber: '9400111899223344556677', trackingUrl: '', carrier: 'USPS', shipmentId: 's1', status: 'shipped', source: 'artelo_api' }]);
+});
+
+test('every carrier in Etsy\'s list maps to its own code, by name, by code or by service name', () => {
+  assert.ok(ETSY_CARRIERS.length >= 240);
+  for (const [name, code] of ETSY_CARRIERS) {
+    assert.equal(etsyCarrierCode(name), code, name);
+    if (!ETSY_CARRIERS.some(([other]) => other.toLowerCase() === code)) assert.equal(etsyCarrierCode(code), code, code);
+  }
+  for (const [carrier, code] of [['Canada Post', 'canada-post'], ['DHL eCommerce', 'dhl-global-mail-asia'], ['DHL Express Worldwide', 'dhl'],
+    ['DHL', 'dhl'], ['fedex_ground', 'fedex'], ['FedEx UK (Domestic)', 'fedex-uk'], ['UPS SurePost', 'ups'], ['PostNL International', 'postnl-international'],
+    ['Royal Mail Tracked 48', etsyCarrierCode('Royal Mail')], ['  usps  ', 'usps'], ['', 'other'], [null, 'other']])
+    assert.equal(etsyCarrierCode(carrier), code, String(carrier));
+  assert.equal(suggestCarrier('https://track.amazon.com/tracking/TBA336038489943'), 'Amazon Logistics US');
 });
 
 test('the server runs it only when switched on', () => {

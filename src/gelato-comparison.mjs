@@ -6,6 +6,7 @@ import {
   getGelatoShipmentPrices,
   gelatoConfigStatus
 } from './gelato.mjs';
+import { usdRate } from './supplier-catalog-match.mjs';
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let productCatalogCache = null;
@@ -84,6 +85,18 @@ function pairFromText(value, defaultUnit = '') {
   return normalizePair(a, b);
 }
 
+// Every size a label gives: "600x900-mm-24x36-inch" is both 600x900 mm and
+// 24x36 in. The first alone (23.6x35.4 in) misses a 24x36 request.
+function pairsFromText(value, defaultUnit = '') {
+  const text = compact(value).replace(/["']/g, '');
+  const pairs = [];
+  for (const match of text.matchAll(/(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(?:[-_ ]?(mm|cm|inch|in))?/gi)) {
+    const pair = pairFromText(match[0], defaultUnit);
+    if (pair) pairs.push(pair);
+  }
+  return pairs;
+}
+
 function productSizeCandidates(product) {
   const pairs = [];
   const add = pair => {
@@ -102,7 +115,7 @@ function productSizeCandidates(product) {
     ? product.attributes : {};
   for (const [key, value] of Object.entries(attrs)) {
     if (!/format|size|dimension/i.test(key)) continue;
-    add(pairFromText(value));
+    for (const pair of pairsFromText(value)) add(pair);
   }
 
   const uid = String(product?.productUid || '');
@@ -231,6 +244,9 @@ function compatibilityScore(row, product, catalog) {
     if (/canvas/.test(text)) score += 4;
     if (/frame/.test(text)) score += 4;
   }
+  // Gelato's "geo simplified" products are routed to a production partner
+  // near the buyer, so they ship to more countries: tried first.
+  if (/geo[-_]simplified/.test(text)) score += 3;
   return score;
 }
 
@@ -323,12 +339,9 @@ function matchingGelatoFormatAttributes(catalog, target) {
     const matchingValues = (attribute.values || [])
       .filter(value =>
         [value?.productAttributeValueUid, value?.title]
-          .some(text => {
-            const pair = pairFromText(text);
-            return Boolean(pair) &&
-              Math.abs(pair.width - target.width) <= 0.52 &&
-              Math.abs(pair.height - target.height) <= 0.52;
-          })
+          .some(text => pairsFromText(text).some(pair =>
+            Math.abs(pair.width - target.width) <= 0.52 &&
+            Math.abs(pair.height - target.height) <= 0.52))
       )
       .map(value => value.productAttributeValueUid)
       .filter(Boolean);
@@ -446,6 +459,25 @@ function parseShipmentPrice(payload, productUid) {
   };
 }
 
+// A quoted candidate's US$ product, shipping and total, or what is missing. A
+// product price Gelato gives in another currency is converted, not dropped.
+export const _test = { pairsFromText, matchingGelatoFormatAttributes, productSizeCandidates, sizeCompatible, compatibilityScore };
+
+export async function gelatoQuoteTotals(quote, { rate = usdRate } = {}) {
+  const productPrice = quote?.productPrice, shipping = quote?.shipping;
+  let productCost = null, missing = '';
+  if (!productPrice || productPrice.price == null) missing = 'no product price';
+  else if (productPrice.currency === 'USD') productCost = productPrice.price;
+  else {
+    try { productCost = Number((productPrice.price * (await rate(productPrice.currency)).rate).toFixed(2)); }
+    catch { missing = 'product price in ' + productPrice.currency + ' with no exchange rate'; }
+  }
+  const shippingCost = shipping?.price ?? null;
+  if (!missing && shippingCost == null) missing = 'no shipping method to the destination';
+  return { productCost, shippingCost, totalUsd: missing ? null : productCost + shippingCost, missing,
+    productCurrency: productPrice?.currency || '' };
+}
+
 async function quoteProduct(productUid, countryCode) {
   const key = `${productUid}|${String(countryCode || '').toUpperCase()}`;
   const cached = quoteCache.get(key);
@@ -528,7 +560,9 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
           (Array.isArray(item.product?.supportedCountries) && item.product.supportedCountries.includes(country) ? 100 : 0)
       }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, 4);
+      // The best-scoring versions may not ship to this country (e.g. a frame
+      // made only in Europe): up to 16 are tried, 4 at a time, see below.
+      .slice(0, 16);
 
     if (!candidates.length) {
       const familyRows = (catalogRows || []).filter(item => item.productCode === row?.productCode);
@@ -580,30 +614,36 @@ export async function scanGelatoComparisonRows({ rows = [], countryCode, fresh =
       continue;
     }
 
-    const quoted = await mapLimit(candidates, 2, async candidate => {
-      try {
-        return { candidate, quote: await quoteProduct(candidate.product.productUid, country) };
-      } catch (error) {
-        return { candidate, error: error?.message || String(error) };
-      }
-    });
-
-    const available = quoted.map(item => {
-      const productPrice = item.quote?.productPrice;
-      const shipping = item.quote?.shipping;
-      const productCost = productPrice?.currency === 'USD' ? productPrice.price : null;
-      const shippingCost = shipping?.price;
-      const totalUsd = productCost != null && shippingCost != null ? productCost + shippingCost : null;
-      return { ...item, productCost, shippingCost, totalUsd };
-    }).filter(item => item.totalUsd != null)
+    // Four versions at a time, best-scoring first, until one has a complete
+    // price for this country (product and shipping).
+    const totaled = [];
+    for (let start = 0; start < candidates.length; start += 4) {
+      const quoted = await mapLimit(candidates.slice(start, start + 4), 2, async candidate => {
+        try {
+          return { candidate, quote: await quoteProduct(candidate.product.productUid, country) };
+        } catch (error) {
+          return { candidate, error: error?.message || String(error) };
+        }
+      });
+      totaled.push(...await Promise.all(quoted.map(async item => ({ ...item, ...(item.quote ? await gelatoQuoteTotals(item.quote) : {}) }))));
+      if (totaled.some(item => item.totalUsd != null)) break;
+    }
+    const available = totaled.filter(item => item.totalUsd != null)
       .sort((a, b) => a.totalUsd - b.totalUsd);
 
     const best = available[0];
     if (!best) {
-      const firstError = quoted.find(item => item.error)?.error || '';
+      // Which part each matched product lacked: its price, or shipping to here.
+      const lacks = totaled.map(item => (item.candidate.product?.productUid || 'product') + ': ' + (item.error || item.missing || 'incomplete price'));
+      const noShipping = totaled.length && totaled.every(item => item.missing === 'no shipping method to the destination');
       result.set(rowKey(row), {
-        provider: 'Gelato', eligible: false, status: firstError ? 'quote-error' : 'price-unavailable',
-        reason: firstError || 'Gelato matched this exact catalog product, but a complete product + shipping price was not returned for the destination.'
+        provider: 'Gelato', eligible: false,
+        status: noShipping ? 'destination-unsupported' : totaled.some(item => item.error) ? 'quote-error' : 'price-unavailable',
+        reason: (noShipping
+          ? `Gelato has ${row?.size} in this product (${totaled.length} matching version${totaled.length === 1 ? '' : 's'}) but offers no shipping method to ${country} for it.`
+          : `Gelato matched ${totaled.length} exact-size product${totaled.length === 1 ? '' : 's'} but none returned a complete price for ${country}.`) +
+          ' ' + lacks.slice(0, 4).join(' · '),
+        meta: { candidates: lacks }
       });
       continue;
     }
