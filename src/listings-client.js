@@ -217,7 +217,7 @@ async function openListing(id){
  selectedId=Number(id);dirty=false;markSelected();
  el('editor').classList.add('hidden');el('editor-empty').classList.remove('hidden');
  el('editor-empty').textContent='Loading Etsy listing #'+id+'…';
- clearNotice('details-status');clearNotice('variant-status');
+ clearNotice('details-status');clearNotice('variant-status');resetAddSize();el('add-size-input').value='';
  const data=await request('/api/master-listings/'+encodeURIComponent(id));
  if(selectedId!==Number(id))return;
  current=data;el('editor-empty').classList.add('hidden');el('editor').classList.remove('hidden');
@@ -647,6 +647,60 @@ el('save-variants').addEventListener('click',async()=>{
   await openListing(id);
   notice('variant-status','Etsy saved and verified '+result.updated+' variation change(s).');
  }catch(error){notice('variant-status',String(error.message||error),true);}
+ finally{btn.disabled=false;}
+});
+// ---- Add a size: a size the listing does not have yet (a custom size for a
+// buyer, or a standard one it was made without). Preview the styles, choose
+// which to offer and their prices, then add it to the live Etsy listing.
+let addSizePlan=null;
+function resetAddSize(){
+ addSizePlan=null;el('add-size-plan').classList.add('hidden');el('add-size-rows').replaceChildren();
+ clearNotice('add-size-status');
+}
+el('add-size-input').addEventListener('input',resetAddSize);
+el('add-size-preview').addEventListener('click',async()=>{
+ if(!selectedId)return;
+ const id=selectedId,size=el('add-size-input').value.trim(),btn=el('add-size-preview');
+ resetAddSize();btn.disabled=true;notice('add-size-status','Checking '+(size||'the size')+'…');
+ try{
+  const {plan}=await request('/api/master-listings/'+id+'/add-size',{preview:true,size});
+  if(selectedId!==id)return;
+  addSizePlan=plan;
+  el('add-size-note').textContent=plan.standard
+   ?plan.label+' is one of the shop\'s standard sizes: prices are filled in from the price ladder. Change any before adding.'
+   :plan.label+' is a custom size: prices are estimated from the price ladder by print area. Change any before adding. Check Fulfillment Review when one sells, since suppliers may not offer this exact size.';
+  const body=el('add-size-rows');
+  for(const s of plan.styles){
+   const tr=document.createElement('tr'),on=document.createElement('input'),price=document.createElement('input');
+   on.type='checkbox';on.checked=s.suggestedPrice!=null;on.setAttribute('aria-label','Offer '+s.style);
+   price.type='number';price.min='0.2';price.max='100000';price.step='0.01';
+   price.value=s.suggestedPrice!=null?String(s.suggestedPrice):'';price.setAttribute('aria-label','Price for '+s.style);
+   const c1=document.createElement('td'),c2=document.createElement('td'),c3=document.createElement('td');
+   c1.append(on);c2.textContent=s.style;c3.append(price);tr.append(c1,c2,c3);tr.dataset.style=s.style;body.append(tr);
+  }
+  el('add-size-plan').classList.remove('hidden');clearNotice('add-size-status');
+ }catch(error){notice('add-size-status',String(error.message||error),true);}
+ finally{btn.disabled=false;}
+});
+el('add-size-save').addEventListener('click',async()=>{
+ if(!addSizePlan||!current?.inventoryHash)return;
+ const id=selectedId,plan=addSizePlan,btn=el('add-size-save');
+ const rows=[...el('add-size-rows').querySelectorAll('tr')].map(tr=>{
+  const [on,price]=tr.querySelectorAll('input');return {style:tr.dataset.style,enabled:on.checked,price:Number(price.value)};
+ });
+ const offered=rows.filter(r=>r.enabled);
+ if(!offered.length){notice('add-size-status','Tick at least one style to offer in '+plan.size+'.',true);return;}
+ if(offered.some(r=>!(r.price>=0.2))){notice('add-size-status','Enter a price for every ticked style.',true);return;}
+ if(!confirm('Add '+plan.label+' to the live Etsy listing, in '+offered.length+' style(s)?'))return;
+ btn.disabled=true;notice('add-size-status','Adding '+plan.size+' to Etsy…');
+ try{
+  const result=await request('/api/master-listings/'+id+'/add-size',{confirm:'ADD SILVIA SIZE',
+   fingerprint:current.inventoryHash,size:plan.size,rows,quantity:Number(el('add-size-qty').value)});
+  el('add-size-input').value='';
+  await openListing(id);
+  notice('add-size-status','Etsy added and verified '+result.label+' in '+result.added+' style(s). '+(result.crop?.message||''),
+   ['failed','no_master'].includes(result.crop?.status));
+ }catch(error){notice('add-size-status',String(error.message||error),true);}
  finally{btn.disabled=false;}
 });
 // ---- Templates: the Product Creator's defaults for each artwork orientation.

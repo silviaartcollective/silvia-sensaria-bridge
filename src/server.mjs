@@ -1,3 +1,5 @@
+import { planAddSize, addSizeToInventory } from './listing-add-size.mjs';
+import { SILVIA_SIZE_LABELS as ADD_SIZE_LABELS, silviaVariantSku as addSizeSku, retailPriceForProductKey as addSizePrice, productKeyFromVariationValues as addSizeKey, normalizeSize as addSizeNormalize, SILVIA_RETAIL_PRICE_LADDER_USD as ADD_SIZE_LADDER } from './variants.mjs';
 import { renderPrivacyPage, renderTermsPage } from './legal-pages.mjs';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -150,6 +152,7 @@ import { normalizeCropSize,sizeCropRatioKey,sizeCropTarget,sizeCropObjectKey } f
 import {
   FULFILLMENT_RATIOS,
   fulfillmentRatiosForOrientation,
+  SIZE_TO_FULFILLMENT_RATIO,
   FULFILLMENT_RATIO_MIN_PIXELS,
   fulfillmentRatioObjectKey
 } from './artwork-ratios.mjs';
@@ -688,6 +691,29 @@ function releaseAbandonedCrops(input={}){
   void releaseCropJobsNotHeld(input.workerId,input.cropJobId).then(ids=>{
     if(ids.length)console.log('Crop jobs queued again (the PC worker no longer holds them): '+ids.join(', '));
   },error=>console.error('Crop jobs could not be checked:',error?.message||error));
+}
+
+// A production crop for a size added to a listing (Listings → Add a size).
+// Ladder sizes are covered by the artwork's standard ratio crops; any other size
+// gets an exact size crop (fulfillment/by-size), reused when it is already made.
+async function ensureSizeCrop(artworkId,sizeText){
+  if(!artworkId)return {status:'skipped',message:'This listing has no artwork ID in its SKUs, so no crop was made.'};
+  const size=normalizeCropSize(sizeText);
+  const manifest=await loadArtworkManifest(artworkId).catch(()=>null);
+  if(!manifest?.master?.key||manifest.status!=='ready'||!manifest.master?.orientation)
+    return {status:'no_master',message:artworkId+' has no verified master artwork in R2, so no crop was made. Upload the master in this editor first.'};
+  const ratio=SIZE_TO_FULFILLMENT_RATIO[size];
+  if(ratio&&fulfillmentRatiosForOrientation(manifest.orientation,manifest.master).includes(ratio))
+    return {status:'standard',ratio,message:'Covered by '+artworkId+'\'s '+ratio+' production crop.'};
+  const [a,b]=size.split('x').map(Number);
+  if(manifest.orientation==='square'&&a!==b)
+    return {status:'skipped',message:artworkId+' is square, so a '+size+' crop would cut the artwork; none was made.'};
+  const previous=manifest.fulfillmentSizeCrops?.[size];
+  if(previous?.sourceMasterKey===manifest.master.key&&previous.productionReady&&await artworkObjectExists(previous.key))
+    return {status:'ready',message:'The '+size+' crop of '+artworkId+' is already made.'};
+  const created=await createCropJob({artworkId,masterKey:manifest.master.key,orientation:manifest.orientation,
+    width:manifest.master.width,height:manifest.master.height,size});
+  return {status:'queued',jobId:created.job?.id||'',message:'A '+size+' crop of '+artworkId+' is queued on the PC crop worker.'};
 }
 
 function recordCropWorkerHeartbeat(input = {}) {
@@ -5958,7 +5984,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res,200,{ok:true,...page,count:page.listings.length});
     }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
   }
-  const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory|options))?$/);
+  const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory|options|add-size))?$/);
   if(masterRoute&&(req.method==='GET'||req.method==='POST')){
     if(!requireAdminApi(req,res))return;
     const id=Number(masterRoute[1]),action=masterRoute[2]||'';
@@ -6030,6 +6056,28 @@ const server = http.createServer(async (req, res) => {
              actual.shopSectionId!==edit.next.shopSectionId)
             throw Error('Etsy accepted the save but returned different details. Refresh to review what was saved.');
           return sendJson(res,200,{ok:true,changed:true,verified:true,listingId:id});
+        }
+        // Add a size by hand: preview what it adds, then send it with the confirmation.
+        if(action==='add-size'){
+          const shop={labels:ADD_SIZE_LABELS,sku:addSizeSku,price:addSizePrice,productKey:addSizeKey,normalizeSize:addSizeNormalize,ladder:ADD_SIZE_LADDER};
+          const existing=await getListingInventory({listingId:id,...credentials});
+          if(input.preview===true)return sendJson(res,200,{ok:true,plan:planAddSize(shop,existing,input.size)});
+          if(input.confirm!=='ADD SILVIA SIZE')
+            return sendJson(res,400,{ok:false,error:'Explicit confirmation is required to add a size.'});
+          if(input.fingerprint!==inventoryEditorFingerprint(existing))
+            return sendJson(res,409,{ok:false,error:'Etsy variation data has changed. Refresh before adding a size.'});
+          const artworkId=artworkIdFromSkus(fresh.skus)||'';
+          const result=addSizeToInventory(shop,existing,{size:input.size,rows:input.rows,quantity:input.quantity,artworkId});
+          await withEtsyListingRetry(()=>updateListingInventory({listingId:id,inventory:result.inventory,...credentials}));
+          const verified=await getListingInventory({listingId:id,...credentials});
+          const onEtsy=(verified.products||[]).filter(p=>addSizeNormalize((p.property_values||[]).find(v=>/size/i.test(v.property_name))?.values?.[0])===result.plan.size);
+          if(onEtsy.filter(p=>p.offerings?.[0]?.is_enabled).length!==result.added)
+            throw Error('Etsy saved the listing but the new size does not show as expected. Refresh to review it.');
+          // The artwork needs a production crop for the new size: the standard
+          // crops cover ladder sizes; any other size gets its own crop, queued on the PC.
+          const crop=await ensureSizeCrop(artworkId,result.plan.size).catch(error=>({status:'failed',
+            message:'The size was added, but its crop could not be queued: '+String(error?.message||error)}));
+          return sendJson(res,200,{ok:true,size:result.plan.size,label:result.plan.label,added:result.added,verified:true,crop});
         }
         if(action==='inventory'){
           if(input.confirm!=='SAVE SILVIA VARIANTS')
