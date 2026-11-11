@@ -101,3 +101,22 @@ test('the scan links, stages and (when switched on) completes Etsy orders; the s
  const page=renderTrackingPage('Test Shop');
  assert.match(page,/id="gmail-auto-complete"/);
 });
+
+test('Sensaria GO shipped email: "Tracking Information: FEDEX - number" in its order table', async () => {
+  const {parseSensariaShipment}=await import('../src/sensaria-gmail-parser.mjs');
+  // The layout of a real Sensaria GO email (2026-11), with made-up details.
+  const body='<h1>Your order has shipped.</h1><p>Your Sensaria GO order has been completed. Tracking and order details can be found below.</p>'+
+    '<p><b>Order:</b> 4611946</p><p><b>PO:</b></p><p><b>PO:</b> 4224153017</p><p><b>Date:</b> 2026-11-07</p>'+
+    '<table><tr><th>Product</th><th>Status</th><th>Quantity</th><th>Price</th></tr>'+
+    '<tr><td><a href="https://go.sensaria.com/p">Matte Canvas Print (1.25" Bar, Brown Frame): 24x36</a></td><td>Completed</td><td>1</td><td>USD $71.60</td></tr>'+
+    '<tr><td>Subtotal:</td><td>USD $71.60</td></tr><tr><td>Shipping:</td><td>USD $5.00</td></tr>'+
+    '<tr><td>Tracking Information:</td><td><a href="https://www.fedex.com/fedextrack/?trknbr=384681984009">FEDEX - 384681984009</a></td></tr>'+
+    '<tr><td>JONDO CA-E Tax ID (GST/HST)</td><td>75400 2285 RT0001</td></tr><tr><td>Total:</td><td>USD $88.45</td></tr></table>';
+  const out=parseSensariaShipment({from:'Sensaria <orders@sensaria.com>',subject:'Your order has shipped',body,messageId:'m1',
+    links:[{url:'https://www.fedex.com/fedextrack/?trknbr=384681984009',text:'FEDEX - 384681984009'}]},[]);
+  assert.notEqual(out.reason,'No unambiguous tracking number found.');
+  assert.equal(out.trackingNumber,'384681984009');
+  assert.equal(out.carrier,'FedEx');
+  // The tax ID and order total are never taken for a tracking number.
+  assert.ok(!/75400|RT0001/.test(JSON.stringify(out)));
+});
