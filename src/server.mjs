@@ -1,3 +1,4 @@
+import { supplierArtworkLink, isSupplierArtworkPath, verifySupplierArtworkPath } from './supplier-artwork-link.mjs';
 import { planAddSize, addSizeToInventory } from './listing-add-size.mjs';
 import { SILVIA_SIZE_LABELS as ADD_SIZE_LABELS, silviaVariantSku as addSizeSku, retailPriceForProductKey as addSizePrice, productKeyFromVariationValues as addSizeKey, normalizeSize as addSizeNormalize, SILVIA_RETAIL_PRICE_LADDER_USD as ADD_SIZE_LADDER } from './variants.mjs';
 import { previewPrintShrimpOrder, submitPrintShrimpOrder, verifyPrintShrimpSubmission } from './printshrimp-order-submission.mjs';
@@ -3763,6 +3764,28 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, service: 'silvia-sensaria-bridge' });
   }
 
+  // Public (no sign-in): a supplier's expiring link to one production crop
+  // (supplier-artwork-link.mjs). HEAD answers with the file's size and type,
+  // GET streams it from R2, for suppliers that check a URL before downloading.
+  if ((req.method === 'GET' || req.method === 'HEAD') && isSupplierArtworkPath(url.pathname)) {
+    let key;
+    try { key = verifySupplierArtworkPath(url.pathname); }
+    catch (error) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(String(error.message || error)); }
+    try {
+      const info = await artworkObjectInfo(key);
+      const headers = { 'content-type': info.contentType || 'image/jpeg', 'content-length': String(info.size),
+        'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' };
+      if (req.method === 'HEAD') { res.writeHead(200, headers); return res.end(); }
+      const body = await getArtworkObjectStream(key);
+      res.writeHead(200, headers);
+      body.on('error', () => res.destroy());
+      return body.pipe(res);
+    } catch (error) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      return res.end('Artwork not found.');
+    }
+  }
+
   // Public (no sign-in): Google's consent screen links to these.
   if (req.method === 'GET' && (url.pathname === '/privacy' || url.pathname === '/terms')) {
     const body = url.pathname === '/privacy' ? renderPrivacyPage() : renderTermsPage();
@@ -4543,7 +4566,9 @@ const server = http.createServer(async (req, res) => {
       if(!Array.isArray(latest.transactions)||!latest.transactions.length)
         latest.transactions=await receiptTransactions(session,id);
       // PrintShrimp (printshrimp-order-submission.mjs): the same checks and one-time send.
-      const printShrimpDeps={...deps,smallerArtwork:printShrimpSizeCrop};
+      // PrintShrimp checks the artwork URL with HEAD, which a GET-signed R2 link refuses: it gets this app's link.
+      const appOrigin='https://'+String(req.headers['x-forwarded-host']||req.headers.host||'');
+      const printShrimpDeps={...deps,smallerArtwork:printShrimpSizeCrop,publicArtworkUrl:key=>supplierArtworkLink({key,base:appOrigin})};
       if(action==='printshrimp-preview'){
         const preview=await previewPrintShrimpOrder(id,{shopId,latestReceipt:latest,deps:printShrimpDeps});
         delete preview._payload;delete preview._planSignature;

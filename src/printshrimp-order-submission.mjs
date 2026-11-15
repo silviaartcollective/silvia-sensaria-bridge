@@ -87,7 +87,7 @@ export function buildPrintShrimpPayload({ receipt, plan, asset }) {
 function defaultDeps() {
   return { readOrder, saveReview, resolveAsset: resolveProviderArtworkAsset, artworkExists: artworkObjectExists,
     createOrder: createPrintShrimpOrder, priceCheck: validatePrintShrimpOrderPreview, getOrder: getPrintShrimpOrder,
-    objectInfo: artworkObjectInfo, smallerArtwork: async () => null,
+    objectInfo: artworkObjectInfo, smallerArtwork: async () => null, publicArtworkUrl: null,
     ledger: ledgerStore(), trackingRecord: async () => null, env: process.env, now: () => new Date() };
 }
 
@@ -134,6 +134,12 @@ export async function previewPrintShrimpOrder(receiptId, { shopId, latestReceipt
       }
     } catch (error) { blockers.push('The production artwork size could not be checked: ' + (error?.message || error)); }
   }
+  // PrintShrimp checks the artwork link with HEAD first; a GET-signed R2 link
+  // answers that with 403, so the app's own expiring link is sent instead.
+  if (asset?.key && d.publicArtworkUrl) {
+    try { asset = { ...asset, url: d.publicArtworkUrl(asset.key) }; }
+    catch (error) { blockers.push('The artwork link for PrintShrimp could not be made: ' + (error?.message || error)); }
+  }
   const { payload, issues } = plan ? buildPrintShrimpPayload({ receipt, plan, asset }) : { payload: null, issues: [] };
   blockers.push(...issues);
   // PrintShrimp's live price for this exact order, against the approved quote.
@@ -156,7 +162,7 @@ export async function previewPrintShrimpOrder(receiptId, { shopId, latestReceipt
   if (!settings.masterEnabled) switches.push('FULFILLMENT_LIVE_SUBMISSION_ENABLED is not true');
   if (!settings.printShrimpEnabled) switches.push('PRINTSHRIMP_FULFILLMENT_ENABLED is not true');
   if (!settings.allReceipts && !settings.allowedReceipts.has(id)) switches.push(`receipt ${id} is not in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS (or set it to all)`);
-  const visible = payload ? { ...payload, products: payload.products.map(p => ({ ...p, image: { artwork_url: '(signed R2 link to ' + (asset?.key || '') + ')' } })) } : null;
+  const visible = payload ? { ...payload, products: payload.products.map(p => ({ ...p, image: { artwork_url: '(private link to ' + (asset?.key || '') + ')' } })) } : null;
   return { receiptId: id, supplier: 'printshrimp', ready: !blockers.length && !switches.length, blockers, switches, payload: visible,
     artwork: asset ? { key: asset.key, width: asset.width, height: asset.height, orientation: asset.orientation, ratio: asset.ratio,
       sizeBytes: asset.sizeBytes ?? null, replacedLargeCrop: asset.replacedLargeCrop || null } : null,
