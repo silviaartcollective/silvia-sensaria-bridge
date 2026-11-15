@@ -1,6 +1,6 @@
 import { planAddSize, addSizeToInventory } from './listing-add-size.mjs';
 import { SILVIA_SIZE_LABELS as ADD_SIZE_LABELS, silviaVariantSku as addSizeSku, retailPriceForProductKey as addSizePrice, productKeyFromVariationValues as addSizeKey, normalizeSize as addSizeNormalize, SILVIA_RETAIL_PRICE_LADDER_USD as ADD_SIZE_LADDER } from './variants.mjs';
-import { previewPrintShrimpOrder, submitPrintShrimpOrder } from './printshrimp-order-submission.mjs';
+import { previewPrintShrimpOrder, submitPrintShrimpOrder, verifyPrintShrimpSubmission } from './printshrimp-order-submission.mjs';
 import { renderPrivacyPage, renderTermsPage } from './legal-pages.mjs';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -715,6 +715,23 @@ async function ensureSizeCrop(artworkId,sizeText){
   const created=await createCropJob({artworkId,masterKey:manifest.master.key,orientation:manifest.orientation,
     width:manifest.master.width,height:manifest.master.height,size});
   return {status:'queued',jobId:created.job?.id||'',message:'A '+size+' crop of '+artworkId+' is queued on the PC crop worker.'};
+}
+
+// PrintShrimp takes artwork files up to 50 MB: the exact-size crop (300 dpi
+// for the ordered size) of the current master, or it is queued on the PC.
+async function printShrimpSizeCrop(artworkId,sizeText){
+  const size=normalizeCropSize(sizeText);
+  const manifest=await loadArtworkManifest(artworkId);
+  if(!manifest?.master?.key)return {message:artworkId+' has no master artwork in R2.'};
+  const crop=manifest.fulfillmentSizeCrops?.[size];
+  if(crop?.productionReady&&crop.sourceMasterKey===manifest.master.key&&await artworkObjectExists(crop.key)){
+    const info=await artworkObjectInfo(crop.key);
+    return {key:crop.key,url:await signedArtworkUrl(crop.key,7*24*3600),width:crop.width,height:crop.height,
+      orientation:manifest.orientation,ratio:sizeCropRatioKey(size),sizeBytes:info.size};
+  }
+  await createCropJob({artworkId,masterKey:manifest.master.key,orientation:manifest.orientation,
+    width:manifest.master.width,height:manifest.master.height,size});
+  return {queued:true,message:'A '+size+' crop (300 dpi, much smaller) is queued on the PC crop worker; preview again when it is done.'};
 }
 
 function recordCropWorkerHeartbeat(input = {}) {
@@ -4498,11 +4515,11 @@ const server = http.createServer(async (req, res) => {
   // diagnose and artelo-preview only read; artelo-submit sends ONE order and
   // needs the live switches, the receipt in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS
   // and a typed confirmation. Nothing here runs on its own.
-  const submissionRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})\/(diagnose|artelo-preview|artelo-submit|artelo-verify|submission-resolve|printshrimp-preview|printshrimp-submit)$/);
+  const submissionRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})\/(diagnose|artelo-preview|artelo-submit|artelo-verify|submission-resolve|printshrimp-preview|printshrimp-submit|printshrimp-verify)$/);
   if(submissionRoute){
     if(!requireAdminApi(req,res))return;
     const [,id,action]=submissionRoute;
-    const post=['artelo-submit','artelo-verify','submission-resolve','printshrimp-submit'].includes(action);
+    const post=['artelo-submit','artelo-verify','submission-resolve','printshrimp-submit','printshrimp-verify'].includes(action);
     if(post!==(req.method==='POST'))return sendJson(res,405,{ok:false,error:'Method not allowed.'});
     if(post){
       const origin=String(req.headers.origin||'');
@@ -4518,6 +4535,7 @@ const server = http.createServer(async (req, res) => {
       const deps={trackingRecord:readTrackingRecord};
       if(action==='diagnose')return sendJson(res,200,{ok:true,diagnosis:await diagnoseOrder(id,{shopId,deps})});
       if(action==='artelo-verify')return sendJson(res,200,{ok:true,...await verifyArteloSubmission(id)});
+      if(action==='printshrimp-verify')return sendJson(res,200,{ok:true,...await verifyPrintShrimpSubmission(id)});
       if(action==='submission-resolve')return sendJson(res,200,{ok:true,submission:await resolveSubmission(id,await readJsonBody(req))});
       // The live Etsy receipt: payment, shipping state and address as of now.
       const latest=await getShopReceipt({shopId,receiptId:id,keystring:session.keystring,
@@ -4525,13 +4543,14 @@ const server = http.createServer(async (req, res) => {
       if(!Array.isArray(latest.transactions)||!latest.transactions.length)
         latest.transactions=await receiptTransactions(session,id);
       // PrintShrimp (printshrimp-order-submission.mjs): the same checks and one-time send.
+      const printShrimpDeps={...deps,smallerArtwork:printShrimpSizeCrop};
       if(action==='printshrimp-preview'){
-        const preview=await previewPrintShrimpOrder(id,{shopId,latestReceipt:latest,deps});
+        const preview=await previewPrintShrimpOrder(id,{shopId,latestReceipt:latest,deps:printShrimpDeps});
         delete preview._payload;delete preview._planSignature;
         return sendJson(res,200,{ok:true,preview});
       }
       if(action==='printshrimp-submit')
-        return sendJson(res,200,{ok:true,submission:await submitPrintShrimpOrder(id,await readJsonBody(req),{shopId,latestReceipt:latest,deps})});
+        return sendJson(res,200,{ok:true,submission:await submitPrintShrimpOrder(id,await readJsonBody(req),{shopId,latestReceipt:latest,deps:printShrimpDeps})});
       if(action==='artelo-preview'){
         const preview=await previewArteloOrder(id,{shopId,latestReceipt:latest,deps});
         delete preview._payload;delete preview._planSignature;

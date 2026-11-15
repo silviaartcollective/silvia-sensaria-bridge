@@ -166,3 +166,18 @@ address (Etsy shares no buyer email or phone) and the production crop's signed
 link. Once PrintShrimp returns its order ID, the hourly tracking job
 (`ARTELO_AUTO_TRACKING_ENABLED=true`) links it in Order Tracking and sends the
 tracking to Etsy when PrintShrimp ships it, as it does for Artelo.
+
+From PrintShrimp's API documentation (supplied 2026-11):
+- An API order is created **Pending** and printed only once paid: checkout in
+  the PrintShrimp dashboard, or *Auto-pay from wallet* in its Settings (after
+  its auto-pay delay). An unpaid order can still be deleted there.
+- `external_order_number` is sent as `<shop prefix>-<receipt>` (e.g.
+  `SAC-4233477454`); **Check PrintShrimp status** finds the order by it, and
+  turns an "unknown" submission into "submitted" when PrintShrimp has it.
+- Artwork files are limited to 50 MB: a larger ratio crop is replaced by the
+  exact-size crop (300 dpi for the ordered size), queued on the PC if needed.
+- Address rules checked before sending: name and address lines up to 60
+  characters, no numbers in the city, numeric US ZIPs, UK postcodes with letters,
+  state required for US, CA and AU.
+- Get Order reports `status` (Pending, Processing, Shipped, Completed) with the
+  order's `tracking` and `tracking_courier`; Order Tracking reads those.
