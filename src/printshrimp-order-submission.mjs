@@ -9,11 +9,19 @@
 //     operator's statement that the PrintShrimp dashboard has no order for it.
 // The submission record (supplier-order-ledger.mjs) is "submitting" before the
 // request; a timeout or outage leaves it "unknown", never sent again on its own.
+//
+// From PrintShrimp's API documentation: an order is created as Pending and is
+// printed once paid (checkout, or Auto-pay from wallet in PrintShrimp's
+// settings); an unpaid order can be deleted. external_order_number carries the
+// Etsy receipt (SAC-<receipt>), and Get Order finds the order by it. Artwork
+// files may be up to 50 MB; city may not contain numbers; name and address
+// lines are at most 60 characters; US zips are numeric, UK ones have letters.
 import { readOrder, saveReview, validReceiptId } from './custom-order-store.mjs';
 import { eligibleRegularReceipt } from './regular-order-routing.mjs';
 import { resolveProviderArtworkAsset } from './fulfillment-assets.mjs';
 import { artworkObjectExists } from './r2.mjs';
-import { createPrintShrimpOrder, validatePrintShrimpOrderPreview, PRINTSHRIMP_PRINT_SIZES, PRINTSHRIMP_PRINT_PAPER_TYPE } from './printshrimp.mjs';
+import { createPrintShrimpOrder, validatePrintShrimpOrderPreview, getPrintShrimpOrder, PRINTSHRIMP_PRINT_SIZES, PRINTSHRIMP_PRINT_PAPER_TYPE } from './printshrimp.mjs';
+import { artworkObjectInfo } from './r2.mjs';
 import { ledgerStore, transition, blockedBy } from './supplier-order-ledger.mjs';
 
 const flag = (env, name) => String(env[name] || '').trim().toLowerCase() === 'true';
@@ -30,6 +38,9 @@ export function printShrimpSubmissionSettings(env = process.env) {
   };
 }
 export const printShrimpConfirmation = receiptId => `SUBMIT ${receiptId} TO PRINTSHRIMP`;
+export const PRINTSHRIMP_MAX_ARTWORK_BYTES = 50 * 1024 * 1024;
+// The order reference PrintShrimp stores: the artwork's shop prefix and the receipt (SAC-4233477454).
+export const printShrimpReference = (plan, receiptId) => (/^[A-Z]+/.exec(words(plan?.artworkId).toUpperCase())?.[0] || 'ETSY') + '-' + receiptId;
 
 // The regular-order checks for an order whose recommendation was approved for
 // ordering: the approval itself is not "already placed".
@@ -59,7 +70,13 @@ export function buildPrintShrimpPayload({ receipt, plan, asset }) {
     if (!customerInfo[field]) issues.push(`The Etsy shipping address has no ${label}.`);
   if (['US', 'CA', 'AU'].includes(customerInfo.country) && !customerInfo.state)
     issues.push('PrintShrimp needs a state or province for this country, and the Etsy address has none.');
+  for (const [field, label] of [['name', 'name'], ['address1', 'street line'], ['address2', 'second address line'], ['city', 'city'], ['state', 'state']])
+    if (customerInfo[field].length > 60) issues.push(`The ${label} is over PrintShrimp's 60-character limit; order this one in the PrintShrimp dashboard.`);
+  if (/\d/.test(customerInfo.city)) issues.push(`PrintShrimp does not accept numbers in the city ("${customerInfo.city}"); order this one in the PrintShrimp dashboard.`);
+  if (customerInfo.country === 'US' && customerInfo.zip && !/^\d{5}(-?\d{4})?$/.test(customerInfo.zip)) issues.push('PrintShrimp needs a numeric US ZIP code.');
+  if (customerInfo.country === 'GB' && customerInfo.zip && !/[A-Za-z]/.test(customerInfo.zip)) issues.push('PrintShrimp needs a UK postcode with letters.');
   const payload = {
+    external_order_number: printShrimpReference(plan, validReceiptId(receipt?.receipt_id)),
     customerInfo: Object.fromEntries(Object.entries(customerInfo).filter(([, value]) => value)),
     products: [{ type: 'Print', paper_type: PRINTSHRIMP_PRINT_PAPER_TYPE, size, quantity: 1,
       image: { artwork_url: asset?.url || '' } }]
@@ -69,7 +86,8 @@ export function buildPrintShrimpPayload({ receipt, plan, asset }) {
 
 function defaultDeps() {
   return { readOrder, saveReview, resolveAsset: resolveProviderArtworkAsset, artworkExists: artworkObjectExists,
-    createOrder: createPrintShrimpOrder, priceCheck: validatePrintShrimpOrderPreview,
+    createOrder: createPrintShrimpOrder, priceCheck: validatePrintShrimpOrderPreview, getOrder: getPrintShrimpOrder,
+    objectInfo: artworkObjectInfo, smallerArtwork: async () => null,
     ledger: ledgerStore(), trackingRecord: async () => null, env: process.env, now: () => new Date() };
 }
 
@@ -102,6 +120,20 @@ export async function previewPrintShrimpOrder(receiptId, { shopId, latestReceipt
       if (!(await d.artworkExists(asset.key))) blockers.push('The production artwork is missing from R2.');
     } catch (error) { blockers.push(error.message); }
   }
+  // PrintShrimp takes artwork files up to 50 MB. A larger ratio crop is replaced
+  // by the exact-size crop (300 dpi for this size), queued on the PC if it is not made yet.
+  if (asset && plan) {
+    try {
+      const bytes = Number((await d.objectInfo(asset.key))?.size || 0);
+      asset = { ...asset, sizeBytes: bytes || null };
+      if (bytes > PRINTSHRIMP_MAX_ARTWORK_BYTES) {
+        const smaller = await d.smallerArtwork(plan.artworkId, plan.size);
+        if (smaller?.url && Number(smaller.sizeBytes || 0) <= PRINTSHRIMP_MAX_ARTWORK_BYTES) asset = { ...smaller, replacedLargeCrop: asset.key };
+        else blockers.push(`The ${asset.ratio} crop is ${(bytes / 1048576).toFixed(0)} MB and PrintShrimp accepts up to 50 MB. ` +
+          (smaller?.message || 'Make a ' + plan.size + ' crop (Listings → Add a size, or Custom Size Lookup) and preview again.'));
+      }
+    } catch (error) { blockers.push('The production artwork size could not be checked: ' + (error?.message || error)); }
+  }
   const { payload, issues } = plan ? buildPrintShrimpPayload({ receipt, plan, asset }) : { payload: null, issues: [] };
   blockers.push(...issues);
   // PrintShrimp's live price for this exact order, against the approved quote.
@@ -126,7 +158,8 @@ export async function previewPrintShrimpOrder(receiptId, { shopId, latestReceipt
   if (!settings.allReceipts && !settings.allowedReceipts.has(id)) switches.push(`receipt ${id} is not in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS (or set it to all)`);
   const visible = payload ? { ...payload, products: payload.products.map(p => ({ ...p, image: { artwork_url: '(signed R2 link to ' + (asset?.key || '') + ')' } })) } : null;
   return { receiptId: id, supplier: 'printshrimp', ready: !blockers.length && !switches.length, blockers, switches, payload: visible,
-    artwork: asset ? { key: asset.key, width: asset.width, height: asset.height, orientation: asset.orientation, ratio: asset.ratio } : null,
+    artwork: asset ? { key: asset.key, width: asset.width, height: asset.height, orientation: asset.orientation, ratio: asset.ratio,
+      sizeBytes: asset.sizeBytes ?? null, replacedLargeCrop: asset.replacedLargeCrop || null } : null,
     expectedCost: { approvedQuoteUsd: plan?.quotedTotalUsd ?? null, approvedModeledUsd: plan?.modeledLandedUsd ?? null, printShrimpPriceCheck: price },
     submission: ledger, confirmation: printShrimpConfirmation(id), _payload: payload, _planSignature: plan?.signature || null };
 }
@@ -178,4 +211,26 @@ export async function submitPrintShrimpOrder(receiptId, input = {}, { shopId, la
       approval: { ...(order.review?.approval || {}), supplierOrderSubmitted: true, supplier: 'printshrimp', submittedAt: at() } });
     return record;
   } finally { locks.delete(id); }
+}
+
+// What PrintShrimp has for this receipt, found by its order reference; an
+// "unknown" submission that PrintShrimp has becomes "submitted" with its ID.
+export async function verifyPrintShrimpSubmission(receiptId, { deps = {} } = {}) {
+  const d = { ...defaultDeps(), ...deps };
+  const id = validReceiptId(receiptId);
+  let record = await d.ledger.read(id);
+  const order = await d.readOrder(id).catch(() => null);
+  const reference = printShrimpReference(order?.review?.regularPlan, id);
+  let found = null;
+  try { found = (await d.getOrder({ externalOrderNumber: reference }))?.order || null; }
+  catch (error) { if (!/PrintShrimp API 404/.test(String(error?.message || ''))) throw error; }
+  if (!found) return { found: false, reference, record, note: 'PrintShrimp has no order ' + reference + '.' };
+  const orderId = words(found.order_id);
+  if (record?.provider === 'printshrimp' && record.state === 'unknown' && orderId) {
+    record = transition(record, 'submitted', { provider: 'printshrimp', at: d.now().toISOString(),
+      fields: { supplierOrderId: orderId, supplierStatus: words(found.status) }, note: 'Found at PrintShrimp by its order reference.' });
+    await d.ledger.write(id, record);
+  }
+  return { found: true, reference, record, orderId, status: words(found.status), paid: found.paid === true,
+    orderNumber: found.order_num ?? null, tracking: found.tracking || null };
 }

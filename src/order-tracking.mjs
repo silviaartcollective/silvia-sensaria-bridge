@@ -265,16 +265,17 @@ export function supplierShipments(supplier,payload) {
           shipmentId:text(s.id),status:'shipped',source:'artelo_api'}))};
   }
   if(supplier==='printshrimp'){
+    // PrintShrimp's Get Order (API docs): status Pending, Processing, Shipped
+    // or Completed, with the order's tracking and tracking_courier once shipped.
     const order=payload?.order||payload?.data?.order||payload;
     const state=text(order?.shipping_status||order?.shippingStatus||order?.status).toLowerCase();
-    if(!['shipped','delivered','fulfilled'].includes(state))
+    if(!['shipped','completed','delivered','fulfilled'].includes(state))
       return {status:state||'unknown',shipments:[]};
-    // No verified PrintShrimp response example yet: require an explicit shipped
-    // state AND shipment-level tracking to avoid false shipment notifications.
-    const rows=Array.isArray(order?.shipments)?order.shipments:[];
-    return {status:state,shipments:rows.filter(s=>s?.tracking_number && s?.carrier)
-      .map(s=>({trackingNumber:s.tracking_number,trackingUrl:s.tracking_url||'',
-        carrier:text(s.carrier),shipmentId:text(s.id),status:'shipped',source:'printshrimp_api'}))};
+    const rows=Array.isArray(order?.shipments)?order.shipments.filter(s=>s?.tracking_number&&s?.carrier)
+      .map(s=>({trackingNumber:s.tracking_number,trackingUrl:s.tracking_url||'',carrier:text(s.carrier),shipmentId:text(s.id)})):[];
+    if(!rows.length&&text(order?.tracking))
+      rows.push({trackingNumber:text(order.tracking),trackingUrl:'',carrier:text(order.tracking_courier),shipmentId:text(order.order_id)});
+    return {status:state,shipments:rows.map(s=>({...s,status:'shipped',source:'printshrimp_api'}))};
   }
   // Printful, Lumaprints and Gooten: only packages with a tracking number count as shipped.
   if(supplier==='printful')return printfulShipments(payload);

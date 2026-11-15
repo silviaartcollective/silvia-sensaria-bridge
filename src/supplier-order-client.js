@@ -54,7 +54,9 @@ function printShrimpPreviewText(p){
  const a=p.payload?.customerInfo||{},item=p.payload?.products?.[0]||{},c=p.expectedCost||{},pc=c.printShrimpPriceCheck;
  return [
   line('Product',[item.type,item.paper_type,item.size].filter(Boolean).join(' · ')),
-  line('Artwork',p.artwork?p.artwork.key+' ('+p.artwork.width+'×'+p.artwork.height+', '+p.artwork.orientation+')':''),
+  line('Artwork',p.artwork?p.artwork.key+' ('+p.artwork.width+'×'+p.artwork.height+', '+p.artwork.orientation+
+   (p.artwork.sizeBytes?', '+(p.artwork.sizeBytes/1048576).toFixed(1)+' MB':'')+')'+(p.artwork.replacedLargeCrop?' · used instead of '+p.artwork.replacedLargeCrop+' (over 50 MB)':''):''),
+  line('PrintShrimp order reference',p.payload?.external_order_number),
   line('Ship to',[a.name,a.address1,a.address2,a.city,a.state,a.zip,a.country].filter(Boolean).join(', ')),
   line('Approved quote',money(c.approvedQuoteUsd)+' (with reserve '+money(c.approvedModeledUsd)+')'),
   line('PrintShrimp price now',pc?(pc.total!=null&&Number.isFinite(pc.total)?pc.total.toFixed(2)+' '+(pc.currency||'')+' (product '+pc.product+' + shipping '+pc.shipping+')':'—')+(pc.totalUsd!=null?' ≈ '+money(pc.totalUsd):''):'not run'),
@@ -74,7 +76,8 @@ function mount(root,{receipt,report:pageReport}){
   '<button type="button" data-so="diagnose">Diagnose this order</button>'+
   '<button type="button" data-so="preview" data-artelo>Preview Artelo order</button>'+
   '<button type="button" data-so="verify" data-artelo>Check Artelo status</button>'+
-  '<button type="button" data-so="ps-preview">Preview PrintShrimp order</button></div>'+
+  '<button type="button" data-so="ps-preview">Preview PrintShrimp order</button>'+
+  '<button type="button" data-so="ps-verify">Check PrintShrimp status</button></div>'+
   '<div data-so="status" role="status" aria-live="polite" style="font-size:13px;margin:4px 0"></div>'+
   '<pre data-so="out" hidden style="white-space:pre-wrap;background:#f6f5f0;padding:12px;border-radius:8px;font-size:13px;margin:8px 0"></pre>'+
   '<div data-so="submit-box" hidden><p data-so="submit-note" style="color:#835d2c;background:#f6edda;padding:10px 12px;border-radius:8px;font-size:13px"></p>'+
@@ -124,6 +127,11 @@ function mount(root,{receipt,report:pageReport}){
   el('confirm').placeholder='Type '+p.confirmation;
   report(p.ready?'Ready to submit this one order to PrintShrimp.':'Not ready to submit; see the list. Nothing was sent.',!p.ready&&p.blockers.length>0);
  }));
+ el('ps-verify').addEventListener('click',run(async id=>{
+  const d=await api(path(id,'printshrimp-verify'),{});
+  report(d.found?'PrintShrimp has '+d.reference+' (order '+d.orderId+'): '+(d.status||'?')+' · '+(d.paid?'paid':'not paid yet: pay it in the PrintShrimp dashboard, or turn on Auto-pay')+
+   (d.tracking?' · tracking '+d.tracking:'')+'.':(d.note||'PrintShrimp has no order for this receipt.'));
+ }));
  el('verify').addEventListener('click',run(async id=>{
   const d=await api(path(id,'artelo-verify'),{});
   report(d.found?'Artelo has this order ('+d.record.supplierOrderId+'): '+d.record.state+'.':(d.note||'Artelo has no order with the recorded ID.'));
@@ -134,13 +142,14 @@ function mount(root,{receipt,report:pageReport}){
   if(!window.confirm('Send receipt '+id+' to '+label+' for production now? This places a real, paid order.'))return;
   const body=supplier==='artelo'?{confirm:el('confirm').value.trim(),arteloDashboardChecked:true}:{confirm:el('confirm').value.trim(),dashboardChecked:true};
   const d=await api(path(id,supplier+'-submit'),body);
-  report('Submitted to '+label+': order '+(d.submission.supplierOrderId||'(no ID returned: check the dashboard)')+' · '+d.submission.state+'.');
+  report('Submitted to '+label+': order '+(d.submission.supplierOrderId||'(no ID returned: check the dashboard)')+' · '+d.submission.state+'.'+
+   (supplier==='printshrimp'?' It waits in the PrintShrimp dashboard as Pending until it is paid (checkout there, or Auto-pay from wallet in its Settings).':''));
   el('submit-box').hidden=true;
  }));
  const reset=()=>{el('status').textContent='';el('out').hidden=true;el('out').textContent='';el('submit-box').hidden=true;el('dashboard').checked=false;el('confirm').value='';};
  const showArtelo=on=>{for(const b of root.querySelectorAll('[data-artelo]'))b.hidden=!on;if(!on)el('submit-box').hidden=true;};
  // Only the approved supplier's buttons (Diagnose always).
- const showSupplier=name=>{showArtelo(name==='artelo');el('ps-preview').hidden=name!=='printshrimp';};
+ const showSupplier=name=>{showArtelo(name==='artelo');el('ps-preview').hidden=name!=='printshrimp';el('ps-verify').hidden=name!=='printshrimp';};
  return {reset,showArtelo,showSupplier};
 }
 window.SupplierOrderPanel={mount,diagnosisText,previewText,printShrimpPreviewText};
