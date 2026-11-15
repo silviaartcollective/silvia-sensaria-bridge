@@ -56,7 +56,7 @@ test('preview: ready when approved, authorized and the live price matches; never
   assert.deepEqual(p.blockers, []); assert.deepEqual(p.switches, []); assert.equal(p.ready, true);
   assert.equal(p.confirmation, 'SUBMIT 4000000001 TO PRINTSHRIMP');
   assert.equal(p.expectedCost.printShrimpPriceCheck.totalUsd.toFixed(2), ((7.5 + 3.45) * 1.27).toFixed(2));
-  assert.match(p.payload.products[0].image.artwork_url, /signed R2 link to artworks\/SAC0021/);
+  assert.match(p.payload.products[0].image.artwork_url, /private link to artworks\/SAC0021/);
   assert.equal(w.calls.create.length, 0);
 });
 
@@ -101,7 +101,7 @@ test('the server routes and the order panel', () => {
   const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
   assert.match(server, /\|printshrimp-preview\|printshrimp-submit\|printshrimp-verify\)\$\/\);/);
   assert.match(server, /'submission-resolve','printshrimp-submit','printshrimp-verify'\]\.includes\(action\)/);
-  assert.match(server, /const printShrimpDeps=\{\.\.\.deps,smallerArtwork:printShrimpSizeCrop\};/);
+  assert.match(server, /const printShrimpDeps=\{\.\.\.deps,smallerArtwork:printShrimpSizeCrop,publicArtworkUrl:/);
   const client = readFileSync(new URL('../src/supplier-order-client.js', import.meta.url), 'utf8');
   assert.doesNotThrow(() => new vm.Script(client));
   assert.match(client, /data-so="ps-preview"/);
@@ -146,4 +146,17 @@ test('Order Tracking reads PrintShrimp\'s tracking and tracking_courier once it 
   assert.deepEqual(supplierShipments('printshrimp', { success: true, order: { order_id: 'f0f17d46', status: 'Shipped', tracking: 'RM1234567GB', tracking_courier: 'Royal Mail' } }).shipments,
     [{ trackingNumber: 'RM1234567GB', trackingUrl: '', carrier: 'Royal Mail', shipmentId: 'f0f17d46', status: 'shipped', source: 'printshrimp_api' }]);
   assert.equal(supplierShipments('printshrimp', { order: { status: 'Completed', tracking: 'RM1234567GB', tracking_courier: 'Royal Mail' } }).shipments.length, 1);
+});
+
+test('PrintShrimp gets the app\'s own artwork link, which answers HEAD', async () => {
+  const w = world();
+  w.deps.publicArtworkUrl = key => 'https://silvia.example.com/supplier-artwork/x/1/y/' + key.split('/').pop();
+  await submitPrintShrimpOrder(ID, { confirm: printShrimpConfirmation(ID), dashboardChecked: true }, { shopId: 77, deps: w.deps });
+  assert.equal(w.calls.create[0].products[0].image.artwork_url, 'https://silvia.example.com/supplier-artwork/x/1/y/3x4.jpg');
+});
+
+test('after a rejection the order can be sent again', async () => {
+  const w = world({ ledger: { receiptId: ID, provider: 'printshrimp', state: 'rejected', history: [] } });
+  const record = await submitPrintShrimpOrder(ID, { confirm: printShrimpConfirmation(ID), dashboardChecked: true }, { shopId: 77, deps: w.deps });
+  assert.equal(record.state, 'submitted'); assert.equal(w.calls.create.length, 1);
 });
