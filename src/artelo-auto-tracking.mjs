@@ -1,4 +1,4 @@
-// Hourly: Etsy tracking for the orders this app sent to Artelo. For each
+// Hourly: Etsy tracking for the orders this app sent to Artelo or PrintShrimp. For each
 // submission record (supplier-order-ledger.mjs) that Artelo holds, the order
 // is linked in Order Tracking, Artelo is asked for its shipments, and once
 // Artelo reports it shipped with a tracking number the Etsy order is marked
@@ -15,6 +15,7 @@ import { readTrackingRecord, linkTrackingOrder, checkSupplierTracking, sendStage
 export const ARTELO_TRACKING_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
 const PER_RUN = 25;
+const TRACKED_SUPPLIERS = ['artelo', 'printshrimp'];
 const flag = (env, name) => String(env[name] || '').trim().toLowerCase();
 
 export function autoTrackingSettings(env = process.env) {
@@ -49,21 +50,22 @@ export async function syncArteloTracking(session, { deps = {} } = {}) {
   for (const id of await d.listReceipts()) {
     if (results.length >= PER_RUN) break;
     const record = await d.ledger.read(id).catch(() => null);
-    // Only orders this app sent to Artelo and Artelo confirmed with an order ID.
-    if (record?.provider !== 'artelo' || !['submitted', 'accepted'].includes(record.state) || !record.supplierOrderId) continue;
+    // Only orders this app sent to Artelo or PrintShrimp, confirmed with an order ID.
+    const supplier = record?.provider;
+    if (!TRACKED_SUPPLIERS.includes(supplier) || !['submitted', 'accepted'].includes(record.state) || !record.supplierOrderId) continue;
     if (d.now() - Date.parse(record.updatedAt || record.createdAt) > MAX_AGE_MS) continue;
     try {
       let tracking = await d.readTracking(id);
-      if (tracking && (tracking.supplier !== 'artelo' || tracking.supplierOrderId !== record.supplierOrderId)) {
+      if (tracking && (tracking.supplier !== supplier || tracking.supplierOrderId !== record.supplierOrderId)) {
         results.push({ receiptId: id, outcome: 'skipped', reason: `Order Tracking links it to ${tracking.supplier} order ${tracking.supplierOrderId}.` });
         continue;
       }
       if (tracking?.etsyStatus?.isShipped || (tracking?.shipments || []).some(s => s.etsySentAt)) continue;
-      if (!tracking) tracking = await d.link(session, { receiptId: id, supplier: 'artelo', supplierOrderId: record.supplierOrderId });
+      if (!tracking) tracking = await d.link(session, { receiptId: id, supplier, supplierOrderId: record.supplierOrderId });
       const checked = await d.check(session, id);
       if (checked.record?.etsyStatus?.isShipped) { results.push({ receiptId: id, outcome: 'already_shipped_on_etsy' }); continue; }
       const shipment = (checked.record?.shipments || []).find(s => !s.etsySentAt);
-      if (!shipment) { results.push({ receiptId: id, outcome: 'waiting', artelo: checked.status }); continue; }
+      if (!shipment) { results.push({ receiptId: id, outcome: 'waiting', [supplier]: checked.status }); continue; }
       const sent = await d.send(session, { receiptId: id, trackingNumber: shipment.trackingNumber, confirm: 'MARK SHIPPED ON ETSY' });
       results.push({ receiptId: id, outcome: sent.etsySubmitted ? 'marked_shipped' : 'already_on_etsy', trackingNumber: shipment.trackingNumber, carrier: shipment.carrier });
     } catch (error) {
