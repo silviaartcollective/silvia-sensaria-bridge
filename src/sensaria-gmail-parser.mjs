@@ -166,6 +166,9 @@ export function parseSensariaShipment({from,subject='',body='',messageId='',link
     return {status:'review',reason:'Tracking email does not explicitly confirm shipment.'};
   const labels=[
     /(?:tracking\s*(?:number|no\.?|code|#)?|tracking\s*ID)\s*[:#=\-]\s*([A-Za-z0-9][A-Za-z0-9-]{7,59})\b/gi,
+    // Sensaria GO's shipped email: "Tracking Information: FEDEX - 384681984009"
+    // (the carrier, a dash, then the number; the number has digits in it).
+    /tracking\s*info(?:rmation)?\s*[:#=\-]?\s*(?:(?:UPS|USPS|Fed\s?Ex|DHL|Canada\s*Post|Purolator|OnTrac|DPD)\s*[-\u2013\u2014:]\s*)?((?=[A-Za-z0-9-]*\d)[A-Za-z0-9][A-Za-z0-9-]{7,59})\b/gi,
     /\b(1Z[A-Z0-9]{16})\b/gi
   ];
   const trackings=[...new Set(labels.flatMap(re=>[...content.matchAll(re)].map(m=>safeTrackingNumber(m[1]))).filter(Boolean))];

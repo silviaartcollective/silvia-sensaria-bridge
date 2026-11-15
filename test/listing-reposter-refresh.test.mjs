@@ -84,7 +84,7 @@ const stepsOf = (log, id) => log.filter(line => line.split(' ')[1] === String(id
 
 test('due this week: unsold listings at 4 months are refreshed in place, refreshed ones still unsold at 12 months are reposted', async () => {
   const { deps, log, saved, listings, store } = shop();
-  await startRenewal(deps, { count: 20, preset: 'Preset 2', rules: DEFAULT_RULES });
+  await startRenewal(deps, { count: 20, preset: 'Preset 2', rules: { ...DEFAULT_RULES, refreshMonths: 4 } });
   await finished();
   const job = saved.job;
   assert.equal(job.status, 'done', job.error);
@@ -133,7 +133,7 @@ test('due this week: unsold listings at 4 months are refreshed in place, refresh
 
 test('the run takes at most the number asked for, the soonest renewals first', async () => {
   const { deps, saved } = shop();
-  await startRenewal(deps, { count: 2, preset: 'Preset 1' });
+  await startRenewal(deps, { count: 2, preset: 'Preset 1', rules: { refreshMonths: 4 } });
   await finished();
   assert.deepEqual(saved.job.results.map(row => row.listingId), [2, 1]);
 });
@@ -162,8 +162,18 @@ test('when a listing is due: its age at its next renewal, within the window', ()
   assert.equal(dueFor({ listing_id: 3, original_creation_timestamp: jan10 }, null, rules, jan10 + 4 * MONTH - 2 * DAY), 'refresh');
 });
 
+test('by default a listing is refreshed at 8 months and reposted at 12', () => {
+  const jan10 = Date.UTC(2026, 0, 10) / 1000;
+  const item = { listing_id: 9, original_creation_timestamp: jan10 };
+  // Etsy renews every 4 months: at 4 months nothing happens now, at 8 the listing is refreshed.
+  assert.equal(dueFor(item, null, DEFAULT_RULES, jan10 + 4 * MONTH - 2 * DAY), '');
+  assert.equal(dueFor(item, null, DEFAULT_RULES, jan10 + 8 * MONTH - 2 * DAY), 'refresh');
+  // Refreshed at 8 months and still unsold at 12: reposted.
+  assert.equal(dueFor(item, { at: iso(jan10 + 8 * MONTH - 2 * DAY) }, DEFAULT_RULES, jan10 + 12 * MONTH - 2 * DAY), 'repost');
+});
+
 test('the rules: refresh before repost, sensible numbers', () => {
-  assert.deepEqual(checkRules({}), { refreshMonths: 4, repostMonths: 12, windowDays: 7, maxReposts: 1, refreshTemplate: true });
+  assert.deepEqual(checkRules({}), { refreshMonths: 8, repostMonths: 12, windowDays: 7, maxReposts: 1, refreshTemplate: true });
   assert.deepEqual(checkRules({ refreshMonths: '4', repostMonths: '8', windowDays: '14', maxReposts: '0', refreshTemplate: false }),
     { refreshMonths: 4, repostMonths: 8, windowDays: 14, maxReposts: 0, refreshTemplate: false });
   assert.throws(() => checkRules({ maxReposts: 6 }), /0 to 5 times/);
@@ -174,7 +184,7 @@ test('the rules: refresh before repost, sensible numbers', () => {
 
 test('Stop, then Resume: a refresh goes on from the step it reached', async () => {
   const s = shop({ holdMockups: true, items: [listing(1, 4, 3)] });
-  await startRenewal(s.deps, { count: 1, preset: 'Preset 1' });
+  await startRenewal(s.deps, { count: 1, preset: 'Preset 1', rules: { refreshMonths: 4 } });
   for (let i = 0; i < 200; i++) await tick();
   assert.match(s.saved.job.results[0].step, /^Mockups: 0 of 3 made on the PC · Rendering on PC$/);
   stopRenewal();
@@ -194,7 +204,7 @@ test('Stop, then Resume: a refresh goes on from the step it reached', async () =
 test('a refresh whose photos are on Etsy goes on with the details when tried again', async () => {
   const s = shop({ items: [listing(1, 4, 3)] });
   s.deps.updateDetails = async () => { throw Error('Etsy is down'); };
-  await startRenewal(s.deps, { count: 1, preset: 'Preset 1' });
+  await startRenewal(s.deps, { count: 1, preset: 'Preset 1', rules: { refreshMonths: 4 } });
   await finished();
   assert.equal(s.saved.job.results[0].status, 'failed');
   assert.match(s.saved.job.results[0].error, /Etsy is down/);
@@ -209,7 +219,7 @@ test('a refresh whose photos are on Etsy goes on with the details when tried aga
 
 test('without a mockup preset nothing is changed', async () => {
   const { deps, log, saved } = shop();
-  await startRenewal(deps, { count: 2 });
+  await startRenewal(deps, { count: 2, rules: { refreshMonths: 4 } });
   await finished();
   assert.equal(saved.job.status, 'failed');
   assert.match(saved.job.error, /Choose a mockup preset first/);
@@ -218,7 +228,7 @@ test('without a mockup preset nothing is changed', async () => {
 
 test('a listing that sells while it is reposted is kept and its new listing stays a draft', async () => {
   const { deps, log, saved, listings, store } = shop({ soldDuring: 2, items: [listing(2, 12, 2)] });
-  await startRenewal(deps, { count: 1, preset: 'Preset 1' });
+  await startRenewal(deps, { count: 1, preset: 'Preset 1', rules: { refreshMonths: 4 } });
   await finished();
   const row = saved.job.results[0];
   assert.equal(row.status, 'failed');
@@ -240,7 +250,7 @@ test('a run of the earlier reposter is not resumed, so nothing is reposted witho
 
 test('sales are checked again just before a listing is changed: one that sold while its mockups were made is left as it is', async () => {
   const { deps, log, saved } = shop({ soldWhileMockups: 1, items: [listing(1, 4, 3)] });
-  await startRenewal(deps, { count: 1, preset: 'Preset 1' });
+  await startRenewal(deps, { count: 1, preset: 'Preset 1', rules: { refreshMonths: 4 } });
   await finished();
   const row = saved.job.results[0];
   assert.equal(row.status, 'failed');
@@ -250,7 +260,7 @@ test('sales are checked again just before a listing is changed: one that sold wh
 
 test('the template is applied on refresh only when chosen; with no reposts allowed, nothing is reposted', async () => {
   const { deps, log, saved } = shop();
-  await startRenewal(deps, { count: 20, preset: 'Preset 1', rules: { refreshTemplate: false, maxReposts: 0 } });
+  await startRenewal(deps, { count: 20, preset: 'Preset 1', rules: { refreshMonths: 4, refreshTemplate: false, maxReposts: 0 } });
   await finished();
   assert.deepEqual(saved.job.results.map(row => [row.listingId, row.action]), [[1, 'refresh'], [3, 'refresh']]);
   assert.equal(saved.job.progress.atLimit, 3);

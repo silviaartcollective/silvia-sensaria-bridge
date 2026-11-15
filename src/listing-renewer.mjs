@@ -1,6 +1,6 @@
 // Listing Reposter: active listings that never sold get a second chance in two
 // steps, each in the days before the listing renews on Etsy:
-//  - refresh (by default at 4 months): the same listing gets new SEO from
+//  - refresh (by default at 8 months): the same listing gets new SEO from
 //    ChatGPT, new mockups from the chosen preset (made on the PC) in the
 //    preset's arranged photo order, and the current template's variants and
 //    profiles. It keeps its favourites, views and link, and costs nothing.
@@ -35,7 +35,7 @@ export const DEFAULT_RENEWALS = 20;
 // maxReposts: how many times one listing (and the listings that replaced it)
 // may be reposted; refreshTemplate: whether a refresh also applies the current
 // template's sizes, prices and profiles.
-export const DEFAULT_RULES = { refreshMonths: 4, repostMonths: 12, windowDays: 7, maxReposts: 1, refreshTemplate: true };
+export const DEFAULT_RULES = { refreshMonths: 8, repostMonths: 12, windowDays: 7, maxReposts: 1, refreshTemplate: true };
 
 export function checkRules(input = {}) {
   const rules = { ...DEFAULT_RULES };

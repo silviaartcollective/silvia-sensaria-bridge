@@ -148,3 +148,21 @@ before) and not checked again until it is quoted again. Each order is sent
 once; an uncertain outcome is never retried. Runs are logged as
 `[artelo auto-submit]` lines in Render.
 
+
+## PrintShrimp submission
+
+An order whose approved recommendation is PrintShrimp (unframed Matte poster)
+can be sent from the same panel: **Preview PrintShrimp order** reads only (it
+asks PrintShrimp's live price for the exact order and blocks it if the price is
+more than max($2, 15%) away from the approved quote), then **Submit** sends
+that one order (`printshrimp-order-submission.mjs`). It needs
+`FULFILLMENT_LIVE_SUBMISSION_ENABLED=true`, `PRINTSHRIMP_FULFILLMENT_ENABLED=true`,
+the receipt in `SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS` (or `all`), the approval
+on Fulfillment Review, the typed confirmation `SUBMIT <receipt> TO PRINTSHRIMP`
+and the statement that the PrintShrimp dashboard has no order for it. The
+submission record is saved as "submitting" before the request; an uncertain
+outcome is "unknown" and never resent. The order carries the Etsy shipping
+address (Etsy shares no buyer email or phone) and the production crop's signed
+link. Once PrintShrimp returns its order ID, the hourly tracking job
+(`ARTELO_AUTO_TRACKING_ENABLED=true`) links it in Order Tracking and sends the
+tracking to Etsy when PrintShrimp ships it, as it does for Artelo.
