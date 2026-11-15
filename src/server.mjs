@@ -1,7 +1,7 @@
 import { supplierArtworkLink, isSupplierArtworkPath, verifySupplierArtworkPath } from './supplier-artwork-link.mjs';
 import { planAddSize, addSizeToInventory } from './listing-add-size.mjs';
 import { SILVIA_SIZE_LABELS as ADD_SIZE_LABELS, silviaVariantSku as addSizeSku, retailPriceForProductKey as addSizePrice, productKeyFromVariationValues as addSizeKey, normalizeSize as addSizeNormalize, SILVIA_RETAIL_PRICE_LADDER_USD as ADD_SIZE_LADDER } from './variants.mjs';
-import { previewPrintShrimpOrder, submitPrintShrimpOrder, verifyPrintShrimpSubmission } from './printshrimp-order-submission.mjs';
+import { previewPrintShrimpOrder, submitPrintShrimpOrder, verifyPrintShrimpSubmission, autoSubmitPrintShrimpOrder, syncPrintShrimpAutoActivation, printShrimpSubmissionSettings } from './printshrimp-order-submission.mjs';
 import { renderPrivacyPage, renderTermsPage } from './legal-pages.mjs';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -7260,24 +7260,36 @@ server.listen(port, '0.0.0.0', () => {
   // before it was switched on are never sent automatically.
   void syncAutoSubmitActivation().then(since=>{if(since)console.log('[artelo auto-submit] on for orders placed since '+since);},
     error=>console.error('[artelo auto-submit] activation: '+String(error.message||error)));
-  if(submissionSettings().autoEnabled){
+  // New PrintShrimp orders too (autoSubmitPrintShrimpOrder), with
+  // PRINTSHRIMP_AUTO_SUBMIT_ENABLED=true; PrintShrimp creates them Pending, so
+  // they print once paid (Auto-pay from wallet in PrintShrimp's settings).
+  void syncPrintShrimpAutoActivation().then(since=>{if(since)console.log('[printshrimp auto-submit] on for orders placed since '+since);},
+    error=>console.error('[printshrimp auto-submit] activation: '+String(error.message||error)));
+  // The artwork link PrintShrimp downloads needs this app's address; Render sets RENDER_EXTERNAL_URL.
+  const autoPrintShrimpDeps=()=>({trackingRecord:readTrackingRecord,smallerArtwork:printShrimpSizeCrop,
+    publicArtworkUrl:key=>supplierArtworkLink({key,base:String(process.env.RENDER_EXTERNAL_URL||process.env.APP_BASE_URL||'')})});
+  const autoSuppliers=[submissionSettings().autoEnabled?'artelo':'',printShrimpSubmissionSettings().autoEnabled?'printshrimp':''].filter(Boolean);
+  if(autoSuppliers.length){
     let sweeping=false;
     const sweep=async()=>{
       if(sweeping)return;sweeping=true;
       try{
         const session=await getEtsySession(),shopId=Number(session.shop.shop_id);
         const {orders}=await listOrders();
-        const candidates=orders.filter(o=>!o.error&&o.supplier==='artelo'&&o.status==='awaiting_supplier_approval'&&o.paid&&!o.shipped).slice(0,10);
+        const candidates=orders.filter(o=>!o.error&&autoSuppliers.includes(o.supplier)&&o.status==='awaiting_supplier_approval'&&o.paid&&!o.shipped).slice(0,10);
         for(const o of candidates){
           try{
             const latest=await getShopReceipt({shopId,receiptId:o.receiptId,keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken});
             if(!Array.isArray(latest.transactions)||!latest.transactions.length)latest.transactions=await receiptTransactions(session,o.receiptId);
-            const result=await autoSubmitArteloOrder(o.receiptId,{shopId,latestReceipt:latest,deps:{trackingRecord:readTrackingRecord}});
-            if(!['before_switch_on','already_held','not_artelo','off'].includes(result.status))
-              console.log('[artelo auto-submit] '+o.receiptId+': '+result.status+(result.record?' · Artelo order '+(result.record.supplierOrderId||'(no ID)'):'')+(result.reasons?' · '+result.reasons.join(' '):''));
-          }catch(error){console.error('[artelo auto-submit] '+o.receiptId+': '+String(error.message||error));}
+            const printShrimp=o.supplier==='printshrimp',label=printShrimp?'printshrimp':'artelo';
+            const result=printShrimp
+              ?await autoSubmitPrintShrimpOrder(o.receiptId,{shopId,latestReceipt:latest,deps:autoPrintShrimpDeps()})
+              :await autoSubmitArteloOrder(o.receiptId,{shopId,latestReceipt:latest,deps:{trackingRecord:readTrackingRecord}});
+            if(!['before_switch_on','already_held','not_artelo','not_printshrimp','off'].includes(result.status))
+              console.log('['+label+' auto-submit] '+o.receiptId+': '+result.status+(result.record?' · '+(printShrimp?'PrintShrimp':'Artelo')+' order '+(result.record.supplierOrderId||'(no ID)'):'')+(result.reasons?' · '+result.reasons.join(' '):''));
+          }catch(error){console.error('[auto-submit] '+o.receiptId+': '+String(error.message||error));}
         }
-      }catch(error){console.error('[artelo auto-submit] sweep failed: '+String(error.message||error));}
+      }catch(error){console.error('[auto-submit] sweep failed: '+String(error.message||error));}
       finally{sweeping=false;}
     };
     setTimeout(()=>{void sweep();},4*60*1000).unref();

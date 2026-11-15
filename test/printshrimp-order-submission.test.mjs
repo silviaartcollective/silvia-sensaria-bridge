@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { buildPrintShrimpPayload, previewPrintShrimpOrder, submitPrintShrimpOrder, printShrimpConfirmation, printShrimpOrderId, verifyPrintShrimpSubmission } from '../src/printshrimp-order-submission.mjs';
+import { buildPrintShrimpPayload, previewPrintShrimpOrder, submitPrintShrimpOrder, printShrimpConfirmation, printShrimpOrderId, verifyPrintShrimpSubmission, autoSubmitPrintShrimpOrder, syncPrintShrimpAutoActivation } from '../src/printshrimp-order-submission.mjs';
 import { supplierShipments } from '../src/order-tracking.mjs';
 
 const ID = '4000000001';
@@ -159,4 +159,71 @@ test('after a rejection the order can be sent again', async () => {
   const w = world({ ledger: { receiptId: ID, provider: 'printshrimp', state: 'rejected', history: [] } });
   const record = await submitPrintShrimpOrder(ID, { confirm: printShrimpConfirmation(ID), dashboardChecked: true }, { shopId: 77, deps: w.deps });
   assert.equal(record.state, 'submitted'); assert.equal(w.calls.create.length, 1);
+});
+
+// ---- Automatic submission ----
+const AUTO = { ...ON, PRINTSHRIMP_AUTO_SUBMIT_ENABLED: 'true', SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS: '' };
+const placedAt = iso => ({ create_timestamp: Date.parse(iso) / 1000 });
+function autoWorld({ env = AUTO, state = { enabledSince: '2026-11-15T08:00:00Z' }, placed = '2026-11-15T09:00:00Z', ...rest } = {}) {
+  const w = world({ env, review: { classification: 'regular', status: 'awaiting_supplier_approval', regularPlan: plan(), approval: null }, ...rest });
+  w.order.staged.receipt = { ...receipt(), ...placedAt(placed) };
+  let current = state;
+  w.deps.autoState = { read: async () => current, write: async value => { current = value; } };
+  w.state = () => current;
+  return w;
+}
+const autoRun = w => autoSubmitPrintShrimpOrder(ID, { shopId: 77, latestReceipt: w.order.staged.receipt, deps: w.deps });
+
+test('automatic: a new passing PrintShrimp order is sent once, approved as automatic, and counted', async () => {
+  const w = autoWorld();
+  const out = await autoRun(w);
+  assert.equal(out.status, 'submitted'); assert.equal(out.record.supplierOrderId, 'PS-901');
+  assert.equal(w.calls.create.length, 1);
+  assert.equal(w.order.review.approval.method, 'automatic'); assert.equal(w.order.review.status, 'supplier_submitted');
+  assert.equal(w.state().days['2026-11-15'], 1);
+  assert.equal((await autoRun(w)).status, 'not_printshrimp', 'never twice');
+  assert.equal(w.calls.create.length, 1);
+});
+
+test('automatic: off without its switch, never for orders placed before switch-on, and within the daily limit', async () => {
+  assert.equal((await autoRun(autoWorld({ env: ON }))).status, 'off');
+  assert.equal((await autoRun(autoWorld({ placed: '2026-11-14T16:45:00Z' }))).status, 'before_switch_on');
+  const full = autoWorld({ env: { ...AUTO, PRINTSHRIMP_AUTO_SUBMIT_DAILY_LIMIT: '2' }, state: { enabledSince: '2026-11-15T08:00:00Z', days: { '2026-11-15': 2 } } });
+  assert.equal((await autoRun(full)).status, 'daily_limit');
+  assert.equal(full.calls.create.length, 0);
+});
+
+test('automatic: an order that fails a check is held for a person once, and any existing record blocks it', async () => {
+  const moved = autoWorld({ price: { livePrice: 15, liveShipping: 5, currency: 'GBP' } });
+  const held = await autoRun(moved);
+  assert.equal(held.status, 'held'); assert.match(held.reasons.join(' '), /now prices this order/);
+  assert.equal(moved.order.review.automaticSubmission.status, 'held');
+  assert.equal((await autoRun(moved)).status, 'already_held', 'not re-checked every sweep');
+  const recorded = autoWorld({ ledger: { receiptId: ID, provider: 'printshrimp', state: 'rejected', history: [] } });
+  assert.match((await autoRun(recorded)).reasons.join(' '), /A submission record exists \(printshrimp · rejected\)/);
+  assert.equal(recorded.calls.create.length + moved.calls.create.length, 0);
+});
+
+test('automatic: a failed request is recorded and reported, never retried on its own', async () => {
+  const w = autoWorld({ create: () => { throw new Error('fetch failed'); } });
+  const out = await autoRun(w);
+  assert.equal(out.status, 'failed'); assert.equal(w.record().state, 'unknown');
+  assert.equal(w.state().days['2026-11-15'], 1, 'counted before the request');
+});
+
+test('automatic: switch-on time is kept across restarts and cleared when switched off', async () => {
+  let saved = {};
+  const state = { read: async () => saved, write: async v => { saved = v; } };
+  const first = await syncPrintShrimpAutoActivation({ env: AUTO, state, now: () => new Date('2026-11-15T08:00:00Z') });
+  assert.equal(first, '2026-11-15T08:00:00.000Z');
+  assert.equal(await syncPrintShrimpAutoActivation({ env: AUTO, state, now: () => new Date('2026-11-16T08:00:00Z') }), first);
+  assert.equal(await syncPrintShrimpAutoActivation({ env: ON, state }), null);
+  assert.equal(saved.enabledSince, null);
+});
+
+test('the server sweeps PrintShrimp orders with the app address Render provides', () => {
+  const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
+  assert.match(server, /autoSuppliers=\[submissionSettings\(\)\.autoEnabled\?'artelo':'',printShrimpSubmissionSettings\(\)\.autoEnabled\?'printshrimp':''\]/);
+  assert.match(server, /base:String\(process\.env\.RENDER_EXTERNAL_URL\|\|process\.env\.APP_BASE_URL\|\|''\)/);
+  assert.match(server, /await autoSubmitPrintShrimpOrder\(o\.receiptId,\{shopId,latestReceipt:latest,deps:autoPrintShrimpDeps\(\)\}\)/);
 });
