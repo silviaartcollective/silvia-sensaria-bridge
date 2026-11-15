@@ -1,9 +1,10 @@
-import { loadArtworkManifest } from './artwork-storage.mjs';
+import { loadArtworkManifest, updateArtworkManifest } from './artwork-storage.mjs';
 import {
   fulfillmentRatioForSize,
-  fulfillmentRatioObjectKey
+  fulfillmentRatioObjectKey,
+  fulfillmentRatiosForOrientation
 } from './artwork-ratios.mjs';
-import { signedArtworkUrl } from './r2.mjs';
+import { signedArtworkUrl, getJsonObject, artworkObjectExists } from './r2.mjs';
 
 function normalizedOrientation(value) {
   const text = String(value || '').trim().toLowerCase();
@@ -27,6 +28,38 @@ function orientationIssue(asset, orientation) {
   return '';
 }
 
+// The crop worker's results are written twice: to the artwork's manifest and to
+// its fulfillment/status.json. When the manifest lost them (two app instances
+// overwrote each other during a deploy) but status.json has them, the crops made
+// from the current master whose files are in R2 are put back in the manifest.
+// Crops from an earlier master are never restored.
+export async function restoreRatiosFromStatus(id, manifest, deps = {}) {
+  const read = deps.getJsonObject || getJsonObject, exists = deps.artworkObjectExists || artworkObjectExists;
+  const update = deps.updateArtworkManifest || updateArtworkManifest;
+  let status = null;
+  try { status = await read('artworks/' + id + '/fulfillment/status.json'); } catch { return null; }
+  if (status?.status !== 'completed' || !status.assets || typeof status.assets !== 'object') return null;
+  const restored = {};
+  for (const [ratio, asset] of Object.entries(status.assets)) {
+    if (!asset?.productionReady || !asset.key || asset.ratio !== ratio) continue;
+    if (String(asset.sourceMasterKey || '') !== String(manifest.master.key)) continue;
+    if (String(asset.key) !== fulfillmentRatioObjectKey(id, ratio)) continue;
+    if (orientationIssue(asset, manifest.orientation)) continue;
+    if (!(await exists(asset.key))) continue;
+    restored[ratio] = { ...asset, restoredFromStatusAt: new Date().toISOString() };
+  }
+  if (!Object.keys(restored).length) return null;
+  return update(id, latest => {
+    if (String(latest.master?.key || '') !== String(manifest.master.key))
+      throw new Error('Artwork ' + id + ' master changed while its crops were being restored.');
+    const current = latest.fulfillmentRatios || {};
+    latest.fulfillmentRatios = { ...restored, ...Object.fromEntries(Object.entries(current).filter(([, a]) => a?.productionReady)) };
+    latest.fulfillmentRatiosReady = fulfillmentRatiosForOrientation(latest.orientation, latest.master)
+      .every(r => Boolean(latest.fulfillmentRatios[r]?.productionReady));
+    latest.fulfillmentRatiosUpdatedAt = new Date().toISOString();
+  });
+}
+
 export async function resolveProviderArtworkAsset({
   artworkId,
   size,
@@ -34,12 +67,15 @@ export async function resolveProviderArtworkAsset({
 }) {
   const id = String(artworkId || '').trim().toUpperCase();
   const ratio = fulfillmentRatioForSize(size);
-  const manifest = await loadArtworkManifest(id);
+  let manifest = await loadArtworkManifest(id);
   if (!manifest?.master?.key) throw new Error(`Artwork ${id} is not stored in R2`);
 
-  const asset = manifest.fulfillmentRatios?.[ratio];
+  let asset = manifest.fulfillmentRatios?.[ratio];
   if (!asset?.productionReady || !asset?.key) {
-    throw new Error(`Artwork ${id} does not have a production-ready ${ratio} crop for size ${size}`);
+    const repaired = await restoreRatiosFromStatus(id, manifest).catch(() => null);
+    if (repaired?.fulfillmentRatios?.[ratio]?.productionReady) { manifest = repaired; asset = repaired.fulfillmentRatios[ratio]; }
+    else throw new Error(`Artwork ${id} does not have a production-ready ${ratio} crop for size ${size}. ` +
+      `In Listings, open ${id} and click Regenerate crops from stored master (with the PC crop worker running), then refresh this order.`);
   }
 
   const issue = orientationIssue(asset, manifest.orientation);
