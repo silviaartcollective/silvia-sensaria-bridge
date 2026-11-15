@@ -27,7 +27,7 @@ test('the Listing Reposter is laid out like Daily Listings: how many, its mockup
 
 test('refresh first, repost later: the two ages and the renewal window are settings, sent with Start and remembered',()=>{
  const html=renderRepostListingsPage();
- assert.match(html,/Refresh after <input type="number" id="rp-refresh" class="count" min="1" max="36" value="4"> months/);
+ assert.match(html,/Refresh after <input type="number" id="rp-refresh" class="count" min="1" max="36" value="8"> months/);
  assert.match(html,/Repost after <input type="number" id="rp-repost" class="count" min="2" max="48" value="12"> months/);
  assert.match(html,/Renewing within <input type="number" id="rp-window" class="count" min="1" max="120" value="7"> days/);
  const client=read('src/repost-listings-client.js');
