@@ -49,6 +49,22 @@ function previewText(p){
   ...((p.switches||[]).length?['Not authorized yet:',...p.switches.map(b=>' • '+b)]:['Authorized for this one order.'])
  ].join('\n');
 }
+// PrintShrimp's preview: its order format (customerInfo, products) and price check.
+function printShrimpPreviewText(p){
+ const a=p.payload?.customerInfo||{},item=p.payload?.products?.[0]||{},c=p.expectedCost||{},pc=c.printShrimpPriceCheck;
+ return [
+  line('Product',[item.type,item.paper_type,item.size].filter(Boolean).join(' · ')),
+  line('Artwork',p.artwork?p.artwork.key+' ('+p.artwork.width+'×'+p.artwork.height+', '+p.artwork.orientation+')':''),
+  line('Ship to',[a.name,a.address1,a.address2,a.city,a.state,a.zip,a.country].filter(Boolean).join(', ')),
+  line('Approved quote',money(c.approvedQuoteUsd)+' (with reserve '+money(c.approvedModeledUsd)+')'),
+  line('PrintShrimp price now',pc?(pc.total!=null&&Number.isFinite(pc.total)?pc.total.toFixed(2)+' '+(pc.currency||'')+' (product '+pc.product+' + shipping '+pc.shipping+')':'—')+(pc.totalUsd!=null?' ≈ '+money(pc.totalUsd):''):'not run'),
+  line('Submission record',p.submission?p.submission.provider+' · '+p.submission.state:'none'),
+  ...((p.blockers||[]).length?['Blocked:',...p.blockers.map(b=>' • '+b)]:['No blockers.']),
+  ...((p.switches||[]).length?['Not authorized yet:',...p.switches.map(b=>' • '+b)]:['Authorized for this one order.'])
+ ].join('\n');
+}
+const SUPPLIER_LABELS={artelo:'Artelo',printshrimp:'PrintShrimp'};
+const SUPPLIER_SWITCHES={artelo:'ARTELO_FULFILLMENT_ENABLED',printshrimp:'PRINTSHRIMP_FULFILLMENT_ENABLED'};
 // mount(root, { receipt: () => '<receipt id>', report: (message, isError) => {} });
 // the handle's showArtelo(false) leaves only Diagnose, for orders another
 // supplier fulfills.
@@ -57,16 +73,25 @@ function mount(root,{receipt,report:pageReport}){
  root.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0">'+
   '<button type="button" data-so="diagnose">Diagnose this order</button>'+
   '<button type="button" data-so="preview" data-artelo>Preview Artelo order</button>'+
-  '<button type="button" data-so="verify" data-artelo>Check Artelo status</button></div>'+
+  '<button type="button" data-so="verify" data-artelo>Check Artelo status</button>'+
+  '<button type="button" data-so="ps-preview">Preview PrintShrimp order</button></div>'+
   '<div data-so="status" role="status" aria-live="polite" style="font-size:13px;margin:4px 0"></div>'+
   '<pre data-so="out" hidden style="white-space:pre-wrap;background:#f6f5f0;padding:12px;border-radius:8px;font-size:13px;margin:8px 0"></pre>'+
-  '<div data-so="submit-box" hidden><p style="color:#835d2c;background:#f6edda;padding:10px 12px;border-radius:8px;font-size:13px">'+
-  'Sends this ONE order to Artelo for production and payment. It needs FULFILLMENT_LIVE_SUBMISSION_ENABLED and ARTELO_FULFILLMENT_ENABLED set to true '+
-  'and this receipt listed in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS in Render. No other order is sent, and a failed or uncertain submission is never repeated on its own.</p>'+
-  '<label style="display:block;padding:6px 0;font-size:13px"><input type="checkbox" data-so="dashboard"> I checked the Artelo dashboard and it has no order for this receipt.</label>'+
+  '<div data-so="submit-box" hidden><p data-so="submit-note" style="color:#835d2c;background:#f6edda;padding:10px 12px;border-radius:8px;font-size:13px"></p>'+
+  '<label style="display:block;padding:6px 0;font-size:13px"><input type="checkbox" data-so="dashboard"> <span data-so="dashboard-label"></span></label>'+
   '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-so="confirm" type="text" autocomplete="off" aria-label="Confirmation" style="padding:9px;border:1px solid #ccc;border-radius:8px;min-width:280px">'+
   '<button type="button" data-so="submit" style="background:#303a30;color:#fff;border-color:#303a30">Submit this order to Artelo</button></div></div>';
  const el=name=>root.querySelector('[data-so="'+name+'"]');
+ // The supplier the submit step sends to: the last one previewed.
+ let supplier='artelo';
+ const useSupplier=name=>{
+  supplier=name;const label=SUPPLIER_LABELS[name];
+  el('submit-note').textContent='Sends this ONE order to '+label+' for production and payment. It needs FULFILLMENT_LIVE_SUBMISSION_ENABLED and '+
+   SUPPLIER_SWITCHES[name]+' set to true and this receipt listed in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS (or all) in Render. No other order is sent, and a failed or uncertain submission is never repeated on its own.';
+  el('dashboard-label').textContent='I checked the '+label+' dashboard and it has no order for this receipt.';
+  el('submit').textContent='Submit this order to '+label;
+ };
+ useSupplier('artelo');
  const out=text=>{el('out').hidden=false;el('out').textContent=text;};
  // Each message shows beside the panel and in the page's own status line.
  const report=(message,failed)=>{el('status').textContent=message;el('status').style.color=failed?'#a33':'';pageReport?.(message,failed);};
@@ -82,6 +107,7 @@ function mount(root,{receipt,report:pageReport}){
   const d=await api(path(id,'diagnose'));out(diagnosisText(d.diagnosis));report('Diagnosis loaded. Nothing was changed.');
  }));
  el('preview').addEventListener('click',run(async id=>{
+  useSupplier('artelo');
   report('Checking the order and asking Artelo for its price (no order is created)…');
   const d=await api(path(id,'artelo-preview')),p=d.preview;
   out(previewText(p));
@@ -89,19 +115,33 @@ function mount(root,{receipt,report:pageReport}){
   el('confirm').placeholder='Type '+p.confirmation;
   report(p.ready?'Ready to submit this one order.':'Not ready to submit; see the list. Nothing was sent.',!p.ready&&p.blockers.length>0);
  }));
+ el('ps-preview').addEventListener('click',run(async id=>{
+  useSupplier('printshrimp');
+  report('Checking the order and asking PrintShrimp for its price (no order is created)…');
+  const d=await api(path(id,'printshrimp-preview')),p=d.preview;
+  out(printShrimpPreviewText(p));
+  el('submit-box').hidden=Boolean(p.blockers.length);
+  el('confirm').placeholder='Type '+p.confirmation;
+  report(p.ready?'Ready to submit this one order to PrintShrimp.':'Not ready to submit; see the list. Nothing was sent.',!p.ready&&p.blockers.length>0);
+ }));
  el('verify').addEventListener('click',run(async id=>{
   const d=await api(path(id,'artelo-verify'),{});
   report(d.found?'Artelo has this order ('+d.record.supplierOrderId+'): '+d.record.state+'.':(d.note||'Artelo has no order with the recorded ID.'));
  }));
  el('submit').addEventListener('click',run(async id=>{
-  if(!el('dashboard').checked)throw Error('Check the Artelo dashboard first and tick the box.');
-  if(!window.confirm('Send receipt '+id+' to Artelo for production now? This places a real, paid order.'))return;
-  const d=await api(path(id,'artelo-submit'),{confirm:el('confirm').value.trim(),arteloDashboardChecked:true});
-  report('Submitted to Artelo: order '+(d.submission.supplierOrderId||'(no ID returned: check the dashboard)')+' · '+d.submission.state+'.');
+  const label=SUPPLIER_LABELS[supplier];
+  if(!el('dashboard').checked)throw Error('Check the '+label+' dashboard first and tick the box.');
+  if(!window.confirm('Send receipt '+id+' to '+label+' for production now? This places a real, paid order.'))return;
+  const body=supplier==='artelo'?{confirm:el('confirm').value.trim(),arteloDashboardChecked:true}:{confirm:el('confirm').value.trim(),dashboardChecked:true};
+  const d=await api(path(id,supplier+'-submit'),body);
+  report('Submitted to '+label+': order '+(d.submission.supplierOrderId||'(no ID returned: check the dashboard)')+' · '+d.submission.state+'.');
   el('submit-box').hidden=true;
  }));
  const reset=()=>{el('status').textContent='';el('out').hidden=true;el('out').textContent='';el('submit-box').hidden=true;el('dashboard').checked=false;el('confirm').value='';};
- return {reset,showArtelo(on){for(const b of root.querySelectorAll('[data-artelo]'))b.hidden=!on;if(!on)el('submit-box').hidden=true;}};
+ const showArtelo=on=>{for(const b of root.querySelectorAll('[data-artelo]'))b.hidden=!on;if(!on)el('submit-box').hidden=true;};
+ // Only the approved supplier's buttons (Diagnose always).
+ const showSupplier=name=>{showArtelo(name==='artelo');el('ps-preview').hidden=name!=='printshrimp';};
+ return {reset,showArtelo,showSupplier};
 }
-window.SupplierOrderPanel={mount,diagnosisText,previewText};
+window.SupplierOrderPanel={mount,diagnosisText,previewText,printShrimpPreviewText};
 })();

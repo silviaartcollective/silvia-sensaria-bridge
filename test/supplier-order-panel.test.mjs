@@ -83,7 +83,8 @@ test('Fulfillment Review and Orders both load the one shared supplier-order pane
   const orders = renderOrdersPage();
   assert.ok(orders.includes('<div id="supplier-order-panel"></div>'));
   assert.ok(orders.indexOf('/supplier-order-client.js') < orders.indexOf('/orders-client.js'));
-  assert.equal((clientSource.match(/'artelo-submit'/g) || []).length, 1);
+  // One submit call, to the previewed supplier's route (artelo-submit or printshrimp-submit).
+  assert.equal((clientSource.match(/path\(id,supplier\+'-submit'\)/g) || []).length, 1);
   assert.doesNotThrow(() => new vm.Script(clientSource));
   assert.doesNotThrow(() => new vm.Script(ordersSource));
 });

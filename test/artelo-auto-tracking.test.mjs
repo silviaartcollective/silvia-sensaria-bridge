@@ -127,3 +127,13 @@ test('the server runs it only when switched on', () => {
   assert.match(server, /if\(autoTrackingSettings\(\)\.enabled\)\{/);
   assert.equal((server.match(/syncArteloTracking\(/g) || []).length, 1);
 });
+
+test('PrintShrimp orders sent by the app get their tracking the same way', async () => {
+  const ledger = { '4000000002': submitted({ receiptId: '4000000002', provider: 'printshrimp', supplierOrderId: 'PS-901' }) };
+  const w = world({ ledger, artelo: { status: 'shipped', shipments: [{ trackingNumber: 'RB000000005GB', carrier: 'Royal Mail', status: 'shipped' }] } });
+  const { results } = await run(w);
+  assert.deepEqual(w.calls.link, [{ receiptId: '4000000002', supplier: 'printshrimp', supplierOrderId: 'PS-901' }]);
+  assert.deepEqual(results, [{ receiptId: '4000000002', outcome: 'marked_shipped', trackingNumber: 'RB000000005GB', carrier: 'Royal Mail' }]);
+  const waiting = world({ ledger: { '4000000002': submitted({ receiptId: '4000000002', provider: 'printshrimp', supplierOrderId: 'PS-902' }) } });
+  assert.deepEqual((await run(waiting)).results, [{ receiptId: '4000000002', outcome: 'waiting', printshrimp: 'processing' }]);
+});

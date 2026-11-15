@@ -1,3 +1,4 @@
+import { previewPrintShrimpOrder, submitPrintShrimpOrder } from './printshrimp-order-submission.mjs';
 import { renderPrivacyPage, renderTermsPage } from './legal-pages.mjs';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -4471,11 +4472,11 @@ const server = http.createServer(async (req, res) => {
   // diagnose and artelo-preview only read; artelo-submit sends ONE order and
   // needs the live switches, the receipt in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS
   // and a typed confirmation. Nothing here runs on its own.
-  const submissionRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})\/(diagnose|artelo-preview|artelo-submit|artelo-verify|submission-resolve)$/);
+  const submissionRoute=url.pathname.match(/^\/api\/fulfillment-review\/([1-9]\d{0,19})\/(diagnose|artelo-preview|artelo-submit|artelo-verify|submission-resolve|printshrimp-preview|printshrimp-submit)$/);
   if(submissionRoute){
     if(!requireAdminApi(req,res))return;
     const [,id,action]=submissionRoute;
-    const post=['artelo-submit','artelo-verify','submission-resolve'].includes(action);
+    const post=['artelo-submit','artelo-verify','submission-resolve','printshrimp-submit'].includes(action);
     if(post!==(req.method==='POST'))return sendJson(res,405,{ok:false,error:'Method not allowed.'});
     if(post){
       const origin=String(req.headers.origin||'');
@@ -4497,6 +4498,14 @@ const server = http.createServer(async (req, res) => {
         sharedSecret:session.sharedSecret,accessToken:session.accessToken});
       if(!Array.isArray(latest.transactions)||!latest.transactions.length)
         latest.transactions=await receiptTransactions(session,id);
+      // PrintShrimp (printshrimp-order-submission.mjs): the same checks and one-time send.
+      if(action==='printshrimp-preview'){
+        const preview=await previewPrintShrimpOrder(id,{shopId,latestReceipt:latest,deps});
+        delete preview._payload;delete preview._planSignature;
+        return sendJson(res,200,{ok:true,preview});
+      }
+      if(action==='printshrimp-submit')
+        return sendJson(res,200,{ok:true,submission:await submitPrintShrimpOrder(id,await readJsonBody(req),{shopId,latestReceipt:latest,deps})});
       if(action==='artelo-preview'){
         const preview=await previewArteloOrder(id,{shopId,latestReceipt:latest,deps});
         delete preview._payload;delete preview._planSignature;
@@ -7188,7 +7197,7 @@ server.listen(port, '0.0.0.0', () => {
     const track=async()=>{
       try{
         const {results}=await syncArteloTracking(await getEtsySession());
-        for(const r of results)console.log('[artelo tracking] '+r.receiptId+': '+r.outcome+(r.trackingNumber?' '+r.carrier+' '+r.trackingNumber:'')+(r.reason?' · '+r.reason:'')+(r.artelo?' · Artelo '+r.artelo:''));
+        for(const r of results)console.log('[artelo tracking] '+r.receiptId+': '+r.outcome+(r.trackingNumber?' '+r.carrier+' '+r.trackingNumber:'')+(r.reason?' · '+r.reason:'')+(r.artelo?' · Artelo '+r.artelo:'')+(r.printshrimp?' · PrintShrimp '+r.printshrimp:''));
       }catch(error){console.error('[artelo tracking] run failed: '+String(error.message||error));}
     };
     setTimeout(()=>{void track();},3*60*1000).unref();

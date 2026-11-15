@@ -111,10 +111,14 @@ async function openOrder(id){
       ? (review.status==='approved_for_manual_order'
         ? 'Approved · Preview the Artelo order below, then submit this one order once it is authorized in Render'
         : 'Approve this supplier on Fulfillment Review first, then preview and submit the Artelo order below')
-      : 'Manual supplier order · Place this order in the '+(plan.provider||supplier)+' dashboard; the app cannot submit it there yet';
+      : supplier==='printshrimp'
+        ? (review.status==='approved_for_manual_order'
+          ? 'Approved · Preview the PrintShrimp order below, then submit this one order once it is authorized in Render'
+          : 'Approve this supplier on Fulfillment Review first, then preview and submit the PrintShrimp order below')
+        : 'Manual supplier order · Place this order in the '+(plan.provider||supplier)+' dashboard; the app cannot submit it there yet';
   $('supplier-order-row').classList.remove('hidden');
   supplierPanel?.reset();
-  supplierPanel?.showArtelo(artelo);
+  if(supplierPanel?.showSupplier)supplierPanel.showSupplier(open?supplier:'');else supplierPanel?.showArtelo(artelo);
   const quoteExpired=Number.isFinite(Date.parse(plan.expiresAt)) &&
     Date.now()>Date.parse(plan.expiresAt);
   $('sensaria-csv-status').className= sensaria && quoteExpired ? '' : 'hidden';
