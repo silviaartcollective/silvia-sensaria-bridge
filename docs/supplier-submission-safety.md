@@ -181,3 +181,19 @@ From PrintShrimp's API documentation (supplied 2026-11):
   state required for US, CA and AU.
 - Get Order reports `status` (Pending, Processing, Shipped, Completed) with the
   order's `tracking` and `tracking_courier`; Order Tracking reads those.
+
+## Automatic PrintShrimp submission
+
+With `PRINTSHRIMP_AUTO_SUBMIT_ENABLED=true` (and both live switches, plus
+`PRINTSHRIMP_FULFILLMENT_ENABLED=true`), the 15-minute sweep that sends new
+Artelo orders also sends new PrintShrimp orders, under the same rules
+(`autoSubmitPrintShrimpOrder`): placed after the switch was turned on, a new
+recommendation with no submission record of any kind, every Preview check
+passing (address, artwork, PrintShrimp's live price within max($2, 15%) of the
+quote), and fewer than `PRINTSHRIMP_AUTO_SUBMIT_DAILY_LIMIT` (default 5) sent
+today, counted before the request. An order that fails a check is held for a
+person once per recommendation; a failed request is recorded and never resent.
+The artwork link uses the app address Render sets in `RENDER_EXTERNAL_URL`.
+PrintShrimp creates each order Pending: with *Auto-pay from wallet* on, it is
+paid after PrintShrimp's auto-pay delay, so it can still be deleted before then.
+Runs are logged as `[printshrimp auto-submit]` lines.

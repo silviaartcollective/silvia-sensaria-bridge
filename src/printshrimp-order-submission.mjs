@@ -21,7 +21,7 @@ import { eligibleRegularReceipt } from './regular-order-routing.mjs';
 import { resolveProviderArtworkAsset } from './fulfillment-assets.mjs';
 import { artworkObjectExists } from './r2.mjs';
 import { createPrintShrimpOrder, validatePrintShrimpOrderPreview, getPrintShrimpOrder, PRINTSHRIMP_PRINT_SIZES, PRINTSHRIMP_PRINT_PAPER_TYPE } from './printshrimp.mjs';
-import { artworkObjectInfo } from './r2.mjs';
+import { artworkObjectInfo, getJsonObject, putJsonObject, isMissingR2Object } from './r2.mjs';
 import { ledgerStore, transition, blockedBy } from './supplier-order-ledger.mjs';
 
 const flag = (env, name) => String(env[name] || '').trim().toLowerCase() === 'true';
@@ -34,7 +34,10 @@ export function printShrimpSubmissionSettings(env = process.env) {
     masterEnabled: flag(env, 'FULFILLMENT_LIVE_SUBMISSION_ENABLED'),
     printShrimpEnabled: flag(env, 'PRINTSHRIMP_FULFILLMENT_ENABLED'),
     allReceipts: list.toLowerCase() === 'all',
-    allowedReceipts: new Set(list.split(/[\s,]+/).filter(Boolean))
+    allowedReceipts: new Set(list.split(/[\s,]+/).filter(Boolean)),
+    // Automatic submission of new PrintShrimp orders (autoSubmitPrintShrimpOrder).
+    autoEnabled: flag(env, 'PRINTSHRIMP_AUTO_SUBMIT_ENABLED'),
+    dailyLimit: Math.min(50, Math.max(1, Math.floor(Number(env.PRINTSHRIMP_AUTO_SUBMIT_DAILY_LIMIT) || 5)))
   };
 }
 export const printShrimpConfirmation = receiptId => `SUBMIT ${receiptId} TO PRINTSHRIMP`;
@@ -93,7 +96,10 @@ function defaultDeps() {
 
 // The checks for one PrintShrimp submission, with PrintShrimp's live price for
 // the exact order. Never creates an order.
-export async function previewPrintShrimpOrder(receiptId, { shopId, latestReceipt = null, deps = {} } = {}) {
+// automatic: the checks for autoSubmitPrintShrimpOrder, which replace the
+// operator's approval: a new recommendation with no submission record at all,
+// and PRINTSHRIMP_AUTO_SUBMIT_ENABLED instead of the receipt list.
+export async function previewPrintShrimpOrder(receiptId, { shopId, latestReceipt = null, automatic = false, deps = {} } = {}) {
   const d = { ...defaultDeps(), ...deps };
   const id = validReceiptId(receiptId);
   const settings = printShrimpSubmissionSettings(d.env);
@@ -105,9 +111,13 @@ export async function previewPrintShrimpOrder(receiptId, { shopId, latestReceipt
   catch (error) { blockers.push(error.message); }
   if (!plan) blockers.push('No supplier recommendation has been prepared.');
   else if (plan.supplier !== 'printshrimp') blockers.push(`The recommended supplier is ${plan.provider || plan.supplier}, not PrintShrimp.`);
-  if (review.status !== 'approved_for_manual_order' || !review.approval?.planSignature || review.approval.planSignature !== plan?.signature)
+  if (automatic) {
+    if (review.status !== 'awaiting_supplier_approval') blockers.push(`The order is ${review.status || 'not reviewed'}, not a new recommendation.`);
+  } else if (review.status !== 'approved_for_manual_order' || !review.approval?.planSignature || review.approval.planSignature !== plan?.signature)
     blockers.push('Approve the PrintShrimp recommendation on Fulfillment Review first (address, artwork, variant and price checked).');
   const ledger = await d.ledger.read(id);
+  // Automatic submission never touches an order with any record: only a person does.
+  if (automatic && ledger) blockers.push(`A submission record exists (${ledger.provider} · ${ledger.state}).`);
   const blocked = blockedBy(ledger, 'printshrimp');
   if (blocked) blockers.push(blocked);
   const tracking = await d.trackingRecord(id).catch(() => null);
@@ -161,7 +171,8 @@ export async function previewPrintShrimpOrder(receiptId, { shopId, latestReceipt
   const switches = [];
   if (!settings.masterEnabled) switches.push('FULFILLMENT_LIVE_SUBMISSION_ENABLED is not true');
   if (!settings.printShrimpEnabled) switches.push('PRINTSHRIMP_FULFILLMENT_ENABLED is not true');
-  if (!settings.allReceipts && !settings.allowedReceipts.has(id)) switches.push(`receipt ${id} is not in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS (or set it to all)`);
+  if (automatic) { if (!settings.autoEnabled) switches.push('PRINTSHRIMP_AUTO_SUBMIT_ENABLED is not true'); }
+  else if (!settings.allReceipts && !settings.allowedReceipts.has(id)) switches.push(`receipt ${id} is not in SUPPLIER_SUBMISSION_ALLOWED_RECEIPTS (or set it to all)`);
   const visible = payload ? { ...payload, products: payload.products.map(p => ({ ...p, image: { artwork_url: '(private link to ' + (asset?.key || '') + ')' } })) } : null;
   return { receiptId: id, supplier: 'printshrimp', ready: !blockers.length && !switches.length, blockers, switches, payload: visible,
     artwork: asset ? { key: asset.key, width: asset.width, height: asset.height, orientation: asset.orientation, ratio: asset.ratio,
@@ -188,34 +199,7 @@ export async function submitPrintShrimpOrder(receiptId, input = {}, { shopId, la
     const preview = await previewPrintShrimpOrder(id, { shopId, latestReceipt, deps: d });
     if (preview.switches.length) throw new Error('PrintShrimp submission is not authorized: ' + preview.switches.join('; ') + '.');
     if (preview.blockers.length) throw new Error('Not submitted: ' + preview.blockers.join(' '));
-    const at = () => d.now().toISOString();
-    let record = await d.ledger.read(id);
-    record = transition(record, 'prepared', { provider: 'printshrimp', at: at(), fields: { receiptId: id, planSignature: preview._planSignature } });
-    record = transition(record, 'queued', { provider: 'printshrimp', at: at(), note: 'Explicitly authorized: ' + printShrimpConfirmation(id) });
-    // Saved before the request: if the app stops now, the order shows as
-    // "submitting" and is treated as unknown, never sent again on its own.
-    record = transition(record, 'submitting', { provider: 'printshrimp', at: at() });
-    await d.ledger.write(id, record);
-    let raw;
-    try { raw = await d.createOrder(preview._payload); }
-    catch (error) {
-      const rejected = definiteRejection(error);
-      record = transition(record, rejected ? 'rejected' : 'unknown', { provider: 'printshrimp', at: at(),
-        note: String(error?.message || error).slice(0, 400), fields: { lastError: String(error?.message || error).slice(0, 400) } });
-      await d.ledger.write(id, record);
-      throw Object.assign(new Error(rejected
-        ? 'PrintShrimp rejected the order: ' + (error?.message || error)
-        : 'PrintShrimp did not confirm the order (' + (error?.message || error) + '). It may or may not have been created: check the PrintShrimp dashboard. It will not be sent again automatically.'), { record });
-    }
-    const supplierOrderId = printShrimpOrderId(raw);
-    record = transition(record, supplierOrderId ? 'submitted' : 'unknown', { provider: 'printshrimp', at: at(),
-      fields: { supplierOrderId, supplierStatus: words(raw?.status || raw?.order?.status) },
-      note: supplierOrderId ? '' : 'PrintShrimp answered without an order ID; verify in the dashboard.' });
-    await d.ledger.write(id, record);
-    const order = await d.readOrder(id);
-    await d.saveReview(id, { ...order.review, status: 'supplier_submitted', supplierOrderId, updatedAt: at(),
-      approval: { ...(order.review?.approval || {}), supplierOrderSubmitted: true, supplier: 'printshrimp', submittedAt: at() } });
-    return record;
+    return await sendOnce(id, preview, d, { note: 'Explicitly authorized: ' + printShrimpConfirmation(id) });
   } finally { locks.delete(id); }
 }
 
@@ -239,4 +223,107 @@ export async function verifyPrintShrimpSubmission(receiptId, { deps = {} } = {})
   }
   return { found: true, reference, record, orderId, status: words(found.status), paid: found.paid === true,
     orderNumber: found.order_num ?? null, tracking: found.tracking || null };
+}
+
+// The one order request, recorded at every step. Callers hold the lock.
+async function sendOnce(id, preview, d, { note, approval = {} }) {
+  const at = () => d.now().toISOString();
+  let record = await d.ledger.read(id);
+  record = transition(record, 'prepared', { provider: 'printshrimp', at: at(), fields: { receiptId: id, planSignature: preview._planSignature } });
+  record = transition(record, 'queued', { provider: 'printshrimp', at: at(), note });
+  // Saved before the request: if the app stops now, the order shows as
+  // "submitting" and is treated as unknown, never sent again on its own.
+  record = transition(record, 'submitting', { provider: 'printshrimp', at: at() });
+  await d.ledger.write(id, record);
+  let raw;
+  try { raw = await d.createOrder(preview._payload); }
+  catch (error) {
+    const rejected = definiteRejection(error);
+    record = transition(record, rejected ? 'rejected' : 'unknown', { provider: 'printshrimp', at: at(),
+      note: String(error?.message || error).slice(0, 400), fields: { lastError: String(error?.message || error).slice(0, 400) } });
+    await d.ledger.write(id, record);
+    throw Object.assign(new Error(rejected
+      ? 'PrintShrimp rejected the order: ' + (error?.message || error)
+      : 'PrintShrimp did not confirm the order (' + (error?.message || error) + '). It may or may not have been created: check the PrintShrimp dashboard. It will not be sent again automatically.'), { record });
+  }
+  const supplierOrderId = printShrimpOrderId(raw);
+  record = transition(record, supplierOrderId ? 'submitted' : 'unknown', { provider: 'printshrimp', at: at(),
+    fields: { supplierOrderId, supplierStatus: words(raw?.status || raw?.order?.status) },
+    note: supplierOrderId ? '' : 'PrintShrimp answered without an order ID; verify in the dashboard.' });
+  await d.ledger.write(id, record);
+  const order = await d.readOrder(id);
+  await d.saveReview(id, { ...order.review, status: 'supplier_submitted', supplierOrderId, updatedAt: at(),
+    approval: { ...(order.review?.approval || {}), ...approval, supplierOrderSubmitted: true, supplier: 'printshrimp', submittedAt: at() } });
+  return record;
+}
+
+// Automatic submission: since when it is on, and how many orders it sent each
+// day (fulfillment/auto-submit/printshrimp-state.json in R2).
+const AUTO_STATE_KEY = 'fulfillment/auto-submit/printshrimp-state.json';
+export function printShrimpAutoState({ get = getJsonObject, put = putJsonObject } = {}) {
+  return {
+    async read() {
+      try { return await get(AUTO_STATE_KEY); }
+      catch (error) { if (isMissingR2Object(error) || error?.code === 'missing') return {}; throw error; }
+    },
+    write: value => put(AUTO_STATE_KEY, value)
+  };
+}
+// At startup: switched on, it counts from now (orders placed before are never
+// sent automatically); switched off, the next switch-on starts afresh.
+export async function syncPrintShrimpAutoActivation({ env = process.env, state = printShrimpAutoState(), now = () => new Date() } = {}) {
+  const current = await state.read();
+  if (!printShrimpSubmissionSettings(env).autoEnabled) {
+    if (current.enabledSince) await state.write({ ...current, enabledSince: null });
+    return null;
+  }
+  if (current.enabledSince) return current.enabledSince;
+  await state.write({ ...current, enabledSince: now().toISOString() });
+  return now().toISOString();
+}
+
+// Sends a NEW paid order whose recommended supplier is PrintShrimp, with no
+// person approving it, when every check passes: the switches
+// (FULFILLMENT_LIVE_SUBMISSION_ENABLED, PRINTSHRIMP_FULFILLMENT_ENABLED,
+// PRINTSHRIMP_AUTO_SUBMIT_ENABLED), placed after automatic submission was
+// switched on, under the daily limit, no submission record, and Preview's
+// checks (address, artwork, PrintShrimp's live price within the quote). An
+// order that fails a check is held for a person, once per recommendation.
+// PrintShrimp creates it Pending: it is printed once paid (Auto-pay from wallet).
+export async function autoSubmitPrintShrimpOrder(receiptId, { shopId, latestReceipt, deps = {} } = {}) {
+  const d = { ...defaultDeps(), autoState: printShrimpAutoState(), ...deps };
+  const id = validReceiptId(receiptId);
+  const settings = printShrimpSubmissionSettings(d.env);
+  if (!settings.autoEnabled || !settings.masterEnabled || !settings.printShrimpEnabled) return { receiptId: id, status: 'off' };
+  const order = await d.readOrder(id);
+  const review = order?.review || {}, plan = review.regularPlan || null;
+  if (plan?.supplier !== 'printshrimp' || review.status !== 'awaiting_supplier_approval') return { receiptId: id, status: 'not_printshrimp' };
+  if (review.automaticSubmission?.planSignature && review.automaticSubmission.planSignature === plan.signature)
+    return { receiptId: id, status: 'already_held' };
+  const state = await d.autoState.read();
+  const receipt = latestReceipt || order?.staged?.receipt || {};
+  const placed = Number(receipt.create_timestamp || receipt.created_timestamp) * 1000;
+  if (!state.enabledSince || !(placed >= Date.parse(state.enabledSince))) return { receiptId: id, status: 'before_switch_on' };
+  const day = d.now().toISOString().slice(0, 10);
+  const hold = async reasons => {
+    await d.saveReview(id, { ...review, automaticSubmission: { status: 'held', supplier: 'printshrimp', planSignature: plan.signature, reasons, at: d.now().toISOString() } });
+    return { receiptId: id, status: 'held', reasons };
+  };
+  if ((state.days?.[day] || 0) >= settings.dailyLimit)
+    return { receiptId: id, status: 'daily_limit', reasons: [`${settings.dailyLimit} PrintShrimp orders were already sent automatically today.`] };
+  if (locks.has(id)) return { receiptId: id, status: 'already_processing' };
+  locks.add(id);
+  try {
+    const preview = await previewPrintShrimpOrder(id, { shopId, latestReceipt, automatic: true, deps: d });
+    if (preview.switches.length || preview.blockers.length) return await hold([...preview.switches, ...preview.blockers]);
+    // Counted before the request, so a crash cannot exceed the limit.
+    await d.autoState.write({ ...state, days: { ...Object.fromEntries(Object.entries(state.days || {}).slice(-30)), [day]: (state.days?.[day] || 0) + 1 } });
+    const price = preview.expectedCost.printShrimpPriceCheck;
+    const record = await sendOnce(id, preview, d, { note: 'Sent automatically: every check passed (price ' + (price?.total ?? '?') + ' ' + (price?.currency || '') + ').',
+      approval: { method: 'automatic', approvedAt: d.now().toISOString(), planSignature: plan.signature } });
+    return { receiptId: id, status: 'submitted', record };
+  } catch (error) {
+    // A failed request is recorded (rejected or unknown) and never sent again on its own.
+    return { receiptId: id, status: 'failed', reasons: [String(error?.message || error)] };
+  } finally { locks.delete(id); }
 }

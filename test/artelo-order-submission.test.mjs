@@ -393,7 +393,9 @@ test('automatic stops at the daily limit; the switch-on time is set once and cle
 test('the server sends automatically only inside the ARTELO_AUTO_SUBMIT_ENABLED sweep', () => {
   const server = read('src/server.mjs');
   assert.equal((server.match(/autoSubmitArteloOrder\(/g) || []).length, 1);
-  const sweep = server.indexOf('if(submissionSettings().autoEnabled){');
+  // One sweep for Artelo and PrintShrimp: Artelo orders only when ARTELO_AUTO_SUBMIT_ENABLED is on.
+  assert.match(server, /const autoSuppliers=\[submissionSettings\(\)\.autoEnabled\?'artelo':''/);
+  const sweep = server.indexOf('if(autoSuppliers.length){');
   assert.ok(sweep > 0 && server.indexOf('autoSubmitArteloOrder(') > sweep);
   for (const file of ['src/auto-fulfillment.mjs', 'src/regular-order-routing.mjs'])
     assert.doesNotMatch(read(file), /autoSubmitArteloOrder/, file);
