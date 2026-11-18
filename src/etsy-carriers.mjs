@@ -254,7 +254,12 @@ export const ETSY_CARRIERS = Object.freeze([
 ]);
 
 // Names suppliers use that are not in Etsy's list.
-const ALIASES = { 'DHL': 'dhl', 'AMAZON': 'amazon', 'AMAZON LOGISTICS': 'amazon', 'AMAZON SHIPPING': 'amazon', 'OTHER': 'other' };
+const ALIASES = { 'DHL': 'dhl', 'AMAZON': 'amazon', 'AMAZON LOGISTICS': 'amazon', 'AMAZON SHIPPING': 'amazon', 'OTHER': 'other',
+  // Short names couriers and suppliers use (PrintShrimp reports "AusPost").
+  'AUSPOST': 'australia-post', 'AUS POST': 'australia-post', 'AUSTRALIA POST': 'australia-post',
+  'NZ POST': 'new-zealand-post', 'NZPOST': 'new-zealand-post',
+  'EVRI': 'hermes', 'HERMES UK': 'hermes', 'PARCELFORCE': 'parcel-force', 'ROYALMAIL': 'royal-mail',
+  'CANADAPOST': 'canada-post', 'POSTES CANADA': 'canada-post', 'FED EX': 'fedex', 'STAR TRACK': 'star-track' };
 const normal = value => String(value ?? '').toUpperCase().replace(/[_\s]+/g, ' ').trim();
 const byName = new Map([...Object.entries(ALIASES), ...ETSY_CARRIERS.map(([name, code]) => [normal(name), code])]);
 const byCode = new Map(ETSY_CARRIERS.map(([, code]) => [code, code]));

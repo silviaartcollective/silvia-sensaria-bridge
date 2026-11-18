@@ -137,3 +137,9 @@ test('PrintShrimp orders sent by the app get their tracking the same way', async
   const waiting = world({ ledger: { '4000000002': submitted({ receiptId: '4000000002', provider: 'printshrimp', supplierOrderId: 'PS-902' }) } });
   assert.deepEqual((await run(waiting)).results, [{ receiptId: '4000000002', outcome: 'waiting', printshrimp: 'processing' }]);
 });
+
+test('courier short names map to Etsy\'s carriers (PrintShrimp reports "AusPost")', () => {
+  for (const [name, code] of [['AusPost', 'australia-post'], ['Aus Post', 'australia-post'], ['NZ Post', 'new-zealand-post'],
+    ['Evri', 'hermes'], ['Evri Tracked 48', 'hermes'], ['Parcelforce', 'parcel-force'], ['Parcelforce 48', 'parcel-force'], ['RoyalMail', 'royal-mail']])
+    assert.equal(etsyCarrierCode(name), code, name);
+});
