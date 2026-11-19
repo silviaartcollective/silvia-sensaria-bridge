@@ -106,3 +106,17 @@ test('Redo listing is its own page, laid out like the Product Creator, with a ba
   assert.match(server, /checkRedoInput\(input,\{confirm:'REDO SILVIA LISTING'\}\)/);
   assert.match(server, /const art=await redoArtwork\(id,fresh\)/);
 });
+
+test('a new master artwork can be uploaded on the Redo listing page, through the Production artwork steps', async () => {
+  const { renderListingRedoPage } = await import('../src/listing-redo-page.mjs');
+  const page = renderListingRedoPage();
+  for (const id of ['master_file', 'redo-replace', 'redo-replace-status', 'redo-replace-progress']) assert.ok(page.includes('id="' + id + '"'), id);
+  const client = readFileSync(new URL('../src/listing-redo-client.js', import.meta.url), 'utf8');
+  for (const step of ['/api/listing-converter/reconvert/reserve', '/api/listing-converter/reconvert/crop',
+    '/api/listing-converter/reconvert/statuses?listingIds=', '/api/listing-converter/reconvert/activate'])
+    assert.ok(client.includes("'" + step + "'"), step);
+  assert.match(client, /confirm:'REPLACE SILVIA ARTWORK'/);
+  // Mockups of the old artwork are dropped once it is replaced; nothing goes to Etsy meanwhile.
+  assert.match(client, /jobId='';finished=false;mockups\.clear\(\);order\.length=0;/);
+  assert.match(client, /for\(const id of \['redo-replace','master_file','redo-make','redo-update'\]\)/);
+});
