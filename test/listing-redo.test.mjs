@@ -120,3 +120,17 @@ test('a new master artwork can be uploaded on the Redo listing page, through the
   assert.match(client, /jobId='';finished=false;mockups\.clear\(\);order\.length=0;/);
   assert.match(client, /for\(const id of \['redo-replace','master_file','redo-make','redo-update'\]\)/);
 });
+
+test('mockups tagged vertical or horizontal suit portrait or landscape artwork, as in the mockup library', async () => {
+  const { templateSuits } = await import('../src/batch-poster.mjs');
+  assert.equal(templateSuits({ orientation: 'portrait' }, 'portrait'), true);
+  assert.equal(templateSuits({ orientation: 'Vertical' }, 'portrait'), true);
+  assert.equal(templateSuits({ orientation: 'horizontal' }, 'landscape'), true);
+  assert.equal(templateSuits({ orientation: 'panorama' }, 'panoramic'), true);
+  assert.equal(templateSuits({ orientation: 'landscape' }, 'portrait'), false);
+  assert.equal(templateSuits({ orientation: 'unclassified' }, 'portrait'), false);
+  assert.equal(templateSuits({ orientation: 'portrait', squareCompatible: true }, 'square'), true);
+  const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
+  assert.match(server, /count:presetMockupIds\(p,art\.layout,\{media,orders\}\)\.length/);
+  assert.match(server, /const ids=presetMockupIds\(preset,layout,\{media,orders\}\);/);
+});

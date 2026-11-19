@@ -49,7 +49,17 @@ async function load(){
   const presets=$('redo-preset');presets.replaceChildren();
   for(const p of data.presets)option(presets,p.name,p.name+' ('+p.count+' mockups)');
   presets.value=data.chosen||'';
-  if(!data.presets.length){status('redo-mockup-status','No mockup preset has '+data.layoutName.toLowerCase()+' mockups. Add a preset folder on the PC, or keep the listing\'s current photos.','warn');$('redo-make').disabled=true;}
+  if(!data.presets.length){
+   const empty=data.emptyPresets||[];
+   status('redo-mockup-status',empty.length
+    ?'The preset'+(empty.length>1?'s ':' ')+empty.join(', ')+(empty.length>1?' have':' has')+' no '+data.layoutName.toLowerCase()+' mockups: set the orientation of its PSDs in the Product Creator, or arrange its '+data.layoutName+' photos in Daily Listings → Arrange photos. Or keep the listing\'s current photos.'
+    :'No mockup preset folder was found (a folder with "preset" in its name in the PC mockup folder). Add one on the PC, or keep the listing\'s current photos.','warn');
+   // What the app sees, so the cause is plain.
+   const seen=(data.presetShapes||[]).map(p=>p.name+': '+Object.entries(p.shapes).map(([k,n])=>n+' '+k).join(', '));
+   $('redo-mockup-status').textContent+='\n\nThe app sees '+(data.templateCount||0)+' mockup templates'+(seen.length?'. Presets: '+seen.join(' · ')+'.':', none in a preset folder.');
+   $('redo-mockup-status').style.whiteSpace='pre-line';
+   $('redo-make').disabled=true;
+  }
   $('redo-worker').style.display=data.workerOnline?'none':'block';
   status('redo-summary-status','Redoing Etsy listing #'+listingId+' with '+data.artworkId+' ('+data.layoutName+'). Make new mockups, write the SEO and check the settings, then click Update Etsy listing.','ok');
   $('redo-update').disabled=false;

@@ -367,8 +367,11 @@ export function mockupPresets(templates) {
 }
 // A template suits an artwork like in the Product Creator: the same
 // orientation, or a square artwork in a template marked square-compatible.
-export const templateSuits = (template, layout) => String(template?.orientation || '') === layout ||
-  (layout === 'square' && template?.squareCompatible === true);
+// "vertical", "horizontal" and "panorama" are the library's other names for them.
+const TEMPLATE_SHAPES = { vertical: 'portrait', horizontal: 'landscape', panorama: 'panoramic' };
+const templateShape = value => { const v = String(value || '').trim().toLowerCase(); return TEMPLATE_SHAPES[v] || v; };
+export const templateSuits = (template, layout) => templateShape(template?.orientation) === templateShape(layout) ||
+  (templateShape(layout) === 'square' && template?.squareCompatible === true);
 
 // The Etsy photo order chosen for a preset and shape (Daily Listings → Arrange
 // photos): tile ids as in the Product Creator's organizer
