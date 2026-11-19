@@ -70,19 +70,39 @@ test('a failed redo says what failed, and that photos already went on', async ()
   assert.throws(() => keep.start(9, { artworkId: '', orientation: 'square', plan: {} }), /not in the app/);
 });
 
-test('the listing editor has a Redo listing tab with the Product Creator steps, wired to the redo routes', () => {
-  const page = renderListingsPage();
-  for (const id of ['edit-mode', 'redo-panel', 'redo-preset', 'redo-make', 'redo-mockups', 'redo-write', 'redo-title', 'redo-tags',
-    'redo-description', 'redo-section', 'redo-template', 'redo-apply', 'redo-keep-photos'])
+test('a redo can carry the Product Creator settings, checked', () => {
+  const plan = checkRedoInput(good({ settings: { shipping_profile_id: '12', readiness_state_id: 5, return_policy_id: '', production_partner_id: '',
+    who_made: 'i_did', when_made: 'made_to_order', is_supply: false, should_auto_renew: true, listing_style: 'Minimalist' } }), { confirm: CONFIRM });
+  assert.deepEqual(plan.settings, { shipping_profile_id: 12, readiness_state_id: 5, production_partner_id: 0, who_made: 'i_did',
+    when_made: 'made_to_order', is_supply: false, should_auto_renew: true, listing_style: 'Minimalist' });
+  assert.equal(checkRedoInput(good(), { confirm: CONFIRM }).settings, null);
+  assert.throws(() => checkRedoInput(good({ settings: { who_made: 'robot' } }), { confirm: CONFIRM }), /who made/);
+  assert.throws(() => checkRedoInput(good({ settings: { shipping_profile_id: -1 } }), { confirm: CONFIRM }), /shipping profile/);
+});
+
+test('Redo listing is its own page, laid out like the Product Creator, with a back button', async () => {
+  const { renderListingRedoPage } = await import('../src/listing-redo-page.mjs');
+  const page = renderListingRedoPage();
+  for (const id of ['redo-back', 'artwork_id', 'redo-preset', 'redo-make', 'redo-keep-photos', 'seo_generator_output', 'apply-seo-btn', 'ai-seo-btn',
+    'title', 'seo_description', 'listing_style', 'tags', 'redo-template', 'shipping_profile_id', 'readiness_state_id', 'shop_section_id',
+    'return_policy_id', 'production_partner_id', 'who_made', 'when_made', 'is_supply', 'should_auto_renew', 'mg-preview-list', 'redo-update'])
     assert.ok(page.includes('id="' + id + '"'), id);
-  assert.match(page, /data-mode="redo"/);
+  // The Product Creator's own styles and SEO paste reader.
+  assert.match(page, /\.creator-editor-scroll/);
+  assert.match(page, /window\.parseSeoPaste=/);
   assert.match(page, /<script src="\/listing-redo-client.js" defer><\/script>/);
   const client = readFileSync(new URL('../src/listing-redo-client.js', import.meta.url), 'utf8');
   assert.match(client, /const CONFIRM='REDO SILVIA LISTING'/);
-  for (const action of ['redo-mockups', 'redo-seo', 'redo-apply']) assert.ok(client.includes("'" + action + "'"), action);
-  assert.match(readFileSync(new URL('../src/listings-client.js', import.meta.url), 'utf8'), /window\.listingRedo\?\.open\(id,data\.fields\)/);
+  assert.match(client, /location\.href='\/listings'\+\(listingId\?'\?listing='\+listingId:''\)/);
+  for (const path of ["'redo-mockups'", "'redo-apply'", "'redo?job='", "'/api/ai-seo/generate'", "'/etsy/listing-options'"]) assert.ok(client.includes(path), path);
+  // The editor opens it, and opens the listing again on the way back.
+  assert.match(renderListingsPage(), /id=\"redo-listing\"|id="redo-listing"/);
+  const listings = readFileSync(new URL('../src/listings-client.js', import.meta.url), 'utf8');
+  assert.match(listings, /el\('redo-listing'\)\.href='\/listings\/redo\?listing='/);
+  assert.match(listings, /chooseListing\(reopen,''\)/);
   const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
-  assert.match(server, /details\|inventory\|options\|add-size\|redo\|redo-mockups\|redo-seo\|redo-apply/);
+  assert.match(server, /url\.pathname==='\/listings\/redo'/);
+  assert.match(server, /details\|inventory\|options\|add-size\|redo\|redo-mockups\|redo-apply/);
   assert.match(server, /checkRedoInput\(input,\{confirm:'REDO SILVIA LISTING'\}\)/);
-  assert.match(server, /url\.pathname==='\/listing-redo-client\.js'/);
+  assert.match(server, /const art=await redoArtwork\(id,fresh\)/);
 });

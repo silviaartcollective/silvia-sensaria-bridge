@@ -47,7 +47,7 @@ test('refresh first, repost later: the two ages and the renewal window are setti
  assert.match(html,/Repost each listing at most <input type="number" id="rp-max" class="count" min="0" max="5" value="1"> time\(s\)/);
  assert.match(html,/<input type="checkbox" id="rp-template" checked style="width:auto"> Refreshing also applies the current template/);
  assert.match(client,/maxReposts:Math\.round\(Number\(el\('rp-max'\)\.value\)\),refreshTemplate:el\('rp-template'\)\.checked/);
- assert.match(server,/if\(!withTemplate\)return write\(text\);/);
+ assert.match(server,/if\(!withTemplate\)\{\s*await write\(\{\.\.\.chosen,\.\.\.text\}\);/);
  // Listings refreshed before the history existed (refreshed.json) are still known.
  assert.match(server,/if\(!saved\)try\{saved=\{refreshed:\(await getJsonObject\(RENEWER_REFRESHED_KEY\)\)\?\.listings\}\}/);
 });

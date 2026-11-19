@@ -1,7 +1,7 @@
 import {renderMockupGeneratorSection,renderMockupPreviewPanel} from './mockup-generator-ui.mjs';
 import {readFileSync} from 'node:fs';
 // The SEO paste reader (seo-paste.mjs) runs in the page as it is tested.
-const SEO_PASTE_SCRIPT='window.parseSeoPaste=(()=>{'+readFileSync(new URL('./seo-paste.mjs',import.meta.url),'utf8')
+export const SEO_PASTE_SCRIPT='window.parseSeoPaste=(()=>{'+readFileSync(new URL('./seo-paste.mjs',import.meta.url),'utf8')
   .replace(/^export /gm,'')+'\nreturn parseSeoPaste;})();';
 function esc(value) {
   return String(value ?? '')
