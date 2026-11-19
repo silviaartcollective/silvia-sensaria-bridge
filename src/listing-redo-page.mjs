@@ -51,10 +51,16 @@ ${CREATOR_STYLES}
 
         <div class="uploadbox">
           <div><strong>Artwork</strong>
-            <div class="uploadmeta">The master artwork stored in the app. To use a new file, replace it under Production artwork in the listing editor first.</div></div>
+            <div class="uploadmeta">The master artwork stored in the app. To use a new one, choose it below: it is uploaded, cropped on the PC worker and checked, then it replaces this artwork's master and production crops. Make the mockups after that, so they show the new artwork.</div></div>
           <div class="redo-art"><img id="redo-picture" alt="Artwork" hidden><div class="twocol" style="flex:1">
             <label>Artwork ID<input id="artwork_id" class="mono" readonly placeholder="${idExample}"></label>
             <label>Orientation<input id="orientation_name" readonly></label></div></div>
+          <div class="uploadrow">
+            <label>New master artwork <span class="hint">optional · JPG, PNG, WebP or TIFF</span><input id="master_file" type="file" accept="image/jpeg,image/png,image/webp,image/tiff,.jpg,.jpeg,.png,.webp,.tif,.tiff"></label>
+            <button class="btn secondary" type="button" id="redo-replace" style="align-self:end" disabled>Upload new artwork</button>
+          </div>
+          <div class="progress" id="redo-replace-progress" hidden><span></span></div>
+          <div class="status" id="redo-replace-status" style="display:none"></div>
         </div>
 
         <div class="uploadbox">

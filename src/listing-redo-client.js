@@ -237,5 +237,111 @@ async function followRun(){
   }else{result('The update stopped: '+String(run?.error||'unknown error'),'error');$('redo-update').disabled=false;}
  }catch(error){result('Could not check the update ('+String(error.message||error)+'). Trying again…');pollTimer=setTimeout(followRun,6000);}
 }
-load();
+// A new master artwork, uploaded here: the editor's Production artwork steps
+// (reserve, upload to R2, crop on the PC, check, then replace), after which
+// the page reloads the artwork. Mockups made before it are dropped.
+let replacing=false,replaceTimer=0;
+const replaceStatus=(text,kind='')=>status('redo-replace-status',text,kind);
+function replaceProgress(percent){const bar=$('redo-replace-progress');bar.hidden=percent==null;if(percent!=null)bar.firstElementChild.style.width=percent+'%';}
+function lockForReplace(on){
+ replacing=on;
+ for(const id of ['redo-replace','master_file','redo-make','redo-update'])$(id).disabled=on||!info?.artworkId;
+ if(!on){$('redo-replace').disabled=!$('master_file').files?.length;if(!info?.presets?.length)$('redo-make').disabled=true;}
+}
+$('master_file').addEventListener('change',()=>{
+ const file=$('master_file').files?.[0];
+ $('redo-replace').disabled=!file||replacing||!info?.artworkId;
+ if(file)replaceStatus(file.name+' ('+(file.size/1048576).toFixed(1)+' MB) is ready. Click Upload new artwork to replace '+(info?.artworkId||'the artwork')+'.');
+});
+async function fingerprint(file){
+ if(!globalThis.crypto?.subtle)throw Error('Secure browser file checks are unavailable. Open the app over HTTPS.');
+ const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+ return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
+}
+async function shapeOf(file){
+ try{const b=await createImageBitmap(file);const o=b.width===b.height?'square':b.width>b.height?'landscape':'portrait';b.close();return o;}catch{return 'auto';}
+}
+async function putFile(url,file,type){
+ for(let attempt=0;attempt<3;attempt++){
+  try{
+   const res=await fetch(url,{method:'PUT',headers:{'content-type':type||file.type||'image/jpeg'},body:file});
+   if(res.ok)return;
+   if(![408,429,500,502,503,504].includes(res.status)||attempt===2)throw Error('The upload to Cloudflare failed ('+res.status+').');
+  }catch(error){if(attempt===2)throw error;}
+  await new Promise(r=>setTimeout(r,1200*(2**attempt)));
+ }
+}
+$('redo-replace').addEventListener('click',async()=>{
+ const file=$('master_file').files?.[0];if(!file||!info?.artworkId||replacing)return;
+ if(!confirm('Replace '+info.artworkId+'\'s artwork with '+file.name+'?\n\nIt is uploaded and cropped on the PC worker. Once the crops are checked, '+
+  info.artworkId+'\'s master and production crops are replaced (orders use the new files from then on). Etsy is not changed until you click Update Etsy listing.'))return;
+ lockForReplace(true);
+ try{
+  replaceStatus('Checking '+file.name+'…');replaceProgress(3);
+  const [sha256,orientation]=await Promise.all([fingerprint(file),shapeOf(file)]);
+  const reserved=await request('/api/listing-converter/reconvert/reserve',{listingId,artworkId:info.artworkId,orientation,
+   master:{filename:file.name,contentType:file.type||'image/jpeg',size:file.size,sha256}});
+  if(!reserved.uploadAlreadyPresent){replaceStatus('Uploading '+file.name+'…');replaceProgress(10);await putFile(reserved.upload.uploadUrl,file,reserved.upload.contentType);}
+  replaceStatus('Queueing the production crops…');replaceProgress(15);
+  const started=await request('/api/listing-converter/reconvert/crop',{listingId,artworkId:info.artworkId,revision:reserved.revision});
+  try{const url=URL.createObjectURL(file);const img=$('redo-picture');img.onerror=()=>{img.hidden=true;};img.src=url;img.hidden=false;}catch{}
+  if(started.job?.status==='completed')return void activate(reserved.revision);
+  replaceStatus(started.worker&&!started.worker.online?'Queued · start the PC crop worker; this page goes on by itself.':'Queued for the PC crop worker…');
+  watchReplace(reserved.revision,Date.now());
+ }catch(error){replaceFailed(error);}
+});
+function replaceFailed(error){replaceProgress(null);replaceStatus('The artwork was not replaced: '+String(error.message||error),'warn');lockForReplace(false);}
+const final=message=>Object.assign(Error(message),{final:true});
+async function watchReplace(revision,since,failures=0){
+ clearTimeout(replaceTimer);
+ replaceTimer=setTimeout(async()=>{
+  try{
+   const st=(await request('/api/listing-converter/reconvert/statuses?listingIds='+listingId)).statuses?.[listingId];
+   if(!st?.exists||st.revision!==revision)throw final('This artwork job was replaced or removed.');
+   if(st.ready)return void activate(revision);
+   if(st.status==='failed'||st.status==='completed')throw final(st.message||'The crop worker could not make the new crops.');
+   if(Date.now()-since>3*60*60*1000)throw final('The crops are still not finished after 3 hours. Check the PC crop worker.');
+   const progress=Number(st.progress)||0;replaceProgress(15+Math.round(.75*progress));
+   replaceStatus(st.status==='pending'?(st.queuePosition>1?'Queued · #'+st.queuePosition+' in line for the PC crop worker.':'Queued · next for the PC crop worker.'):
+    'Cropping on the PC worker'+(st.currentRatio?' · '+st.currentRatio:'')+' · '+progress+'%');
+   watchReplace(revision,since);
+  }catch(error){
+   if(error.final||failures>=4)return replaceFailed(error);
+   watchReplace(revision,since,failures+1);
+  }
+ },4000);
+}
+async function activate(revision){
+ try{
+  replaceStatus('Crops checked. Replacing '+info.artworkId+'\'s files…');replaceProgress(95);
+  await request('/api/listing-converter/reconvert/activate',{listingId,artworkId:info.artworkId,revision,confirm:'REPLACE SILVIA ARTWORK'});
+  // Mockups made from the old artwork are dropped; the shape may have changed.
+  clearTimeout(pollTimer);jobId='';finished=false;mockups.clear();order.length=0;
+  const fresh=await request(base+'redo');
+  if(fresh.artworkId){
+   info={...info,...fresh};
+   $('orientation_name').value=fresh.layoutName;
+   const presets=$('redo-preset');presets.replaceChildren();
+   for(const p of fresh.presets)option(presets,p.name,p.name+' ('+p.count+' mockups)');
+   presets.value=fresh.chosen||'';
+  }
+  $('master_file').value='';replaceProgress(null);
+  replaceStatus('Artwork replaced: '+info.artworkId+' now uses the new master and crops. Make the mockups now so they show it.','ok');
+  status('redo-mockup-status','',''); renderPreview();
+ }catch(error){replaceFailed(error);return;}
+ lockForReplace(false);
+}
+// A replacement started earlier (page reloaded) goes on here.
+async function resumeReplace(){
+ try{
+  const st=(await request('/api/listing-converter/reconvert/statuses?listingIds='+listingId)).statuses?.[listingId];
+  if(!st?.exists||!st.jobId||['activated','failed'].includes(st.status)||st.source==='existing-master')return;
+  if(Date.now()-Date.parse(st.queuedAt||0)>24*60*60*1000)return;
+  lockForReplace(true);replaceProgress(15);
+  replaceStatus('A new artwork upload from earlier is still being cropped…');
+  if(st.ready)return void activate(st.revision);
+  watchReplace(st.revision,Date.now());
+ }catch{}
+}
+load().then(()=>{if(info?.artworkId)return resumeReplace();});
 })();
