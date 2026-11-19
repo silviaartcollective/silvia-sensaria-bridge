@@ -1053,11 +1053,7 @@ function batchDeps(){
       const layout=item.orientation,[templates,media,orders]=await Promise.all([listMockupTemplates(),presetMediaStatus(),loadPhotoOrders()]);
       const preset=mockupPresets(templates).find(entry=>presetKey(entry.name)===presetKey(item.preset));
       if(!preset)throw Error('The mockup preset "'+(item.preset||'(none)')+'" is not a folder in the PC mockup folder any more. Choose a preset, then try again.');
-      // With an arranged order, the PSDs placed within Etsy's 20 photos; else the first that fit.
-      const presetImages=presetImagesOf(media),room=ETSY_PHOTO_LIMIT-presetImages.length;
-      const plan=presetPhotoPlan(preset,layout,{presetImages,orders});
-      const ids=plan.saved?plan.order.slice(0,ETSY_PHOTO_LIMIT).filter(id=>id.startsWith('generated:')).map(id=>id.slice(10)):
-        preset.templates.filter(t=>templateSuits(t,layout)).map(t=>t.id).slice(0,room);
+      const ids=presetMockupIds(preset,layout,{media,orders});
       if(!ids.length)throw Error(preset.name+' has no '+LAYOUT_NAMES[layout]+' mockups. Add some to its folder on the PC '+
         '(or set their orientation in the Product Creator), then try again.');
       // queue:'batch': the PC makes these oldest first, after any Product Creator mockups.
@@ -1485,6 +1481,15 @@ async function savedRenewalRules(){try{return checkRules(await getJsonObject(REN
 // Listing Reposter (listing-renewer.mjs). The mockup, draft and publish steps
 // are the Daily Listings batch's (batchDeps).
 const REPOST_PRESET_KEY='settings/listing-renewer/mockup-preset.json';
+// The PSDs a preset makes for an artwork of this shape: with an arranged order
+// (Daily Listings → Arrange photos), those placed within Etsy's 20 photos;
+// else the first that fit. Daily Listings, the reposter and Redo listing alike.
+function presetMockupIds(preset,layout,{media,orders}){
+  const presetImages=presetImagesOf(media),room=ETSY_PHOTO_LIMIT-presetImages.length;
+  const plan=presetPhotoPlan(preset,layout,{presetImages,orders});
+  return plan.saved?plan.order.slice(0,ETSY_PHOTO_LIMIT).filter(id=>id.startsWith('generated:')).map(id=>id.slice(10)):
+    preset.templates.filter(t=>templateSuits(t,layout)).map(t=>t.id).slice(0,room);
+}
 // Redo listing (Listings → editor): new mockups, SEO and template on the same
 // listing, made step by step as in the Product Creator (listing-redo.mjs).
 let redoRunnerInstance=null;
@@ -6152,16 +6157,23 @@ const server = http.createServer(async (req, res) => {
             name:String(t.name||t.outputName||''),url:await signedArtworkUrl(t.previewKey||t.outputKey,3600).catch(()=>'')})));
           return sendJson(res,200,{ok:true,status,mockups});
         }
-        const [templates,saved,images]=await Promise.all([listMockupTemplates(),getJsonObject(REPOST_PRESET_KEY).catch(()=>null),
-          getEtsyListingImages({listingId:id,...credentials}).catch(()=>[])]);
-        const presets=mockupPresets(templates.filter(t=>t.status==='ready')).map(p=>({name:p.name,
-          count:p.templates.filter(t=>templateSuits(t,art.layout)).length})).filter(p=>p.count);
+        const [templates,saved,images,media,orders]=await Promise.all([listMockupTemplates(),getJsonObject(REPOST_PRESET_KEY).catch(()=>null),
+          getEtsyListingImages({listingId:id,...credentials}).catch(()=>[]),presetMediaStatus(),loadPhotoOrders()]);
+        // Counted as Make mockups will pick them (the preset's arranged order, else orientation).
+        const counted=mockupPresets(templates.filter(t=>t.status==='ready')).map(p=>({name:p.name,
+          count:presetMockupIds(p,art.layout,{media,orders}).length}));
+        const presets=counted.filter(p=>p.count),emptyPresets=counted.filter(p=>!p.count).map(p=>p.name);
+        // What each preset holds, by template orientation, for the page to explain an empty list.
+        const presetShapes=presets.length?[]:mockupPresets(templates).map(p=>{
+          const by={};for(const t of p.templates){const k=t.status&&t.status!=='ready'?'not ready':String(t.orientation||'unclassified');by[k]=(by[k]||0)+1;}
+          return {name:p.name,shapes:by};
+        });
         const chosen=presets.find(p=>presetKey(p.name)===presetKey(saved?.name))||presets[0]||null;
         const preview=art.manifest.preview;
         // The page starts from what the listing has now; the template fills the rest.
         return sendJson(res,200,{ok:true,listingId:id,state:String(fresh.state||''),artworkId:art.artworkId,layout:art.layout,
           layoutName:LAYOUT_NAMES[art.layout]||art.layout,picture:preview?.galleryKey?libraryPicture(art.artworkId,'gallery',preview.madeAt):'',
-          presets,chosen:chosen?.name||'',limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
+          presets,emptyPresets,presetShapes,templateCount:templates.length,chosen:chosen?.name||'',limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
           photos:images.slice(0,ETSY_PHOTO_LIMIT).map(image=>String(image.url_570xN||image.url_fullxfull||'')).filter(Boolean),
           current:{title:String(fresh.title||''),tags:fresh.tags||[],shop_section_id:Number(fresh.shop_section_id)||0,
             shipping_profile_id:Number(fresh.shipping_profile_id)||0,return_policy_id:Number(fresh.return_policy_id)||0,
