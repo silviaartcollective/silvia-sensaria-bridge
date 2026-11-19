@@ -1,6 +1,7 @@
 import { supplierArtworkLink, isSupplierArtworkPath, verifySupplierArtworkPath } from './supplier-artwork-link.mjs';
 import { planAddSize, addSizeToInventory } from './listing-add-size.mjs';
 import { checkRedoInput, createRedoRunner } from './listing-redo.mjs';
+import { renderListingRedoPage } from './listing-redo-page.mjs';
 import { SILVIA_SIZE_LABELS as ADD_SIZE_LABELS, silviaVariantSku as addSizeSku, retailPriceForProductKey as addSizePrice, productKeyFromVariationValues as addSizeKey, normalizeSize as addSizeNormalize, SILVIA_RETAIL_PRICE_LADDER_USD as ADD_SIZE_LADDER } from './variants.mjs';
 import { previewPrintShrimpOrder, submitPrintShrimpOrder, verifyPrintShrimpSubmission } from './printshrimp-order-submission.mjs';
 import { renderPrivacyPage, renderTermsPage } from './legal-pages.mjs';
@@ -1299,16 +1300,34 @@ async function renewalSeo(listingId){
 // draft of its artwork gets today, so a renewed listing does not keep old sizes
 // or prices. A listing the app did not make has no artwork to build them for:
 // it is copied as it is (null). Its shop section, materials and photos stay.
-async function repostTemplate({listing,inventory,properties},{style=''}={}){
+// The listing settings chosen on the Redo listing page, as Etsy fields.
+function listingSettingsPatch(settings){
+  const patch={},id=value=>Number(value)>0?Number(value):0;
+  if(id(settings.shipping_profile_id))patch.shipping_profile_id=id(settings.shipping_profile_id);
+  if(id(settings.return_policy_id))patch.return_policy_id=id(settings.return_policy_id);
+  if(settings.production_partner_id!==undefined)patch.production_partner_ids=id(settings.production_partner_id)?[id(settings.production_partner_id)]:[];
+  for(const key of ['who_made','when_made'])if(settings[key])patch[key]=settings[key];
+  for(const key of ['is_supply','should_auto_renew'])if(typeof settings[key]==='boolean')patch[key]=settings[key];
+  return patch;
+}
+async function applyListingStyle(listingId,style){
+  if(!canonicalWallArtStyle(style))return;
+  const session=await getEtsySession();
+  const result=await applyAllListingAttributes({session,listingId,body:{listing_style:style},
+    properties:await getCachedTaxonomyProperties(session,listingDefaults.taxonomyId)});
+  const failed=result.results?.filter(item=>!item.applied&&!item.optional)||[];
+  if(failed.length)throw Error('Etsy did not take the style: '+failed.map(item=>item.warning).join('; '));
+}
+async function repostTemplate({listing,inventory,properties},{style='',artworkId:named='',readiness:chosenReadiness=0}={}){
   let artworkId='',manifest=null;
-  try{artworkId=artworkIdFromInventory(inventory);if(artworkId)manifest=await loadArtworkManifest(artworkId)}catch{}
+  try{artworkId=named||artworkIdFromInventory(inventory);if(artworkId)manifest=await loadArtworkManifest(artworkId)}catch{}
   if(!manifest||manifest.status!=='ready')return null;
   const session=await getEtsySession();
   if(!batchDefaultsCache.value||Date.now()-batchDefaultsCache.at>10*60*1000)
     batchDefaultsCache={at:Date.now(),value:await batchShopDefaults(session)};
   const {preset,templates}=batchDefaultsCache.value,layout=listingLayoutForManifest(manifest);
   const body=batchDraftBody({artworkId,layout,seo:{title:listing.title,description:'',tags:[]},preset,template:templates[layout]||{}});
-  const readiness=body.readiness_state_id||Number(listing.readiness_state_id)||null;
+  const readiness=Number(chosenReadiness)||body.readiness_state_id||Number(listing.readiness_state_id)||null;
   if(!readiness)throw Error('Choose the processing profile in Listings → Templates → '+LAYOUT_NAMES[layout]+' first.');
   const variants=buildOwnSilviaInventory({artworkId,catalog:products,readinessStateId:readiness,defaultQuantity:999,orientation:layout});
   // ChatGPT's style for a renewal, else the one the listing has.
@@ -1414,7 +1433,7 @@ async function refreshListingPhotos({listingId,artworkId,orientation,preset,mock
 // variants, profiles and style. The description is built as for a new draft
 // (the orientation's template); a listing whose artwork is not in the app
 // keeps its description and variants.
-async function refreshListingDetails({listingId,artworkId,seo,template:withTemplate=true}){
+async function refreshListingDetails({listingId,artworkId,seo,template:withTemplate=true,settings=null}){
   const session=await getEtsySession(),shopId=session.shop.shop_id;
   const args={keystring:session.keystring,sharedSecret:session.sharedSecret,accessToken:session.accessToken};
   const write=listing=>withEtsyListingRetry(()=>updateListing({...args,shopId,listingId,listing}));
@@ -1424,11 +1443,18 @@ async function refreshListingDetails({listingId,artworkId,seo,template:withTempl
   const description=listingDescription((await loadListingTemplates().catch(()=>null))?.orientations?.[listingLayoutForManifest(manifest)]||null,
     listingDefaults.descriptionTemplate,{seoDescription:seo.description,shopSectionName:seo.sectionName||'',shopSectionUrl:seo.sectionUrl||''});
   const text={title:seo.title,description,tags:seo.tags,shop_section_id:Number(seo.sectionId)||listing.shop_section_id||undefined};
-  if(!withTemplate)return write(text);
-  const template=await repostTemplate({listing,inventory,properties},{style:seo.style});
+  // Redo listing: the settings chosen on its page win over the template's.
+  const chosen=settings?listingSettingsPatch(settings):{};
+  const style=settings?.listing_style||seo.style||'';
+  if(!withTemplate){
+    await write({...chosen,...text});
+    if(settings?.listing_style)await applyListingStyle(listingId,settings.listing_style);
+    return;
+  }
+  const template=await repostTemplate({listing,inventory,properties},{style,artworkId,readiness:settings?.readiness_state_id});
   if(!template)throw Error('The artwork '+artworkId+' is not ready in the app any more; its title and variants were not changed.');
   const {price,quantity,readiness_state_id,...profiles}=template.listing;
-  await write({...profiles,...text});
+  await write({...profiles,...chosen,...text});
   await withEtsyListingRetry(()=>updateListingInventory({listingId,inventory:template.inventory,...args}));
   if(template.applyAttributes)await template.applyAttributes(listingId);
 }
@@ -1464,20 +1490,16 @@ const REPOST_PRESET_KEY='settings/listing-renewer/mockup-preset.json';
 let redoRunnerInstance=null;
 const redoRunner=()=>redoRunnerInstance||=createRedoRunner({replacePhotos:refreshListingPhotos,updateDetails:refreshListingDetails,
   markRefreshed:(listingId,info)=>changeRenewerHistory(({refreshed})=>{refreshed[String(listingId)]={...info,at:new Date().toISOString()}})});
-// The listing's artwork, when it is in the app with its master: what a redo starts from.
-async function redoArtwork(listingId){
-  const about=await renewalDeps().describe(listingId);
-  if(!about.artworkId)return null;
-  const manifest=await loadArtworkManifest(about.artworkId);
-  return {artworkId:about.artworkId,layout:about.layout,manifest};
-}
-// New SEO from the artwork itself (as for a new listing), not from the listing's photos.
-async function redoSeo(session,{artworkId,layout,manifest}){
-  const key=manifest.preview?.viewKey&&await artworkObjectExists(manifest.preview.viewKey)?manifest.preview.viewKey:manifest.master.key;
-  const context=await seoShopContext(session);
-  const seo=await generateEtsySeo({onUsage:recordOpenAiUsage,image:await seoImage((await getArtworkObject(key)).body),orientation:layout,...context});
-  return {title:seo.title,tags:seo.tags,style:seo.style||'',description:seo.description,sectionId:String(seo.sectionId||''),
-    ...(seo.missingTags?{missingTags:seo.missingTags}:{})};
+// The listing's artwork, found as the listing editor finds it (converter link
+// or SKUs), with its master in R2: what a redo starts from. Else why not.
+async function redoArtwork(listingId,listing){
+  const map=await loadListingConverterMap();
+  const linked=await resolveListingArtwork({listingId,listing,map});
+  if(!linked)return {reason:await unlinkedListingReason({listingId,listing,map,loadManifest:loadArtworkManifest})};
+  const manifest=linked.manifest||await loadArtworkManifest(linked.artworkId);
+  if(!manifest?.master?.key||!await artworkObjectExists(manifest.master.key))
+    return {reason:'The master file of '+linked.artworkId+' is missing from R2. Replace its production artwork in the listing editor first.'};
+  return {artworkId:linked.artworkId,layout:listingLayoutForManifest(manifest),manifest};
 }
 const listingFeesCache=new Map(); // month range → the fees read from Etsy, for 10 minutes
 function renewalDeps(){
@@ -5965,6 +5987,11 @@ const server = http.createServer(async (req, res) => {
 
   // Silvia-only master listings: read existing Etsy records, never bulk-edit
   // automatically. The conversion queue is unchanged and remains embedded.
+  // Redo listing: the Product Creator's page for a listing already on Etsy.
+  if(req.method==='GET' && url.pathname==='/listings/redo'){
+    if(!requireAdminPage(req,res,'/listings/redo'+url.search))return;
+    return sendHtml(res,200,renderListingRedoPage());
+  }
   if(req.method==='GET' && url.pathname==='/listings'){
     if(!requireAdminPage(req,res,'/listings'))return;
     return sendHtml(res,200,renderListingsPage());
@@ -6058,7 +6085,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res,200,{ok:true,...page,count:page.listings.length});
     }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
   }
-  const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory|options|add-size|redo|redo-mockups|redo-seo|redo-apply))?$/);
+  const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory|options|add-size|redo|redo-mockups|redo-apply))?$/);
   if(masterRoute&&(req.method==='GET'||req.method==='POST')){
     if(!requireAdminApi(req,res))return;
     const id=Number(masterRoute[1]),action=masterRoute[2]||'';
@@ -6114,8 +6141,8 @@ const server = http.createServer(async (req, res) => {
       // mockups' progress (?job=) or the redo's own progress (?progress=1).
       if(req.method==='GET'&&action==='redo'){
         if(url.searchParams.get('progress'))return sendJson(res,200,{ok:true,run:redoRunner().status(id)});
-        const art=await redoArtwork(id);
-        if(!art)return sendJson(res,200,{ok:true,artworkId:'',run:redoRunner().status(id)});
+        const art=await redoArtwork(id,fresh);
+        if(!art.artworkId)return sendJson(res,200,{ok:true,listingId:id,artworkId:'',reason:art.reason,run:redoRunner().status(id)});
         const jobId=String(url.searchParams.get('job')||'');
         if(jobId){
           const job=await getMockupJob(jobId);
@@ -6125,27 +6152,32 @@ const server = http.createServer(async (req, res) => {
             name:String(t.name||t.outputName||''),url:await signedArtworkUrl(t.previewKey||t.outputKey,3600).catch(()=>'')})));
           return sendJson(res,200,{ok:true,status,mockups});
         }
-        const [templates,saved,context]=await Promise.all([listMockupTemplates(),getJsonObject(REPOST_PRESET_KEY).catch(()=>null),seoShopContext(session)]);
+        const [templates,saved,images]=await Promise.all([listMockupTemplates(),getJsonObject(REPOST_PRESET_KEY).catch(()=>null),
+          getEtsyListingImages({listingId:id,...credentials}).catch(()=>[])]);
         const presets=mockupPresets(templates.filter(t=>t.status==='ready')).map(p=>({name:p.name,
           count:p.templates.filter(t=>templateSuits(t,art.layout)).length})).filter(p=>p.count);
         const chosen=presets.find(p=>presetKey(p.name)===presetKey(saved?.name))||presets[0]||null;
         const preview=art.manifest.preview;
-        return sendJson(res,200,{ok:true,artworkId:art.artworkId,layout:art.layout,layoutName:LAYOUT_NAMES[art.layout]||art.layout,
-          title:String(art.manifest.title||''),picture:preview?.galleryKey?libraryPicture(art.artworkId,'gallery',preview.madeAt):'',
-          presets,chosen:chosen?.name||'',limit:ETSY_PHOTO_LIMIT,chatGpt:aiSeoConfigured(),workerOnline:Boolean(cropWorkerStatus().online),
-          sections:context.sections.map(item=>({id:String(item.shop_section_id),title:String(item.title||'')})),
+        // The page starts from what the listing has now; the template fills the rest.
+        return sendJson(res,200,{ok:true,listingId:id,state:String(fresh.state||''),artworkId:art.artworkId,layout:art.layout,
+          layoutName:LAYOUT_NAMES[art.layout]||art.layout,picture:preview?.galleryKey?libraryPicture(art.artworkId,'gallery',preview.madeAt):'',
+          presets,chosen:chosen?.name||'',limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
+          photos:images.slice(0,ETSY_PHOTO_LIMIT).map(image=>String(image.url_570xN||image.url_fullxfull||'')).filter(Boolean),
+          current:{title:String(fresh.title||''),tags:fresh.tags||[],shop_section_id:Number(fresh.shop_section_id)||0,
+            shipping_profile_id:Number(fresh.shipping_profile_id)||0,return_policy_id:Number(fresh.return_policy_id)||0,
+            production_partner_id:Number((fresh.production_partner_ids||[])[0])||0,who_made:String(fresh.who_made||''),
+            when_made:String(fresh.when_made||''),is_supply:Boolean(fresh.is_supply),should_auto_renew:Boolean(fresh.should_auto_renew)},
           run:redoRunner().status(id)});
       }
       if(req.method==='POST' && action){
         const input=await readJsonBody(req);
-        if(action==='redo-mockups'||action==='redo-seo'||action==='redo-apply'){
-          const art=await redoArtwork(id);
-          if(!art)return sendJson(res,400,{ok:false,error:'This listing\'s artwork is not in the app, so it cannot be redone here. Convert it first.'});
+        if(action==='redo-mockups'||action==='redo-apply'){
+          const art=await redoArtwork(id,fresh);
+          if(!art.artworkId)return sendJson(res,400,{ok:false,error:art.reason});
           if(action==='redo-mockups'){
             const started=await batchDeps().startMockups({artworkId:art.artworkId,orientation:art.layout,preset:String(input.preset||'')});
             return sendJson(res,200,{ok:true,...started,workerOnline:Boolean(cropWorkerStatus().online)});
           }
-          if(action==='redo-seo')return sendJson(res,200,{ok:true,seo:await redoSeo(session,art)});
           const plan=checkRedoInput(input,{confirm:'REDO SILVIA LISTING'});
           // "Keep the current section": the description template still names it.
           const chosenSection=plan.seo.sectionId,sectionId=chosenSection||String(Number(fresh.shop_section_id)||'');

@@ -36,7 +36,28 @@ export function checkRedoInput(input, { confirm }) {
   const sectionId = Number(raw.sectionId || 0);
   if (!Number.isSafeInteger(sectionId) || sectionId < 0) throw Error('Choose a valid shop section.');
   const style = String(raw.style || '').trim().slice(0, 80);
-  return { photos, seo: { title, tags, description, sectionId: sectionId ? String(sectionId) : '', style }, template: input.template !== false };
+  return { photos, seo: { title, tags, description, sectionId: sectionId ? String(sectionId) : '', style },
+    template: input.template !== false, settings: checkSettings(input.settings) };
+}
+
+const WHO_MADE = ['i_did', 'collective', 'someone_else'];
+// The Product Creator's listing settings (profiles, who/when made, renewal, style).
+function checkSettings(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'object') throw Error('The listing settings are not valid.');
+  const out = {};
+  for (const key of ['shipping_profile_id', 'readiness_state_id', 'return_policy_id', 'production_partner_id']) {
+    if (raw[key] === undefined || raw[key] === null || raw[key] === '') { if (key === 'production_partner_id' && raw[key] !== undefined) out[key] = 0; continue; }
+    const value = Number(raw[key]);
+    if (!Number.isSafeInteger(value) || value < 0) throw Error('The ' + key.replace(/_id$/, '').replace(/_/g, ' ') + ' is not valid.');
+    out[key] = value;
+  }
+  if (raw.who_made) { if (!WHO_MADE.includes(raw.who_made)) throw Error('Choose who made it.'); out.who_made = raw.who_made; }
+  if (raw.when_made) { if (!/^[a-z0-9_]{1,20}$/.test(String(raw.when_made))) throw Error('Choose when it was made.'); out.when_made = String(raw.when_made); }
+  for (const key of ['is_supply', 'should_auto_renew']) if (typeof raw[key] === 'boolean') out[key] = raw[key];
+  const style = String(raw.listing_style || '').trim();
+  if (style) { if (style.length > 60) throw Error('Choose an Etsy style.'); out.listing_style = style; }
+  return out;
 }
 
 // deps: { replacePhotos({listingId,artworkId,orientation,preset,mockupJobId,templateIds}),
@@ -62,7 +83,7 @@ export function createRedoRunner(deps) {
           run.photos = Number(placed?.photos) || 0;
         }
         run.step = 'details';
-        await deps.updateDetails({ listingId: Number(listingId), artworkId, seo: plan.seo, template: plan.template });
+        await deps.updateDetails({ listingId: Number(listingId), artworkId, seo: plan.seo, template: plan.template, settings: plan.settings || null });
         run.step = 'saving';
         await deps.markRefreshed(listingId, { artworkId, by: 'redo', photos: run.photos ?? 0, template: plan.template });
         run.state = 'done'; run.step = 'done';
