@@ -221,6 +221,7 @@ async function openListing(id){
  const data=await request('/api/master-listings/'+encodeURIComponent(id));
  if(selectedId!==Number(id))return;
  current=data;el('editor-empty').classList.add('hidden');el('editor').classList.remove('hidden');
+ window.listingRedo?.open(id,data.fields);
  const f=data.fields;
  el('editor-heading').textContent='Editing #'+id;
  el('editor-info').textContent=['Etsy '+data.state,data.artworkId,data.converted?'Converted listing':''].filter(Boolean).join(' · ');

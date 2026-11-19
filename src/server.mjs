@@ -1,5 +1,6 @@
 import { supplierArtworkLink, isSupplierArtworkPath, verifySupplierArtworkPath } from './supplier-artwork-link.mjs';
 import { planAddSize, addSizeToInventory } from './listing-add-size.mjs';
+import { checkRedoInput, createRedoRunner } from './listing-redo.mjs';
 import { SILVIA_SIZE_LABELS as ADD_SIZE_LABELS, silviaVariantSku as addSizeSku, retailPriceForProductKey as addSizePrice, productKeyFromVariationValues as addSizeKey, normalizeSize as addSizeNormalize, SILVIA_RETAIL_PRICE_LADDER_USD as ADD_SIZE_LADDER } from './variants.mjs';
 import { previewPrintShrimpOrder, submitPrintShrimpOrder, verifyPrintShrimpSubmission } from './printshrimp-order-submission.mjs';
 import { renderPrivacyPage, renderTermsPage } from './legal-pages.mjs';
@@ -1458,6 +1459,26 @@ async function savedRenewalRules(){try{return checkRules(await getJsonObject(REN
 // Listing Reposter (listing-renewer.mjs). The mockup, draft and publish steps
 // are the Daily Listings batch's (batchDeps).
 const REPOST_PRESET_KEY='settings/listing-renewer/mockup-preset.json';
+// Redo listing (Listings → editor): new mockups, SEO and template on the same
+// listing, made step by step as in the Product Creator (listing-redo.mjs).
+let redoRunnerInstance=null;
+const redoRunner=()=>redoRunnerInstance||=createRedoRunner({replacePhotos:refreshListingPhotos,updateDetails:refreshListingDetails,
+  markRefreshed:(listingId,info)=>changeRenewerHistory(({refreshed})=>{refreshed[String(listingId)]={...info,at:new Date().toISOString()}})});
+// The listing's artwork, when it is in the app with its master: what a redo starts from.
+async function redoArtwork(listingId){
+  const about=await renewalDeps().describe(listingId);
+  if(!about.artworkId)return null;
+  const manifest=await loadArtworkManifest(about.artworkId);
+  return {artworkId:about.artworkId,layout:about.layout,manifest};
+}
+// New SEO from the artwork itself (as for a new listing), not from the listing's photos.
+async function redoSeo(session,{artworkId,layout,manifest}){
+  const key=manifest.preview?.viewKey&&await artworkObjectExists(manifest.preview.viewKey)?manifest.preview.viewKey:manifest.master.key;
+  const context=await seoShopContext(session);
+  const seo=await generateEtsySeo({onUsage:recordOpenAiUsage,image:await seoImage((await getArtworkObject(key)).body),orientation:layout,...context});
+  return {title:seo.title,tags:seo.tags,style:seo.style||'',description:seo.description,sectionId:String(seo.sectionId||''),
+    ...(seo.missingTags?{missingTags:seo.missingTags}:{})};
+}
 const listingFeesCache=new Map(); // month range → the fees read from Etsy, for 10 minutes
 function renewalDeps(){
   const batch=batchDeps();
@@ -5955,9 +5976,9 @@ const server = http.createServer(async (req, res) => {
       'cache-control':'private, no-store','x-content-type-options':'nosniff'});
     return res.end(js);
   }
-  if(req.method==='GET' && url.pathname==='/photo-replacer-client.js'){
+  if(req.method==='GET' && (url.pathname==='/photo-replacer-client.js'||url.pathname==='/listing-redo-client.js')){
     if(!requireAdminApi(req,res))return;
-    const js=readFileSync(new URL('./photo-replacer-client.js',import.meta.url),'utf8');
+    const js=readFileSync(new URL('.'+url.pathname,import.meta.url),'utf8');
     res.writeHead(200,{'content-type':'application/javascript; charset=utf-8',
       'cache-control':'private, no-store','x-content-type-options':'nosniff'});
     return res.end(js);
@@ -6037,7 +6058,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res,200,{ok:true,...page,count:page.listings.length});
     }catch(error){return sendJson(res,502,{ok:false,error:String(error.message||error)});}
   }
-  const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory|options|add-size))?$/);
+  const masterRoute=url.pathname.match(/^\/api\/master-listings\/([1-9]\d{0,19})(?:\/(details|inventory|options|add-size|redo|redo-mockups|redo-seo|redo-apply))?$/);
   if(masterRoute&&(req.method==='GET'||req.method==='POST')){
     if(!requireAdminApi(req,res))return;
     const id=Number(masterRoute[1]),action=masterRoute[2]||'';
@@ -6089,8 +6110,51 @@ const server = http.createServer(async (req, res) => {
             ?String(inventoryResult.reason?.message||inventoryResult.reason):null,
           sections:Array.isArray(sections)?sections:[]});
       }
+      // Redo listing: what it starts from (the artwork, presets, sections), the
+      // mockups' progress (?job=) or the redo's own progress (?progress=1).
+      if(req.method==='GET'&&action==='redo'){
+        if(url.searchParams.get('progress'))return sendJson(res,200,{ok:true,run:redoRunner().status(id)});
+        const art=await redoArtwork(id);
+        if(!art)return sendJson(res,200,{ok:true,artworkId:'',run:redoRunner().status(id)});
+        const jobId=String(url.searchParams.get('job')||'');
+        if(jobId){
+          const job=await getMockupJob(jobId);
+          if(job.artworkId!==art.artworkId)return sendJson(res,400,{ok:false,error:'These mockups belong to another artwork.'});
+          const status=await batchDeps().mockupStatus(jobId);
+          const mockups=await Promise.all(job.templates.filter(t=>t.status==='completed'&&t.outputKey).map(async t=>({id:String(t.id),
+            name:String(t.name||t.outputName||''),url:await signedArtworkUrl(t.previewKey||t.outputKey,3600).catch(()=>'')})));
+          return sendJson(res,200,{ok:true,status,mockups});
+        }
+        const [templates,saved,context]=await Promise.all([listMockupTemplates(),getJsonObject(REPOST_PRESET_KEY).catch(()=>null),seoShopContext(session)]);
+        const presets=mockupPresets(templates.filter(t=>t.status==='ready')).map(p=>({name:p.name,
+          count:p.templates.filter(t=>templateSuits(t,art.layout)).length})).filter(p=>p.count);
+        const chosen=presets.find(p=>presetKey(p.name)===presetKey(saved?.name))||presets[0]||null;
+        const preview=art.manifest.preview;
+        return sendJson(res,200,{ok:true,artworkId:art.artworkId,layout:art.layout,layoutName:LAYOUT_NAMES[art.layout]||art.layout,
+          title:String(art.manifest.title||''),picture:preview?.galleryKey?libraryPicture(art.artworkId,'gallery',preview.madeAt):'',
+          presets,chosen:chosen?.name||'',limit:ETSY_PHOTO_LIMIT,chatGpt:aiSeoConfigured(),workerOnline:Boolean(cropWorkerStatus().online),
+          sections:context.sections.map(item=>({id:String(item.shop_section_id),title:String(item.title||'')})),
+          run:redoRunner().status(id)});
+      }
       if(req.method==='POST' && action){
         const input=await readJsonBody(req);
+        if(action==='redo-mockups'||action==='redo-seo'||action==='redo-apply'){
+          const art=await redoArtwork(id);
+          if(!art)return sendJson(res,400,{ok:false,error:'This listing\'s artwork is not in the app, so it cannot be redone here. Convert it first.'});
+          if(action==='redo-mockups'){
+            const started=await batchDeps().startMockups({artworkId:art.artworkId,orientation:art.layout,preset:String(input.preset||'')});
+            return sendJson(res,200,{ok:true,...started,workerOnline:Boolean(cropWorkerStatus().online)});
+          }
+          if(action==='redo-seo')return sendJson(res,200,{ok:true,seo:await redoSeo(session,art)});
+          const plan=checkRedoInput(input,{confirm:'REDO SILVIA LISTING'});
+          // "Keep the current section": the description template still names it.
+          const chosenSection=plan.seo.sectionId,sectionId=chosenSection||String(Number(fresh.shop_section_id)||'');
+          const section=(await seoShopContext(session)).sections.find(item=>String(item.shop_section_id)===sectionId);
+          if(chosenSection&&!section)return sendJson(res,400,{ok:false,error:'That shop section is not in the shop any more.'});
+          if(section)Object.assign(plan.seo,{sectionId:String(section.shop_section_id),sectionName:section.title,sectionUrl:sectionUrl(session.shop.shop_name||'',section.shop_section_id)});
+          const {run}=redoRunner().start(id,{artworkId:art.artworkId,orientation:art.layout,plan});
+          return sendJson(res,202,{ok:true,run});
+        }
         if(action==='details'){
           if(input.confirm!=='SAVE SILVIA LISTING')
             return sendJson(res,400,{ok:false,error:'Explicit save confirmation is required.'});

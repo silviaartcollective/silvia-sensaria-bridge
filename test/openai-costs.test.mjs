@@ -82,7 +82,7 @@ test('the page is Fees & Expenses, with the ChatGPT section and the month\'s tot
   assert.doesNotThrow(() => new vm.Script(client));
   assert.match(client, /\/api\/expenses\/chatgpt\?/);
   const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
-  assert.equal((server.match(/generateEtsySeo\(\{ ?onUsage: ?recordOpenAiUsage,/g) || []).length, 4, 'every SEO request records its cost');
+  assert.equal((server.match(/generateEtsySeo\(\{ ?onUsage: ?recordOpenAiUsage,/g) || []).length, 5, 'every SEO request records its cost');
 });
 
 test('one month picker at the top drives every section, and late answers for an earlier month are dropped', () => {
