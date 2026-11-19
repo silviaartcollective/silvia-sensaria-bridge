@@ -75,7 +75,7 @@ test('refuses what it should', () => {
 
 test('the editor previews, then adds with the confirmation and the inventory fingerprint', () => {
   const server=readFileSync(new URL('../src/server.mjs',import.meta.url),'utf8');
-  assert.match(server,/\(details\|inventory\|options\|add-size\)/);
+  assert.match(server,/\(details\|inventory\|options\|add-size[|)]/);
   assert.match(server,/if\(input\.preview===true\)return sendJson\(res,200,\{ok:true,plan:planAddSize\(shop,existing,input\.size\)\}\);/);
   assert.match(server,/input\.confirm!=='ADD SILVIA SIZE'/);
   assert.match(server,/input\.fingerprint!==inventoryEditorFingerprint\(existing\)\)\s*return sendJson\(res,409/);
