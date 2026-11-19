@@ -221,11 +221,11 @@ async function openListing(id){
  const data=await request('/api/master-listings/'+encodeURIComponent(id));
  if(selectedId!==Number(id))return;
  current=data;el('editor-empty').classList.add('hidden');el('editor').classList.remove('hidden');
- window.listingRedo?.open(id,data.fields);
  const f=data.fields;
  el('editor-heading').textContent='Editing #'+id;
  el('editor-info').textContent=['Etsy '+data.state,data.artworkId,data.converted?'Converted listing':''].filter(Boolean).join(' · ');
  el('open-etsy').href='https://www.etsy.com/listing/'+id;
+ el('redo-listing').href='/listings/redo?listing='+encodeURIComponent(id);
  el('edit-title').value=f.title||'';el('edit-description').value=f.description||'';
  el('edit-tags').value=(f.tags||[]).join(', ');
  const section=el('edit-section');section.replaceChildren();
@@ -797,4 +797,7 @@ el('tpl-save').addEventListener('click',async()=>{
 
 const tab=new URL(location.href).searchParams.get('tab');
 showTab(['converter','templates','photos'].includes(tab)?tab:'master');
+// Back from Redo listing: the listing opens again.
+const reopen=Number(new URL(location.href).searchParams.get('listing'));
+if(reopen>0&&(!tab||tab==='master'))chooseListing(reopen,'');
 })();

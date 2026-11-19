@@ -1,225 +1,241 @@
-// Listings → editor → Redo listing: set a published listing up again, step by
-// step as in the Product Creator (artwork, mockups, SEO, sizes), and put it all
-// on the same Etsy listing. Nothing changes on Etsy until the last step.
+// Redo listing page (/listings/redo?listing=…, listing-redo-page.mjs): the
+// Product Creator's form for a listing already on Etsy. It starts from the
+// listing's artwork and settings; Update Etsy listing puts the new mockups,
+// SEO and settings on that same listing. Nothing changes on Etsy before that.
 (()=>{'use strict';
 const CONFIRM='REDO SILVIA LISTING';
-const el=id=>document.getElementById(id);
-let state=null,pollTimer=0;
+const $=id=>document.getElementById(id);
+const listingId=Number(new URL(location.href).searchParams.get('listing'))||0;
+const base='/api/master-listings/'+listingId+'/';
+let info=null,jobId='',preset='',finished=false,limit=20,pollTimer=0,applying=false;
+const mockups=new Map(),order=[];
+
 async function request(path,body){
  const res=await fetch(path,body===undefined?{cache:'no-store'}:
    {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),cache:'no-store'});
- let data;try{data=await res.json();}catch{throw Error('Server returned an invalid response (HTTP '+res.status+').');}
+ let data;try{data=await res.json();}catch{throw Error('The app returned an unreadable response (HTTP '+res.status+'). If it was just deploying, try again in a minute.');}
  if(!res.ok||!data.ok)throw Error(data.error||'Request failed (HTTP '+res.status+').');
  return data;
 }
-function say(id,message,kind=''){const node=el(id);node.className='notice'+(kind?' '+kind:'');node.textContent=message;}
-function hush(id){el(id).className='notice hidden';el(id).textContent='';}
-const path=(id,action)=>'/api/master-listings/'+encodeURIComponent(id)+'/'+action;
-const alive=s=>state===s&&!el('editor-drawer').classList.contains('hidden');
-function stopPolling(){clearTimeout(pollTimer);pollTimer=0;}
-
-function setMode(mode){
- const redo=mode==='redo';
- el('edit-mode').classList.toggle('hidden',redo);el('redo-panel').classList.toggle('hidden',!redo);
- for(const b of document.querySelectorAll('.mode-tabs button')){
-  const on=b.dataset.mode===mode;b.classList.toggle('active',on);b.setAttribute('aria-selected',String(on));
- }
- if(redo&&state&&!state.loaded)void loadInfo(state);
+function status(id,text,kind=''){const n=$(id);n.style.display=text?'block':'none';n.className='status'+(kind?' '+kind:'');n.textContent=text;}
+function result(text,kind=''){const n=$('result');n.className='result'+(text?' show':'');n.style.borderColor=kind==='error'?'#e7b9a9':'';n.textContent=text;}
+function option(select,value,label){const o=document.createElement('option');o.value=String(value);o.textContent=label;select.append(o);}
+function setSelect(id,value){
+ const select=$(id);if(value===undefined||value===null)return;
+ const text=String(value);if([...select.options].some(o=>o.value===text))select.value=text;
 }
-for(const b of document.querySelectorAll('.mode-tabs button'))b.addEventListener('click',()=>setMode(b.dataset.mode));
+const back=()=>{location.href='/listings'+(listingId?'?listing='+listingId:'');};
+$('redo-back').addEventListener('click',back);
 
-function goStep(n){
- if(!state)return;
- state.step=n;
- for(const node of document.querySelectorAll('.redo-step'))node.classList.toggle('hidden',Number(node.dataset.step)!==n);
- for(const li of document.querySelectorAll('.redo-nav button')){
-  const s=Number(li.dataset.step);li.classList.toggle('active',s===n);li.classList.toggle('done',s<n);
- }
- if(n===4)paintSummary();
-}
-for(const b of document.querySelectorAll('.redo-nav button'))b.addEventListener('click',()=>{if(state?.loaded&&state.info?.artworkId)goStep(Number(b.dataset.step));});
-for(const b of document.querySelectorAll('[data-redo-go]'))b.addEventListener('click',()=>goStep(Number(b.dataset.redoGo)));
-
-// A new listing opened in the editor: the redo starts over, in Edit mode.
-function open(id,fields){
- stopPolling();
- state={id:Number(id),fields:fields||{},loaded:false,info:null,jobId:'',preset:'',mockups:new Map(),chosen:new Set(),order:[],
-  finished:false,style:'',applying:false};
- el('redo-title').value=fields?.title||'';el('redo-tags').value=(fields?.tags||[]).join(', ');el('redo-description').value='';
- el('redo-mockups').replaceChildren();el('redo-bar').classList.add('hidden');el('redo-mockup-note').textContent='';
- el('redo-keep-photos').checked=false;el('redo-template').checked=true;
- for(const id of ['redo-unavailable','redo-mockup-status','redo-seo-status','redo-status'])hush(id);
- el('redo-steps').classList.add('hidden');el('redo-loading').classList.remove('hidden');
- countTitle();goStep(1);setMode('edit');
-}
-
-async function loadInfo(s){
- s.loaded=true;
+// The listing, its artwork and the shop's Etsy settings.
+async function load(){
+ if(!listingId){status('redo-summary-status','No listing was chosen. Go back and open a listing first.','warn');return;}
  try{
-  const info=await request(path(s.id,'redo'));
-  if(!alive(s))return;
-  s.info=info;el('redo-loading').classList.add('hidden');
-  if(!info.artworkId){
-   say('redo-unavailable','This listing\'s artwork is not in the app (or its master file is missing), so it cannot be redone here. '+
-    'Convert it with the Gelato → Silvia Converter first, or replace its production artwork.','warn');
+  const [data,options]=await Promise.all([request(base+'redo'),fetch('/etsy/listing-options',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))]);
+  info=data;
+  $('scope-badge').textContent='Etsy listing #'+listingId;
+  if(!data.artworkId){
+   status('redo-summary-status',data.reason||'This listing\'s artwork is not in the app, so it cannot be redone here.','warn');
+   for(const node of document.querySelectorAll('#creator-form input,#creator-form select,#creator-form textarea,#creator-form button'))node.disabled=true;
    return;
   }
-  el('redo-steps').classList.remove('hidden');
-  el('redo-artwork').textContent=info.artworkId+(info.title?' · '+info.title:'');
-  el('redo-layout').textContent=info.layoutName+' artwork · mockups, description and sizes follow the '+info.layoutName+' template';
-  const pic=el('redo-picture');pic.classList.toggle('hidden',!info.picture);if(info.picture)pic.src=info.picture;
-  const presets=el('redo-preset');presets.replaceChildren();
-  for(const p of info.presets){const o=document.createElement('option');o.value=p.name;o.textContent=p.name+' ('+p.count+' mockups)';presets.append(o);}
-  presets.value=info.chosen||'';
-  if(!info.presets.length)say('redo-mockup-status','No mockup preset has '+info.layoutName.toLowerCase()+' mockups. Add a preset folder on the PC, or keep the listing\'s photos.','warn');
-  el('redo-worker').classList.toggle('hidden',info.workerOnline);
-  const section=el('redo-section');section.replaceChildren();
-  const none=document.createElement('option');none.value='';none.textContent='Keep the current section';section.append(none);
-  for(const item of info.sections){const o=document.createElement('option');o.value=item.id;o.textContent=item.title;section.append(o);}
-  section.value=String(s.fields.shopSectionId||'')&&info.sections.some(x=>x.id===String(s.fields.shopSectionId))?String(s.fields.shopSectionId):'';
-  el('redo-write').disabled=!info.chatGpt;
-  if(!info.chatGpt)say('redo-seo-status','ChatGPT is not connected (OPENAI_API_KEY in Render): write the title, tags and description by hand.','warn');
-  if(info.run?.state==='running'){goStep(4);followRun(s);}
- }catch(error){
-  if(!alive(s))return;
-  s.loaded=false;el('redo-loading').classList.add('hidden');say('redo-unavailable','Could not load the redo: '+String(error.message||error),'error');
+  limit=data.limit||20;
+  $('redo-sub').textContent='Etsy listing #'+listingId+' ('+data.state+') · '+data.artworkId+'. Set it up again from scratch: it keeps its URL, reviews, favourites and sales.';
+  $('artwork_id').value=data.artworkId;$('orientation_name').value=data.layoutName;
+  if(data.picture){$('redo-picture').src=data.picture;$('redo-picture').hidden=false;}
+  fillOptions(options,data);
+  $('title').value=data.current.title;$('tags').value=(data.current.tags||[]).join(', ');
+  counts();
+  const presets=$('redo-preset');presets.replaceChildren();
+  for(const p of data.presets)option(presets,p.name,p.name+' ('+p.count+' mockups)');
+  presets.value=data.chosen||'';
+  if(!data.presets.length){status('redo-mockup-status','No mockup preset has '+data.layoutName.toLowerCase()+' mockups. Add a preset folder on the PC, or keep the listing\'s current photos.','warn');$('redo-make').disabled=true;}
+  $('redo-worker').style.display=data.workerOnline?'none':'block';
+  status('redo-summary-status','Redoing Etsy listing #'+listingId+' with '+data.artworkId+' ('+data.layoutName+'). Make new mockups, write the SEO and check the settings, then click Update Etsy listing.','ok');
+  $('redo-update').disabled=false;
+  if(data.run?.state==='running')followRun();
+ }catch(error){status('redo-summary-status','Could not load the listing: '+String(error.message||error),'warn');}
+}
+// The settings start from the orientation's template (Listings → Templates),
+// else what the listing has now. The shop section stays the listing's.
+function fillOptions(d,data){
+ const lists={shipping_profile_id:['shippingProfiles','shipping_profile_id',p=>p.title||('Shipping profile '+p.shipping_profile_id)],
+  readiness_state_id:['readinessProfiles','readiness_state_id',p=>(p.title||p.name||p.readiness_state||('Processing profile '+p.readiness_state_id))+
+   (p.min_processing_time!==undefined&&p.max_processing_time!==undefined?' · '+p.min_processing_time+'–'+p.max_processing_time+' '+(p.processing_time_unit||'days'):'')],
+  shop_section_id:['shopSections','shop_section_id',p=>p.title||('Section '+p.shop_section_id)],
+  return_policy_id:['returnPolicies','return_policy_id',p=>(p.accepts_returns?'Returns':'No returns')+' · '+(p.accepts_exchanges?'Exchanges':'No exchanges')+(p.return_deadline?' · '+p.return_deadline+' days':'')],
+  production_partner_id:['productionPartners','production_partner_id',p=>p.partner_name||('Partner '+p.production_partner_id)]};
+ const first={shipping_profile_id:'Keep the listing\'s shipping profile',readiness_state_id:'Template processing profile',shop_section_id:'Keep the listing\'s section',
+  return_policy_id:'Keep the listing\'s return policy',production_partner_id:'No production partner'};
+ for(const [id,[key,valueKey,label]] of Object.entries(lists)){
+  const select=$(id);select.replaceChildren();option(select,'',first[id]);
+  for(const p of d?.[key]||[])option(select,p[valueKey],label(p));
  }
+ const current=data.current,template=d?.listingTemplates?.[data.layout]||{};
+ const pick=key=>template[key]!==undefined&&template[key]!==''&&template[key]!==null?template[key]:current[key];
+ setSelect('shipping_profile_id',pick('shipping_profile_id'));
+ setSelect('readiness_state_id',template.readiness_state_id||d?.detectedPreset?.readiness_state_id||'');
+ setSelect('shop_section_id',current.shop_section_id||'');
+ setSelect('return_policy_id',pick('return_policy_id'));
+ setSelect('production_partner_id',template.production_partner_id!==undefined?(template.production_partner_id||''):(current.production_partner_id||''));
+ setSelect('who_made',pick('who_made')||'i_did');setSelect('when_made',pick('when_made')||'made_to_order');
+ setSelect('is_supply',String(Boolean(pick('is_supply'))));setSelect('should_auto_renew',String(pick('should_auto_renew')!==false));
+ setSelect('listing_style',template.listing_style||'');
+ status('template-status',Object.keys(template).length?'Settings filled from the '+data.layoutName+' template (Listings → Templates), else the listing\'s own.':
+  'No '+data.layoutName+' template yet: the listing\'s own settings.',Object.keys(template).length?'ok':'');
 }
 
-// Step 2: mockups from a preset, made on the PC as for a new listing.
-el('redo-keep-photos').addEventListener('change',()=>{
- const keep=el('redo-keep-photos').checked;
- el('redo-mockup-tools').classList.toggle('hidden',keep);
-});
-el('redo-make').addEventListener('click',async()=>{
- const s=state;if(!s?.info)return;
- const preset=el('redo-preset').value;if(!preset){say('redo-mockup-status','Choose a mockup preset.','error');return;}
- if(s.jobId&&!s.finished&&!confirm('Mockups are still being made. Start again with '+preset+'?'))return;
- stopPolling();s.jobId='';s.mockups.clear();s.chosen.clear();s.order=[];s.finished=false;el('redo-mockups').replaceChildren();
- const btn=el('redo-make');btn.disabled=true;say('redo-mockup-status','Starting the mockups…');
+// Mockups: made from a preset on the PC; the finished ones show on the right.
+function renderPreview(){
+ const list=$('mg-preview-list'),keep=$('redo-keep-photos').checked;
+ list.replaceChildren();
+ $('mg-select-all').disabled=$('mg-deselect-all').disabled=keep;
+ if(keep){
+  $('redo-preview-title').textContent='Current Etsy photos';$('mg-preview-count').textContent=(info?.photos?.length||0)+' kept';
+  for(const url of info?.photos||[]){const item=document.createElement('div');item.className='mg-preview-item kept';
+   const img=document.createElement('img');img.src=url;img.alt='Current photo';img.loading='lazy';item.append(img);list.append(item);}
+  $('mg-selection-status').textContent='The listing keeps these photos. Untick "Keep the listing\'s current photos" to use new mockups.';
+  return;
+ }
+ $('redo-preview-title').textContent='Generated mockups';
+ if(!order.length){const p=document.createElement('p');p.className='mg-preview-empty';
+  p.textContent=jobId?'Mockups are being made on the PC; they appear here as they finish.':'Choose a preset and click Make mockups. Finished mockups appear here while they generate.';list.append(p);}
+ for(const id of order){
+  const m=mockups.get(id),item=document.createElement('label');item.className='mg-preview-item';
+  const box=document.createElement('input');box.type='checkbox';box.checked=m.chosen;
+  box.addEventListener('change',()=>{m.chosen=box.checked;selection();});
+  const img=document.createElement('img');img.src=m.url;img.alt=m.name;img.loading='lazy';
+  const name=document.createElement('span');name.textContent=m.name;
+  item.append(box,img,name);list.append(item);
+ }
+ selection();
+}
+function chosenIds(){return order.filter(id=>mockups.get(id).chosen);}
+function selection(){
+ if($('redo-keep-photos').checked)return;
+ const n=chosenIds().length;
+ $('mg-preview-count').textContent=order.length+' ready';
+ $('mg-selection-status').textContent=order.length?n+' of '+order.length+' mockups chosen'+(n>limit?' — Etsy takes '+limit+' photos at most':'')+'. The preset photos and video are added as for a new listing.':
+  'Pick up to '+limit+' mockups. With the preset photos, Etsy shows the first '+limit+'.';
+}
+$('mg-select-all').addEventListener('click',()=>{order.forEach((id,i)=>{mockups.get(id).chosen=i<limit;});renderPreview();});
+$('mg-deselect-all').addEventListener('click',()=>{for(const m of mockups.values())m.chosen=false;renderPreview();});
+$('redo-keep-photos').addEventListener('change',()=>{$('redo-mockup-tools').style.display=$('redo-keep-photos').checked?'none':'';renderPreview();});
+$('redo-make').addEventListener('click',async()=>{
+ const name=$('redo-preset').value;if(!info?.artworkId||!name)return;
+ if(jobId&&!finished&&!confirm('Mockups are still being made. Start again with '+name+'?'))return;
+ clearTimeout(pollTimer);jobId='';finished=false;mockups.clear();order.length=0;renderPreview();
+ const btn=$('redo-make');btn.disabled=true;status('redo-mockup-status','Starting the mockups…');
  try{
-  const started=await request(path(s.id,'redo-mockups'),{preset});
-  if(!alive(s))return;
-  s.jobId=started.jobId;s.preset=preset;s.total=started.total;
-  el('redo-bar').classList.remove('hidden');el('redo-bar').firstElementChild.style.width='0';
-  say('redo-mockup-status','Making '+started.total+' mockups on the PC'+(started.workerOnline?'…':' — the PC worker is offline: start it to go on.'),started.workerOnline?'':'warn');
-  pollMockups(s);
- }catch(error){say('redo-mockup-status',String(error.message||error),'error');}
+  const started=await request(base+'redo-mockups',{preset:name});
+  jobId=started.jobId;preset=name;$('redo-progress').hidden=false;$('redo-progress').firstElementChild.style.width='0';
+  $('redo-worker').style.display=started.workerOnline?'none':'block';
+  status('redo-mockup-status','Making '+started.total+' mockups on the PC…');renderPreview();poll(jobId);
+ }catch(error){status('redo-mockup-status',String(error.message||error),'warn');}
  finally{btn.disabled=false;}
 });
-async function pollMockups(s){
- if(!alive(s)||!s.jobId)return;
- const jobId=s.jobId;
+async function poll(id){
+ if(id!==jobId)return;
  try{
-  const data=await request(path(s.id,'redo')+'?job='+encodeURIComponent(jobId));
-  if(!alive(s)||s.jobId!==jobId)return;
-  for(const m of data.mockups)if(!s.mockups.has(m.id)){s.mockups.set(m.id,m);s.order.push(m.id);s.chosen.add(m.id);addTile(s,m);}
-  const st=data.status;
-  el('redo-bar').firstElementChild.style.width=Math.round(100*(st.done+st.failed)/Math.max(1,st.total))+'%';
-  s.finished=st.finished;
-  if(st.finished){
-   el('redo-bar').classList.add('hidden');
-   say('redo-mockup-status',st.done+' of '+st.total+' mockups made'+(st.failed?' ('+st.failed+' failed)':'')+
-    '. Untick any you do not want; the preset photos are added as for a new listing.',st.done?'':'error');
-  }else say('redo-mockup-status',st.done+' of '+st.total+' mockups made'+(st.note?' — '+st.note:'')+'…');
-  paintChosen(s);
-  if(!st.finished)pollTimer=setTimeout(()=>pollMockups(s),3000);
- }catch(error){
-  if(!alive(s))return;
-  say('redo-mockup-status','Could not check the mockups ('+String(error.message||error)+'). Trying again…','warn');
-  pollTimer=setTimeout(()=>pollMockups(s),6000);
- }
-}
-function addTile(s,m){
- const b=document.createElement('button');b.type='button';b.className='chosen';b.dataset.id=m.id;b.title=m.name;
- const img=document.createElement('img');img.alt=m.name;img.loading='lazy';img.src=m.url;
- const tick=document.createElement('span');tick.textContent='✓';
- b.append(img,tick);
- b.addEventListener('click',()=>{if(s.chosen.has(m.id))s.chosen.delete(m.id);else s.chosen.add(m.id);paintChosen(s);});
- el('redo-mockups').append(b);
-}
-function paintChosen(s){
- for(const b of el('redo-mockups').children){const on=s.chosen.has(b.dataset.id);b.classList.toggle('chosen',on);b.lastElementChild.textContent=on?'✓':'';}
- el('redo-mockup-note').textContent=s.mockups.size?s.chosen.size+' of '+s.mockups.size+' mockups chosen':'';
+  const data=await request(base+'redo?job='+encodeURIComponent(id));
+  if(id!==jobId)return;
+  let added=false;
+  for(const m of data.mockups)if(!mockups.has(m.id)){mockups.set(m.id,{...m,chosen:order.length<limit});order.push(m.id);added=true;}
+  const st=data.status;finished=st.finished;
+  $('redo-progress').firstElementChild.style.width=Math.round(100*(st.done+st.failed)/Math.max(1,st.total))+'%';
+  if(finished){$('redo-progress').hidden=true;status('redo-mockup-status',st.done+' of '+st.total+' mockups made'+(st.failed?' ('+st.failed+' failed)':'')+'. Untick any you do not want on the right.',st.done?'ok':'warn');}
+  else status('redo-mockup-status',st.done+' of '+st.total+' mockups made'+(st.note?' — '+st.note:'')+'…');
+  if(added&&!$('redo-keep-photos').checked)renderPreview();
+  if(!finished)pollTimer=setTimeout(()=>poll(id),3000);
+ }catch(error){status('redo-mockup-status','Could not check the mockups ('+String(error.message||error)+'). Trying again…','warn');pollTimer=setTimeout(()=>poll(id),6000);}
 }
 
-// Step 3: title, tags and description, written by ChatGPT from the artwork or by hand.
-function countTitle(){el('redo-title-count').textContent=el('redo-title').value.trim().length+'/140';}
-function tagList(){return el('redo-tags').value.split(',').map(t=>t.trim()).filter(Boolean);}
-function countTags(){const tags=tagList();el('redo-tags-count').textContent=tags.length+'/13'+(tags.some(t=>t.length>20)?' · a tag is over 20 characters':'');}
-el('redo-title').addEventListener('input',countTitle);el('redo-tags').addEventListener('input',countTags);
-el('redo-write').addEventListener('click',async()=>{
- const s=state;if(!s?.info)return;
- const btn=el('redo-write');btn.disabled=true;say('redo-seo-status','ChatGPT is looking at the artwork… (up to a minute)');
+// SEO: pasted output or ChatGPT, read as in the Product Creator.
+const norm=v=>String(v||'').normalize('NFKC').replace(/[*_#:—–-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
+function counts(){
+ $('title-count').textContent=$('title').value.trim().length+'/140';
+ const tags=tagList();$('tags-count').textContent=tags.length+'/13 tags'+(tags.some(t=>t.length>20)?' · a tag is over 20 characters':'');
+}
+function tagList(){return $('tags').value.split(',').map(t=>t.trim()).filter(Boolean);}
+$('title').addEventListener('input',counts);$('tags').addEventListener('input',counts);
+function applySeo(seo){
+ if(seo.title)$('title').value=seo.title;
+ if(seo.description)$('seo_description').value=seo.description;
+ if(seo.tags?.length)$('tags').value=seo.tags.join(', ');
+ const style=seo.style||seo.homestyle;
+ if(style){const match=[...$('listing_style').options].find(o=>o.value&&norm(o.value)===norm(style));if(match)$('listing_style').value=match.value;}
+ const id=String(seo.sectionId||'')||String(seo.sectionUrl||'').match(/[?&]section_id=(\d+)/)?.[1]||'';
+ const section=[...$('shop_section_id').options].find(o=>(id&&o.value===id)||(!id&&seo.sectionName&&norm(o.textContent)===norm(seo.sectionName)));
+ if(section)$('shop_section_id').value=section.value;
+ counts();
+}
+$('apply-seo-btn').addEventListener('click',()=>{
+ const text=$('seo_generator_output').value.trim();
+ if(!text)return status('seo-paste-status','Paste the SEO output first.','warn');
+ const seo=window.parseSeoPaste(text);applySeo(seo);
+ const needed=seo.missing.filter(part=>['title','description','tags'].includes(part));
+ status('seo-paste-status',(seo.found.length?'Filled in: '+seo.found.map(p=>p==='tags'?seo.tags.length+' tags':p).join(', ')+'.':'Nothing recognised in the paste.')+
+  (seo.missing.length?' Missing from the paste: '+seo.missing.join(', ')+'.':''),needed.length?'warn':'ok');
+});
+$('ai-seo-btn').addEventListener('click',async()=>{
+ if(!info?.artworkId)return;
+ const btn=$('ai-seo-btn');btn.disabled=true;status('seo-paste-status','ChatGPT is looking at the artwork and writing the SEO…');
  try{
-  const {seo}=await request(path(s.id,'redo-seo'),{});
-  if(!alive(s))return;
-  el('redo-title').value=seo.title;el('redo-tags').value=seo.tags.join(', ');el('redo-description').value=seo.description;
-  s.style=seo.style||'';
-  if(seo.sectionId&&[...el('redo-section').options].some(o=>o.value===seo.sectionId))el('redo-section').value=seo.sectionId;
-  countTitle();countTags();
-  say('redo-seo-status','New SEO written'+(seo.style?' · style: '+seo.style:'')+(seo.missingTags?' · add '+seo.missingTags+' more tag(s) by hand':'')+'. Edit anything before going on.');
- }catch(error){if(alive(s))say('redo-seo-status',String(error.message||error),'error');}
+  const data=await request('/api/ai-seo/generate',{artworkId:info.artworkId,orientation:info.layoutName});
+  $('seo_generator_output').value=data.pasteText||'';applySeo(data.seo||{});
+  status('seo-paste-status','Written by ChatGPT'+(data.seo?.missingTags?' · add '+data.seo.missingTags+' more tag(s) by hand':'')+'. Edit anything before updating Etsy.','ok');
+ }catch(error){status('seo-paste-status',String(error.message||error),'warn');}
  finally{btn.disabled=false;}
 });
+$('redo-template').addEventListener('change',()=>{$('readiness_state_id').disabled=!$('redo-template').checked;});
 
-// Step 4: what will change, then the redo itself.
+// Update Etsy listing.
 function plan(){
- const s=state,keep=el('redo-keep-photos').checked;
- return {confirm:CONFIRM,photos:!keep,mockupJobId:s.jobId,templateIds:s.order.filter(id=>s.chosen.has(id)),preset:s.preset,
-  template:el('redo-template').checked,
-  seo:{title:el('redo-title').value.trim(),tags:tagList(),description:el('redo-description').value.trim(),sectionId:el('redo-section').value,style:s.style}};
+ const keep=$('redo-keep-photos').checked,num=id=>$(id).value?Number($(id).value):'';
+ return {confirm:CONFIRM,photos:!keep,mockupJobId:jobId,templateIds:chosenIds(),preset,template:$('redo-template').checked,
+  seo:{title:$('title').value.trim(),tags:tagList(),description:$('seo_description').value.trim(),sectionId:$('shop_section_id').value,style:$('listing_style').value},
+  settings:{shipping_profile_id:num('shipping_profile_id'),readiness_state_id:num('readiness_state_id'),return_policy_id:num('return_policy_id'),
+   production_partner_id:num('production_partner_id'),who_made:$('who_made').value,when_made:$('when_made').value,
+   is_supply:$('is_supply').value==='true',should_auto_renew:$('should_auto_renew').value==='true',listing_style:$('listing_style').value}};
 }
 function problems(p){
  const out=[];
  if(p.photos){
-  if(!p.mockupJobId)out.push('Make the mockups (step 2), or tick "Keep the listing\'s current photos".');
-  else if(!state.finished)out.push('Wait for the mockups to finish (step 2).');
-  else if(!p.templateIds.length)out.push('Choose at least one mockup (step 2).');
+  if(!p.mockupJobId)out.push('Make the mockups, or tick "Keep the listing\'s current photos".');
+  else if(!finished)out.push('Wait for the mockups to finish.');
+  else if(!p.templateIds.length)out.push('Choose at least one mockup on the right.');
+  else if(p.templateIds.length>limit)out.push('Choose up to '+limit+' mockups.');
  }
- if(!p.seo.title||p.seo.title.length>140)out.push('The title must be 1–140 characters (step 3).');
- if(!p.seo.tags.length||p.seo.tags.length>13||p.seo.tags.some(t=>t.length>20))out.push('Use 1–13 tags of up to 20 characters (step 3).');
- if(!p.seo.description)out.push('Write the description (step 3).');
+ if(!p.seo.title||p.seo.title.length>140)out.push('The title must be 1–140 characters.');
+ if(!p.seo.tags.length||p.seo.tags.length>13||p.seo.tags.some(t=>t.length>20))out.push('Use 1–13 tags of up to 20 characters each.');
+ if(!p.seo.description)out.push('Write the Short SEO Description (or use ChatGPT).');
  return out;
 }
-function paintSummary(){
- const p=plan(),list=el('redo-summary');list.replaceChildren();
- const line=(label,text)=>{const li=document.createElement('li');const b=document.createElement('b');b.textContent=label+': ';li.append(b,text);list.append(li);};
- line('Photos',p.photos?(p.templateIds.length+' new mockups from '+(p.preset||'the preset')+', with the preset photos, replace the current photos'):'kept as they are');
- line('Title',p.seo.title||'(missing)');
- line('Tags',p.seo.tags.length+' tags');
- line('Description','the '+(state.info?.layoutName||'')+' template with the new SEO description');
- line('Sizes, prices and profiles',p.template?'the current template (sizes, prices, shipping and processing profiles, style)':'kept as they are');
- const issues=problems(p);
- if(issues.length)say('redo-status',issues.join('\n'),'warn');else if(!state.applying)hush('redo-status');
- el('redo-apply').disabled=Boolean(issues.length)||state.applying;
-}
-el('redo-template').addEventListener('change',paintSummary);
-el('redo-apply').addEventListener('click',async()=>{
- const s=state;if(!s?.info)return;
- const p=plan();if(problems(p).length)return paintSummary();
- if(!confirm('Redo Etsy listing #'+s.id+' now? Its photos, title, tags and description'+(p.template?', sizes and prices':'')+
-  ' are replaced on Etsy. The listing keeps its URL, reviews and favourites.'))return;
- s.applying=true;el('redo-apply').disabled=true;say('redo-status','Starting the redo…');
- try{
-  await request(path(s.id,'redo-apply'),p);
-  if(alive(s))followRun(s);
- }catch(error){s.applying=false;if(alive(s)){say('redo-status',String(error.message||error),'error');el('redo-apply').disabled=false;}}
+$('redo-update').addEventListener('click',async()=>{
+ if(!info?.artworkId||applying)return;
+ const p=plan(),issues=problems(p);
+ if(issues.length)return result(issues.join('\n'),'error');
+ if(!confirm('Update Etsy listing #'+listingId+' now?\n\n'+(p.photos?p.templateIds.length+' new mockups (with the preset photos) replace its photos.\n':'Its photos stay.\n')+
+  'Its title, tags, description'+(p.template?', sizes, prices':'')+' and settings are replaced.\nIt keeps its URL, reviews and favourites.'))return;
+ applying=true;$('redo-update').disabled=true;result('Starting…');
+ try{await request(base+'redo-apply',p);followRun();}
+ catch(error){applying=false;$('redo-update').disabled=false;result(String(error.message||error),'error');}
 });
-const STEP_TEXT={photos:'Putting the new photos on Etsy…',details:'Updating the title, tags, description and sizes on Etsy…',saving:'Saving…'};
-async function followRun(s){
- if(!alive(s))return;
- s.applying=true;el('redo-apply').disabled=true;
+const STEP_TEXT={photos:'Putting the new photos on Etsy…',details:'Updating the title, tags, description, sizes and settings on Etsy…',saving:'Saving…'};
+async function followRun(){
+ applying=true;$('redo-update').disabled=true;
  try{
-  const {run}=await request(path(s.id,'redo')+'?progress=1');
-  if(!alive(s))return;
-  if(run?.state==='running'){say('redo-status',STEP_TEXT[run.step]||'Working…');pollTimer=setTimeout(()=>followRun(s),3000);return;}
-  s.applying=false;
+  const {run}=await request(base+'redo?progress=1');
+  if(run?.state==='running'){result(STEP_TEXT[run.step]||'Working…');pollTimer=setTimeout(followRun,3000);return;}
+  applying=false;
   if(run?.state==='done'){
-   say('redo-status','Done. Etsy listing #'+s.id+' is redone'+(run.photos?' with '+run.photos+' photos':'')+'. Open it on Etsy to check it.');
-   document.dispatchEvent(new CustomEvent('listing-redone',{detail:{listingId:s.id}}));
-  }else{say('redo-status','The redo stopped: '+String(run?.error||'unknown error'),'error');el('redo-apply').disabled=false;}
- }catch(error){if(alive(s)){say('redo-status','Could not check the redo ('+String(error.message||error)+'). Trying again…','warn');pollTimer=setTimeout(()=>followRun(s),6000);}}
+   const n=$('result');n.className='result show';n.textContent='';
+   const strong=document.createElement('strong');strong.textContent='Listing updated. ';
+   const link=document.createElement('a');link.href='https://www.etsy.com/listing/'+listingId;link.target='_blank';link.rel='noopener';link.textContent='View it on Etsy';link.style.textDecoration='underline';
+   n.append(strong,'Etsy listing #'+listingId+' is redone'+(run.photos?' with '+run.photos+' photos':'')+'. ',link);
+   $('redo-update').textContent='Updated';
+  }else{result('The update stopped: '+String(run?.error||'unknown error'),'error');$('redo-update').disabled=false;}
+ }catch(error){result('Could not check the update ('+String(error.message||error)+'). Trying again…');pollTimer=setTimeout(followRun,6000);}
 }
-window.listingRedo={open,setMode};
+load();
 })();
