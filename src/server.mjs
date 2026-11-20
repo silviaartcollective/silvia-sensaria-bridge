@@ -6157,30 +6157,18 @@ const server = http.createServer(async (req, res) => {
             name:String(t.name||t.outputName||''),url:await signedArtworkUrl(t.previewKey||t.outputKey,3600).catch(()=>'')})));
           return sendJson(res,200,{ok:true,status,mockups});
         }
-        const [templates,saved,images,media,orders]=await Promise.all([listMockupTemplates(),getJsonObject(REPOST_PRESET_KEY).catch(()=>null),
-          getEtsyListingImages({listingId:id,...credentials}).catch(()=>[]),presetMediaStatus(),loadPhotoOrders()]);
-        // Counted as Make mockups will pick them (the preset's arranged order, else orientation).
-        const counted=mockupPresets(templates.filter(t=>t.status==='ready')).map(p=>{
-          const ids=presetMockupIds(p,art.layout,{media,orders});return {name:p.name,count:ids.length,templateIds:ids};
-        });
+        const [templates,images]=await Promise.all([listMockupTemplates(),getEtsyListingImages({listingId:id,...credentials}).catch(()=>[])]);
         // The saved PSD library, as in the Product Creator: the ready templates
         // made for this artwork's shape (a mockup job takes only those).
         const shape=mockupOrientationOf(art.manifest);
         const library=templates.filter(t=>t.status==='ready'&&templateMatchesArtwork(t,shape)).map(t=>({id:String(t.id),name:String(t.name||''),
           folder:String(t.localPath||'').split('/').slice(0,-1).join(' / '),preview:'/api/batch/template-preview/'+encodeURIComponent(t.id)}));
         const shapes={};for(const t of templates){const k=t.status&&t.status!=='ready'?'not ready':String(t.orientation||'unclassified').toLowerCase();shapes[k]=(shapes[k]||0)+1;}
-        const presets=counted.filter(p=>p.count),emptyPresets=counted.filter(p=>!p.count).map(p=>p.name);
-        // What each preset holds, by template orientation, for the page to explain an empty list.
-        const presetShapes=presets.length?[]:mockupPresets(templates).map(p=>{
-          const by={};for(const t of p.templates){const k=t.status&&t.status!=='ready'?'not ready':String(t.orientation||'unclassified');by[k]=(by[k]||0)+1;}
-          return {name:p.name,shapes:by};
-        });
-        const chosen=presets.find(p=>presetKey(p.name)===presetKey(saved?.name))||presets[0]||null;
         const preview=art.manifest.preview;
         // The page starts from what the listing has now; the template fills the rest.
         return sendJson(res,200,{ok:true,listingId:id,state:String(fresh.state||''),artworkId:art.artworkId,layout:art.layout,
           layoutName:LAYOUT_NAMES[art.layout]||art.layout,picture:preview?.galleryKey?libraryPicture(art.artworkId,'gallery',preview.madeAt):'',
-          presets,emptyPresets,presetShapes,templateCount:templates.length,library,shapes,chosen:chosen?.name||'',limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
+          templateCount:templates.length,library,shapes,limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
           photos:images.slice(0,ETSY_PHOTO_LIMIT).map(image=>String(image.url_570xN||image.url_fullxfull||'')).filter(Boolean),
           current:{title:String(fresh.title||''),tags:fresh.tags||[],shop_section_id:Number(fresh.shop_section_id)||0,
             shipping_profile_id:Number(fresh.shipping_profile_id)||0,return_policy_id:Number(fresh.return_policy_id)||0,
@@ -6194,19 +6182,16 @@ const server = http.createServer(async (req, res) => {
           const art=await redoArtwork(id,fresh);
           if(!art.artworkId)return sendJson(res,400,{ok:false,error:art.reason});
           if(action==='redo-mockups'){
-            if(Array.isArray(input.templateIds)){
-              const ids=[...new Set(input.templateIds.map(String))];
-              if(!ids.length||ids.length>60)return sendJson(res,400,{ok:false,error:'Choose 1 to 60 mockup templates.'});
-              const shape=mockupOrientationOf(art.manifest);
-              const usable=new Set((await listMockupTemplates()).filter(t=>t.status==='ready'&&templateMatchesArtwork(t,shape)).map(t=>String(t.id)));
-              const odd=ids.find(id=>!usable.has(id));
-              if(odd)return sendJson(res,400,{ok:false,error:'A chosen template is not a ready '+(LAYOUT_NAMES[art.layout]||art.layout).toLowerCase()+' template any more. Reload the page.'});
-              // Rendered first, like the Product Creator's: someone is waiting on this page.
-              const job=await mockupJobFromArtwork({artworkId:art.artworkId,templateIds:ids});
-              return sendJson(res,200,{ok:true,jobId:job.id,total:job.templates.length,workerOnline:Boolean(cropWorkerStatus().online)});
-            }
-            const started=await batchDeps().startMockups({artworkId:art.artworkId,orientation:art.layout,preset:String(input.preset||'')});
-            return sendJson(res,200,{ok:true,...started,workerOnline:Boolean(cropWorkerStatus().online)});
+            // The ticked PSD templates, as in the Product Creator.
+            const ids=[...new Set((Array.isArray(input.templateIds)?input.templateIds:[]).map(String))];
+            if(!ids.length||ids.length>60)return sendJson(res,400,{ok:false,error:'Tick 1 to 60 PSD templates.'});
+            const shape=mockupOrientationOf(art.manifest);
+            const usable=new Set((await listMockupTemplates()).filter(t=>t.status==='ready'&&templateMatchesArtwork(t,shape)).map(t=>String(t.id)));
+            const odd=ids.find(id=>!usable.has(id));
+            if(odd)return sendJson(res,400,{ok:false,error:'A ticked template is not a ready '+(LAYOUT_NAMES[art.layout]||art.layout).toLowerCase()+' template any more. Reload the page.'});
+            // Rendered first, like the Product Creator's: someone is waiting on this page.
+            const job=await mockupJobFromArtwork({artworkId:art.artworkId,templateIds:ids});
+            return sendJson(res,200,{ok:true,jobId:job.id,total:job.templates.length,workerOnline:Boolean(cropWorkerStatus().online)});
           }
           const plan=checkRedoInput(input,{confirm:'REDO SILVIA LISTING'});
           // "Keep the current section": the description template still names it.
