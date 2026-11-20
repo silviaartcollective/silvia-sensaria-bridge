@@ -118,50 +118,44 @@ function selection(){
 $('mg-select-all').addEventListener('click',()=>{order.forEach((id,i)=>{mockups.get(id).chosen=i<limit;});renderPreview();});
 $('mg-deselect-all').addEventListener('click',()=>{for(const m of mockups.values())m.chosen=false;renderPreview();});
 $('redo-keep-photos').addEventListener('change',()=>{$('redo-mockup-tools').style.display=$('redo-keep-photos').checked?'none':'';renderPreview();});
-// The PSD library for this artwork's shape, as in the Product Creator: tick the
-// templates to use. The last choice is remembered.
-const pickKey=()=>'redo-templates-'+(info?.layout||'');
-function rememberPick(ids){try{localStorage.setItem(pickKey(),JSON.stringify(ids));}catch{}}
-function rememberedPick(){try{return JSON.parse(localStorage.getItem(pickKey())||'[]');}catch{return [];}}
-function tickedIds(){return [...$('redo-library').querySelectorAll('input:checked')].map(box=>box.value);}
-function countTicked(){const n=tickedIds().length;$('redo-lib-count').textContent=n+' of '+(info?.library?.length||0)+' ticked';$('redo-make').disabled=!n||replacing;}
-function tick(ids){const want=new Set(ids.map(String));for(const box of $('redo-library').querySelectorAll('input'))box.checked=want.has(box.value);countTicked();}
+// Every PSD template for this artwork's shape is made, as in the Product
+// Creator: started as soon as the page opens (or the new artwork is in), and
+// a run already made from this master with all of them is picked up instead.
 function fillMockupChoices(data){
- const list=$('redo-library');list.replaceChildren();
- for(const t of data.library||[]){
-  const item=document.createElement('label');item.title=t.folder?t.folder+' / '+t.name:t.name;
-  const box=document.createElement('input');box.type='checkbox';box.value=t.id;box.addEventListener('change',countTicked);
-  const img=document.createElement('img');img.loading='lazy';img.alt='';img.src=t.preview;img.onerror=()=>{img.style.visibility='hidden';};
-  const name=document.createElement('span');name.textContent=t.name.replace(/\.psd$/i,'');
-  item.append(box,img,name);
-  if(t.folder){const folder=document.createElement('small');folder.textContent=t.folder;item.append(folder);}
-  list.append(item);
- }
- if(!(data.library||[]).length){
-  const shapes=Object.entries(data.shapes||{}).map(([k,n])=>n+' '+k).join(', ');
+ const n=(data.library||[]).length;
+ if(!n){
+  const shapes=Object.entries(data.shapes||{}).map(([k,count])=>count+' '+k).join(', ');
   status('redo-mockup-status','No '+data.layoutName.toLowerCase()+' PSD templates are ready. The app sees '+(data.templateCount||0)+' templates'+(shapes?': '+shapes:'')+
    '. Set their orientation in the Product Creator\'s PSD library (or keep them in a folder named after the shape on the PC), or keep the listing\'s current photos.','warn');
   $('redo-make').disabled=true;$('redo-lib-count').textContent='';return;
  }
- tick(rememberedPick().filter(id=>data.library.some(t=>t.id===id)));
- status('redo-mockup-status','','');
+ $('redo-lib-count').textContent='All '+n+' '+data.layoutName.toLowerCase()+' PSD templates in the library.';
+ $('redo-make').disabled=replacing;
 }
-$('redo-lib-first').addEventListener('click',()=>{tick((info?.library||[]).slice(0,limit).map(t=>t.id));});
-$('redo-lib-none').addEventListener('click',()=>tick([]));
-$('redo-make').addEventListener('click',async()=>{
- const ids=tickedIds();if(!info?.artworkId)return;
- if(!ids.length)return status('redo-mockup-status','Tick the PSD templates to make mockups from.','warn');
- if(jobId&&!finished&&!confirm('Mockups are still being made. Start again with the ticked templates?'))return;
- clearTimeout(pollTimer);jobId='';finished=false;mockups.clear();order.length=0;renderPreview();
- const btn=$('redo-make');btn.disabled=true;status('redo-mockup-status','Starting '+ids.length+' mockups…');
+function followJob(id,total,text){
+ clearTimeout(pollTimer);jobId=id;finished=false;mockups.clear();order.length=0;
+ $('redo-progress').hidden=false;$('redo-progress').firstElementChild.style.width='0';
+ status('redo-mockup-status',text||('Making '+total+' mockups on the PC…'));renderPreview();poll(jobId);
+}
+async function startAllMockups(){
+ if(!info?.artworkId||!(info.library||[]).length||replacing)return;
+ const btn=$('redo-make');btn.disabled=true;status('redo-mockup-status','Starting all '+info.library.length+' mockups…');
  try{
-  const started=await request(base+'redo-mockups',{templateIds:ids});
-  rememberPick(ids);
-  jobId=started.jobId;$('redo-progress').hidden=false;$('redo-progress').firstElementChild.style.width='0';
+  const started=await request(base+'redo-mockups',{});
   $('redo-worker').style.display=started.workerOnline?'none':'block';
-  status('redo-mockup-status','Making '+started.total+' mockups on the PC…');renderPreview();poll(jobId);
+  followJob(started.jobId,started.total);
  }catch(error){status('redo-mockup-status',String(error.message||error),'warn');}
- finally{btn.disabled=false;}
+ finally{btn.disabled=replacing;}
+}
+// On opening: the run already made, else a new one.
+function autoMockups(){
+ if(!info?.artworkId||replacing||jobId||!(info.library||[]).length)return;
+ if(info.lastJob)return followJob(info.lastJob.id,info.lastJob.total,'Picking up the '+info.lastJob.total+' mockups already made from this artwork…');
+ void startAllMockups();
+}
+$('redo-make').addEventListener('click',()=>{
+ if(jobId&&!finished&&!confirm('Mockups are still being made. Start all of them again?'))return;
+ void startAllMockups();
 });
 async function poll(id){
  if(id!==jobId)return;
@@ -306,6 +300,8 @@ $('redo-replace').addEventListener('click',async()=>{
   info.artworkId+'\'s master and production crops are replaced (orders use the new files from then on). Etsy is not changed until you click Update Etsy listing.'))return;
  lockForReplace(true);
  try{
+  clearTimeout(pollTimer);jobId='';finished=false;mockups.clear();order.length=0;renderPreview();
+  status('redo-mockup-status','The mockups are made again once the new artwork is in.');
   replaceStatus('Checking '+file.name+'…');replaceProgress(3);
   const [sha256,orientation]=await Promise.all([fingerprint(file),shapeOf(file)]);
   const reserved=await request('/api/listing-converter/reconvert/reserve',{listingId,artworkId:info.artworkId,orientation,
@@ -353,10 +349,11 @@ async function activate(revision){
    fillMockupChoices(fresh);
   }
   $('master_file').value='';replaceProgress(null);
-  replaceStatus('Artwork replaced: '+info.artworkId+' now uses the new master and crops. Make the mockups now so they show it.','ok');
+  replaceStatus('Artwork replaced: '+info.artworkId+' now uses the new master and crops. Its mockups are being made now.','ok');
   status('redo-mockup-status','',''); renderPreview();
  }catch(error){replaceFailed(error);return;}
  lockForReplace(false);
+ info.lastJob=null;void startAllMockups();
 }
 // A replacement started earlier (page reloaded) goes on here.
 async function resumeReplace(){
@@ -370,5 +367,5 @@ async function resumeReplace(){
   watchReplace(st.revision,Date.now());
  }catch{}
 }
-load().then(()=>{if(info?.artworkId)return resumeReplace();});
+load().then(async()=>{if(!info?.artworkId)return;await resumeReplace();autoMockups();});
 })();
