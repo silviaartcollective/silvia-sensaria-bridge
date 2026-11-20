@@ -21,7 +21,7 @@ test('a redo needs the confirmation, chosen mockups (or kept photos) and complet
   assert.throws(() => checkRedoInput(good({ mockupJobId: '' }), { confirm: CONFIRM }), /mockups/);
   assert.throws(() => checkRedoInput(good({ templateIds: [] }), { confirm: CONFIRM }), /at least one mockup/);
   assert.throws(() => checkRedoInput(good({ templateIds: Array.from({ length: 21 }, (_, i) => 't' + i) }), { confirm: CONFIRM }), /up to 20/);
-  assert.throws(() => checkRedoInput(good({ preset: '' }), { confirm: CONFIRM }), /preset/);
+  assert.equal(checkRedoInput(good({ preset: '' }), { confirm: CONFIRM }).photos.preset, '');
   assert.throws(() => checkRedoInput(good({ seo: { ...good().seo, title: 'x'.repeat(141) } }), { confirm: CONFIRM }), /title/);
   assert.throws(() => checkRedoInput(good({ seo: { ...good().seo, tags: [] } }), { confirm: CONFIRM }), /tag/);
   assert.throws(() => checkRedoInput(good({ seo: { ...good().seo, tags: ['a very long tag over twenty'] } }), { confirm: CONFIRM }), /20 characters/);
@@ -131,6 +131,19 @@ test('mockups tagged vertical or horizontal suit portrait or landscape artwork, 
   assert.equal(templateSuits({ orientation: 'unclassified' }, 'portrait'), false);
   assert.equal(templateSuits({ orientation: 'portrait', squareCompatible: true }, 'square'), true);
   const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
-  assert.match(server, /count:presetMockupIds\(p,art\.layout,\{media,orders\}\)\.length/);
+  assert.match(server, /const ids=presetMockupIds\(p,art\.layout,\{media,orders\}\);return \{name:p\.name,count:ids\.length,templateIds:ids\}/);
   assert.match(server, /const ids=presetMockupIds\(preset,layout,\{media,orders\}\);/);
+});
+
+test('the Redo page picks mockups from the saved PSD library, like the Product Creator', async () => {
+  const { renderListingRedoPage } = await import('../src/listing-redo-page.mjs');
+  const page = renderListingRedoPage();
+  for (const id of ['redo-library', 'redo-lib-first', 'redo-lib-none', 'redo-lib-count', 'redo-preset', 'redo-make']) assert.ok(page.includes('id="' + id + '"'), id);
+  const client = readFileSync(new URL('../src/listing-redo-client.js', import.meta.url), 'utf8');
+  assert.match(client, /request\(base\+'redo-mockups',\{templateIds:ids,preset:name\}\)/);
+  const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
+  // Only ready templates of the artwork's shape, checked again when the mockups start.
+  assert.match(server, /templates\.filter\(t=>t\.status==='ready'&&templateMatchesArtwork\(t,shape\)\)/);
+  assert.match(server, /const odd=ids\.find\(id=>!usable\.has\(id\)\);/);
+  assert.match(server, /mockupJobFromArtwork\(\{artworkId:art\.artworkId,templateIds:ids\}\)/);
 });
