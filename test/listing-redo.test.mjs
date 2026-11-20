@@ -152,3 +152,24 @@ test('the Redo page makes every PSD template for the shape on its own, like the 
   assert.match(server, /job\.sourceMasterKey!==art\.manifest\.master\.key/);
   assert.match(server, /mockupJobFromArtwork\(\{artworkId:art\.artworkId,templateIds:ids\}\)/);
 });
+
+test('the Redo page selects and arranges mockups as the Product Creator does', async () => {
+  const { renderListingRedoPage } = await import('../src/listing-redo-page.mjs');
+  const page = renderListingRedoPage();
+  // The Product Creator's photo organizer, its script and the not-generated list.
+  for (const id of ['mg-org-modal', 'mg-org-list', 'mg-org-save', 'mg-not-generated']) assert.ok(page.includes('id="' + id + '"'), id);
+  assert.match(page, /<script src="\/assets\/photo-organizer-client.js" defer><\/script>/);
+  const client = readFileSync(new URL('../src/listing-redo-client.js', import.meta.url), 'utf8');
+  // Nothing ticked until picked; only as many as fit beside the preset photos.
+  assert.match(client, /mockups\.set\(m\.id,\{\.\.\.m,chosen:false\}\)/);
+  assert.match(client, /if\(box\.checked&&chosenIds\(\)\.length>=slots\(\)\)\{box\.checked=false;/);
+  assert.match(client, /photoOrganizer\.open\(\{tiles,order:tiles\.map\(t=>t\.id\),limit,video:info\.video,/);
+  assert.match(client, /void apply\(\{\.\.\.p,photoOrder:order\}\)/);
+  const plan = checkRedoInput(good({ photoOrder: ['key:presets/a.jpg', 'generated:b', 'generated:a'] }), { confirm: CONFIRM });
+  assert.deepEqual(plan.photos.photoOrder, ['key:presets/a.jpg', 'generated:b', 'generated:a']);
+  assert.throws(() => checkRedoInput(good({ photoOrder: ['etsy:1'] }), { confirm: CONFIRM }), /photo order/);
+  const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
+  assert.match(server, /slots:Math\.max\(1,ETSY_PHOTO_LIMIT-presetTiles\.length\)/);
+  assert.match(server, /const saved=photoOrder\?\.length\?photoOrder:orders\[photoOrderKey\(preset,orientation\)\]\?\.order;/);
+  assert.match(server, /if\(plan\.photos\.templateIds\.length>slots\)return sendJson\(res,400/);
+});

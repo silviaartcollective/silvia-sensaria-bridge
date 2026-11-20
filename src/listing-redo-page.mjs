@@ -4,6 +4,7 @@
 // the listing's artwork and settings, and its last button updates that same
 // listing (listing-redo-client.js) instead of creating a draft.
 import { renderProductCreator, SEO_PASTE_SCRIPT } from './product-creator.mjs';
+import { renderPhotoOrganizer } from './mockup-generator-ui.mjs';
 
 // The Product Creator's own styles, so both pages always look the same.
 const CREATOR_STYLES = [...renderProductCreator().matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m => m[1]).join('\n');
@@ -123,7 +124,8 @@ ${CREATOR_STYLES}
           <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
         </div>
         <div id="mg-preview-list" class="mg-preview-list" aria-live="polite"><p class="mg-preview-empty">Finished mockups appear here while they generate.</p></div>
-        <div id="mg-selection-status" class="uploadmeta">Pick up to 20 mockups. With the preset photos, Etsy shows the first 20.</div>
+        <div id="mg-not-generated" class="mg-not-generated" hidden aria-live="polite"></div>
+        <div id="mg-selection-status" class="uploadmeta">Etsy shows 20 photos: with the preset photos, only some can be mockups. Nothing is ticked until you pick.</div>
         <div class="result" id="result" role="status"></div>
         <button class="btn" type="button" id="redo-update" disabled>Update Etsy listing</button>
       </aside>
@@ -132,6 +134,8 @@ ${CREATOR_STYLES}
 </main>
 </div>
 <script>${SEO_PASTE_SCRIPT}</script>
+${renderPhotoOrganizer({ back: 'Back to selection' })}
+<script src="/assets/photo-organizer-client.js" defer></script>
 <script src="/listing-redo-client.js" defer></script>
 </body>
 </html>`;

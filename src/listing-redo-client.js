@@ -24,6 +24,7 @@ function setSelect(id,value){
  const select=$(id);if(value===undefined||value===null)return;
  const text=String(value);if([...select.options].some(o=>o.value===text))select.value=text;
 }
+const slots=()=>Math.max(1,Number(info?.slots)||limit);
 const back=()=>{location.href='/listings'+(listingId?'?listing='+listingId:'');};
 $('redo-back').addEventListener('click',back);
 
@@ -100,7 +101,11 @@ function renderPreview(){
  for(const id of order){
   const m=mockups.get(id),item=document.createElement('label');item.className='mg-preview-item';
   const box=document.createElement('input');box.type='checkbox';box.checked=m.chosen;
-  box.addEventListener('change',()=>{m.chosen=box.checked;selection();});
+  box.addEventListener('change',()=>{
+   // Only as many as fit beside the preset photos, as in the Product Creator.
+   if(box.checked&&chosenIds().length>=slots()){box.checked=false;
+    $('mg-selection-status').textContent='Only '+slots()+' mockups fit ('+slotText()+'). Untick one first.';return;}
+   m.chosen=box.checked;selection();});
   const img=document.createElement('img');img.src=m.url;img.alt=m.name;img.loading='lazy';
   const name=document.createElement('span');name.textContent=m.name;
   item.append(box,img,name);list.append(item);
@@ -108,14 +113,16 @@ function renderPreview(){
  selection();
 }
 function chosenIds(){return order.filter(id=>mockups.get(id).chosen);}
+function slotText(){const p=(info?.presetTiles||[]).length;return 'Etsy shows '+limit+' photos'+(p?', '+p+' of them preset photo'+(p===1?'':'s'):'');}
 function selection(){
  if($('redo-keep-photos').checked)return;
  const n=chosenIds().length;
  $('mg-preview-count').textContent=order.length+' ready';
- $('mg-selection-status').textContent=order.length?n+' of '+order.length+' mockups chosen'+(n>limit?' — Etsy takes '+limit+' photos at most':'')+'. The preset photos and video are added as for a new listing.':
-  'Pick up to '+limit+' mockups. With the preset photos, Etsy shows the first '+limit+'.';
+ $('mg-select-all').textContent='Select first '+slots();
+ $('mg-selection-status').textContent=order.length?n+' of '+order.length+' JPGs selected (up to '+slots()+' fit: '+slotText()+'). Review the previews, then click Update Etsy listing to arrange the photos.':
+  'Nothing is ticked until you pick. Up to '+slots()+' mockups fit ('+slotText()+').';
 }
-$('mg-select-all').addEventListener('click',()=>{order.forEach((id,i)=>{mockups.get(id).chosen=i<limit;});renderPreview();});
+$('mg-select-all').addEventListener('click',()=>{order.forEach((id,i)=>{mockups.get(id).chosen=i<slots();});renderPreview();});
 $('mg-deselect-all').addEventListener('click',()=>{for(const m of mockups.values())m.chosen=false;renderPreview();});
 $('redo-keep-photos').addEventListener('change',()=>{$('redo-mockup-tools').style.display=$('redo-keep-photos').checked?'none':'';renderPreview();});
 // Every PSD template for this artwork's shape is made, as in the Product
@@ -157,17 +164,25 @@ $('redo-make').addEventListener('click',()=>{
  if(jobId&&!finished&&!confirm('Mockups are still being made. Start all of them again?'))return;
  void startAllMockups();
 });
+function showNotGenerated(failed){
+ const box=$('mg-not-generated');box.replaceChildren();box.hidden=!failed.length;
+ if(!failed.length)return;
+ const head=document.createElement('strong');head.textContent='Not generated ('+failed.length+')';box.append(head);
+ for(const row of failed){const item=document.createElement('div');item.className='mg-not-generated-item';
+  const b=document.createElement('b');b.textContent=row.name;const why=document.createElement('span');why.textContent=row.reason;item.append(b,why);box.append(item);}
+}
 async function poll(id){
  if(id!==jobId)return;
  try{
   const data=await request(base+'redo?job='+encodeURIComponent(id));
   if(id!==jobId)return;
   let added=false;
-  for(const m of data.mockups)if(!mockups.has(m.id)){mockups.set(m.id,{...m,chosen:order.length<limit});order.push(m.id);added=true;}
+  for(const m of data.mockups)if(!mockups.has(m.id)){mockups.set(m.id,{...m,chosen:false});order.push(m.id);added=true;}
   const st=data.status;finished=st.finished;
   $('redo-progress').firstElementChild.style.width=Math.round(100*(st.done+st.failed)/Math.max(1,st.total))+'%';
   if(finished){$('redo-progress').hidden=true;status('redo-mockup-status',st.done+' of '+st.total+' mockups made'+(st.failed?' ('+st.failed+' failed)':'')+'. Untick any you do not want on the right.',st.done?'ok':'warn');}
   else status('redo-mockup-status',st.done+' of '+st.total+' mockups made'+(st.note?' — '+st.note:'')+'…');
+  showNotGenerated(data.failed||[]);
   if(added&&!$('redo-keep-photos').checked)renderPreview();
   if(!finished)pollTimer=setTimeout(()=>poll(id),3000);
  }catch(error){status('redo-mockup-status','Could not check the mockups ('+String(error.message||error)+'). Trying again…','warn');pollTimer=setTimeout(()=>poll(id),6000);}
@@ -227,23 +242,34 @@ function problems(p){
   if(!p.mockupJobId)out.push('Make the mockups, or tick "Keep the listing\'s current photos".');
   else if(!finished)out.push('Wait for the mockups to finish.');
   else if(!p.templateIds.length)out.push('Choose at least one mockup on the right.');
-  else if(p.templateIds.length>limit)out.push('Choose up to '+limit+' mockups.');
+  else if(p.templateIds.length>slots())out.push('Only '+slots()+' mockups fit ('+slotText()+'). Untick '+(p.templateIds.length-slots())+'.');
  }
  if(!p.seo.title||p.seo.title.length>140)out.push('The title must be 1–140 characters.');
  if(!p.seo.tags.length||p.seo.tags.length>13||p.seo.tags.some(t=>t.length>20))out.push('Use 1–13 tags of up to 20 characters each.');
  if(!p.seo.description)out.push('Write the Short SEO Description (or use ChatGPT).');
  return out;
 }
-$('redo-update').addEventListener('click',async()=>{
+$('redo-update').addEventListener('click',()=>{
  if(!info?.artworkId||applying)return;
  const p=plan(),issues=problems(p);
  if(issues.length)return result(issues.join('\n'),'error');
- if(!confirm('Update Etsy listing #'+listingId+' now?\n\n'+(p.photos?p.templateIds.length+' new mockups (with the preset photos) replace its photos.\n':'Its photos stay.\n')+
+ if(!p.photos||!window.photoOrganizer)return void apply(p);
+ // As the Product Creator's Apply selected: the preset photos and the chosen
+ // mockups in the Etsy photo organizer, to arrange before anything is sent.
+ const tiles=[...(info.presetTiles||[]),...p.templateIds.map(id=>{const m=mockups.get(id);return {id:'generated:'+id,kind:'mockup',label:m.name,thumb:m.url};})];
+ photoOrganizer.open({tiles,order:tiles.map(t=>t.id),limit,video:info.video,
+  note:'Nothing changes on Etsy until you click Update Etsy listing. This order replaces the listing\'s photos.',
+  saveLabel:'Update Etsy listing',
+  onSave:()=>{const order=photoOrganizer.order();photoOrganizer.close();void apply({...p,photoOrder:order});},
+  onBack:()=>photoOrganizer.close()});
+});
+async function apply(p){
+ if(!confirm('Update Etsy listing #'+listingId+' now?\n\n'+(p.photos?p.templateIds.length+' new mockups (with the preset photos, in the order you arranged) replace its photos.\n':'Its photos stay.\n')+
   'Its title, tags, description'+(p.template?', sizes, prices':'')+' and settings are replaced.\nIt keeps its URL, reviews and favourites.'))return;
  applying=true;$('redo-update').disabled=true;result('Starting…');
  try{await request(base+'redo-apply',p);followRun();}
  catch(error){applying=false;$('redo-update').disabled=false;result(String(error.message||error),'error');}
-});
+}
 const STEP_TEXT={photos:'Putting the new photos on Etsy…',details:'Updating the title, tags, description, sizes and settings on Etsy…',saving:'Saving…'};
 async function followRun(){
  applying=true;$('redo-update').disabled=true;
