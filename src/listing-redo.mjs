@@ -25,7 +25,10 @@ export function checkRedoInput(input, { confirm }) {
     // The preset (when the mockups came from one) sets the photo order; else the usual order.
     const preset = String(input.preset || '').trim();
     if (preset.length > 200) throw Error('Choose the mockup preset.');
-    photos = { mockupJobId: jobId, templateIds: ids, preset };
+    // The order arranged in the photo organizer (tile ids), when there is one.
+    const order = Array.isArray(input.photoOrder) ? input.photoOrder.map(String) : [];
+    if (order.length > 30 || order.some(id => id.length > 400 || !/^(?:key|generated):/.test(id))) throw Error('The photo order is not valid.');
+    photos = { mockupJobId: jobId, templateIds: ids, preset, ...(order.length ? { photoOrder: order } : {}) };
   }
   const raw = input.seo && typeof input.seo === 'object' ? input.seo : {};
   const title = String(raw.title ?? '').replace(/\s+/g, ' ').trim();

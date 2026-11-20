@@ -1380,7 +1380,7 @@ async function refreshSeo(listingId){
 // artwork gets them), and the artwork's record follows: its mockups, photo
 // order and the Etsy photos the app put on. The listing keeps its video; one
 // without a video gets the preset video.
-async function refreshListingPhotos({listingId,artworkId,orientation,preset,mockupJobId,templateIds}){
+async function refreshListingPhotos({listingId,artworkId,orientation,preset,mockupJobId,templateIds,photoOrder=null}){
   const session=await getEtsySession();
   const [manifest,job,media,orders]=await Promise.all([loadArtworkManifest(artworkId),getMockupJob(String(mockupJobId||'')),
     presetMediaStatus(),loadPhotoOrders()]);
@@ -1397,7 +1397,8 @@ async function refreshListingPhotos({listingId,artworkId,orientation,preset,mock
       etsyKey:etsyCopied?etsyKey:''};
   });
   const presetImages=presetImagesOf(media),ids=outputs.map(t=>String(t.id));
-  const saved=orders[photoOrderKey(preset,orientation)]?.order;
+  // The order arranged on the Redo page's organizer, else the preset's saved one.
+  const saved=photoOrder?.length?photoOrder:orders[photoOrderKey(preset,orientation)]?.order;
   const tiles=saved?.length?orderForArtwork(saved,{templateIds:ids,presetKeys:presetImages.map(item=>item.key)})
     :defaultPlannedOrder({presets:presetImages,generated:ids.map(id=>'generated:'+id)});
   const byTile=new Map([...copied.map((mockup,index)=>['generated:'+ids[index],mockup]),
@@ -6155,9 +6156,18 @@ const server = http.createServer(async (req, res) => {
           const status=await batchDeps().mockupStatus(jobId);
           const mockups=await Promise.all(job.templates.filter(t=>t.status==='completed'&&t.outputKey).map(async t=>({id:String(t.id),
             name:String(t.name||t.outputName||''),url:await signedArtworkUrl(t.previewKey||t.outputKey,3600).catch(()=>'')})));
-          return sendJson(res,200,{ok:true,status,mockups});
+          // As the Product Creator lists them: the PSDs that made no JPG, and why.
+          const failed=job.templates.filter(t=>['failed','needs_mapping'].includes(t.status)).map(t=>({name:String(t.name||t.outputName||''),
+            reason:t.status==='needs_mapping'?'The PSD needs its artwork layer chosen (in the Product Creator).':String(t.error||'The PC could not make this mockup.')}));
+          return sendJson(res,200,{ok:true,status,mockups,failed});
         }
-        const [templates,images]=await Promise.all([listMockupTemplates(),getEtsyListingImages({listingId:id,...credentials}).catch(()=>[])]);
+        const [templates,images,media]=await Promise.all([listMockupTemplates(),getEtsyListingImages({listingId:id,...credentials}).catch(()=>[]),presetMediaStatus()]);
+        // The preset photos (and video) every listing gets, for the photo organizer;
+        // the mockups fill the rest of Etsy's 20 photos, as in the Product Creator.
+        const presetTiles=presetImagesOf(media).map(item=>({id:'key:'+item.key,kind:'preset',label:PRESET_LABELS[item.role]||'Preset photo',
+          thumb:'/api/etsy-photo-organizer/thumb?key='+encodeURIComponent(item.key)}));
+        const videoPreset=media.items.find(item=>item.role==='video'&&item.exists);
+        const video=videoPreset?{label:'Preset video',src:await signedArtworkUrl(videoPreset.key,3600).catch(()=>null)}:null;
         // The saved PSD library, as in the Product Creator: the ready templates
         // made for this artwork's shape (a mockup job takes only those).
         const shape=mockupOrientationOf(art.manifest);
@@ -6177,7 +6187,7 @@ const server = http.createServer(async (req, res) => {
         // The page starts from what the listing has now; the template fills the rest.
         return sendJson(res,200,{ok:true,listingId:id,state:String(fresh.state||''),artworkId:art.artworkId,layout:art.layout,
           layoutName:LAYOUT_NAMES[art.layout]||art.layout,picture:preview?.galleryKey?libraryPicture(art.artworkId,'gallery',preview.madeAt):'',
-          templateCount:templates.length,library,shapes,lastJob,limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
+          templateCount:templates.length,library,shapes,lastJob,presetTiles,video,slots:Math.max(1,ETSY_PHOTO_LIMIT-presetTiles.length),limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
           photos:images.slice(0,ETSY_PHOTO_LIMIT).map(image=>String(image.url_570xN||image.url_fullxfull||'')).filter(Boolean),
           current:{title:String(fresh.title||''),tags:fresh.tags||[],shop_section_id:Number(fresh.shop_section_id)||0,
             shipping_profile_id:Number(fresh.shipping_profile_id)||0,return_policy_id:Number(fresh.return_policy_id)||0,
@@ -6200,6 +6210,10 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res,200,{ok:true,jobId:job.id,total:job.templates.length,workerOnline:Boolean(cropWorkerStatus().online)});
           }
           const plan=checkRedoInput(input,{confirm:'REDO SILVIA LISTING'});
+          if(plan.photos){
+            const slots=Math.max(1,ETSY_PHOTO_LIMIT-presetImagesOf(await presetMediaStatus()).length);
+            if(plan.photos.templateIds.length>slots)return sendJson(res,400,{ok:false,error:plan.photos.templateIds.length+' mockups are ticked but only '+slots+' fit with the preset photos. Untick '+(plan.photos.templateIds.length-slots)+'.'});
+          }
           // "Keep the current section": the description template still names it.
           const chosenSection=plan.seo.sectionId,sectionId=chosenSection||String(Number(fresh.shop_section_id)||'');
           const section=(await seoShopContext(session)).sections.find(item=>String(item.shop_section_id)===sectionId);
