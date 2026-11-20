@@ -27,13 +27,6 @@ ${CREATOR_STYLES}
 .mg-preview #redo-update{font-size:13px;padding:13px;width:100%;position:sticky;bottom:0;z-index:5;box-shadow:0 -10px 18px #fffdfa}
 .mg-preview #redo-update:disabled{opacity:1;background:#a3a69f}
 .mg-preview-item.kept{cursor:default}
-.redo-lib-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}.redo-lib-actions{margin-left:auto;display:flex;gap:6px}.redo-lib-actions .btn{font-size:12px;padding:7px 10px}
-.redo-lib{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:8px;max-height:430px;overflow-y:auto;padding:2px}
-.redo-lib label{position:relative;display:grid;gap:4px;border:2px solid var(--line);border-radius:10px;padding:6px;background:#fff;cursor:pointer;font-size:11px;font-weight:600;min-width:0}
-.redo-lib label:has(input:checked){border-color:#546f59;background:#eff5ed}
-.redo-lib input{position:absolute;top:9px;right:9px;width:18px;height:18px;margin:0;accent-color:#425d47}
-.redo-lib img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;background:#f0efeb}
-.redo-lib span{overflow-wrap:anywhere;line-height:1.3}.redo-lib small{font-weight:400;color:var(--muted);overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -58,7 +51,7 @@ ${CREATOR_STYLES}
 
         <div class="uploadbox">
           <div><strong>Artwork</strong>
-            <div class="uploadmeta">The master artwork stored in the app. To use a new one, choose it below: it is uploaded, cropped on the PC worker and checked, then it replaces this artwork's master and production crops. Make the mockups after that, so they show the new artwork.</div></div>
+            <div class="uploadmeta">The master artwork stored in the app. To use a new one, choose it below: it is uploaded, cropped on the PC worker and checked, then it replaces this artwork's master and production crops, and the mockups are made again from it.</div></div>
           <div class="redo-art"><img id="redo-picture" alt="Artwork" hidden><div class="twocol" style="flex:1">
             <label>Artwork ID<input id="artwork_id" class="mono" readonly placeholder="${idExample}"></label>
             <label>Orientation<input id="orientation_name" readonly></label></div></div>
@@ -72,13 +65,11 @@ ${CREATOR_STYLES}
 
         <div class="uploadbox">
           <div><strong>Mockups</strong>
-            <div class="uploadmeta">New mockups from your saved PSD templates, made on the PC as for a new listing. Pick the ones to use on the right; the preset photos and video are added as for a new listing.</div></div>
+            <div class="uploadmeta">Every PSD template for this artwork's shape is made on the PC as soon as the page opens, as in the Product Creator. Pick the ones to use on the right; the preset photos and video are added as for a new listing.</div></div>
           <label class="redo-check"><input type="checkbox" id="redo-keep-photos"> Keep the listing's current photos</label>
           <div id="redo-mockup-tools" class="stack">
-            <div class="redo-lib-head"><strong>PSD templates</strong><span class="hint" id="redo-lib-count"></span>
-              <span class="redo-lib-actions"><button class="btn secondary" type="button" id="redo-lib-first">Select first 20</button><button class="btn secondary" type="button" id="redo-lib-none">None</button></span></div>
-            <div id="redo-library" class="redo-lib" aria-label="PSD templates for this artwork"></div>
-            <button class="btn" type="button" id="redo-make">Make mockups</button>
+            <div class="uploadmeta" id="redo-lib-count"></div>
+            <button class="btn secondary" type="button" id="redo-make">Make all mockups again</button>
             <div class="progress" id="redo-progress" hidden><span></span></div>
             <div class="status" id="redo-mockup-status" style="display:none"></div>
             <div class="status warn" id="redo-worker" style="display:none">The PC crop worker is offline: mockups are made when it starts. <a href="pod-crop-worker://start"><strong>Launch PC crop worker</strong></a></div>
@@ -131,7 +122,7 @@ ${CREATOR_STYLES}
           <button class="btn secondary" type="button" id="mg-select-all">Select first 20</button>
           <button class="btn secondary" type="button" id="mg-deselect-all">Deselect all</button>
         </div>
-        <div id="mg-preview-list" class="mg-preview-list" aria-live="polite"><p class="mg-preview-empty">Tick the PSD templates and click Make mockups. Finished mockups appear here while they generate.</p></div>
+        <div id="mg-preview-list" class="mg-preview-list" aria-live="polite"><p class="mg-preview-empty">Finished mockups appear here while they generate.</p></div>
         <div id="mg-selection-status" class="uploadmeta">Pick up to 20 mockups. With the preset photos, Etsy shows the first 20.</div>
         <div class="result" id="result" role="status"></div>
         <button class="btn" type="button" id="redo-update" disabled>Update Etsy listing</button>

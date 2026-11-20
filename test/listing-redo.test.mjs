@@ -83,7 +83,7 @@ test('a redo can carry the Product Creator settings, checked', () => {
 test('Redo listing is its own page, laid out like the Product Creator, with a back button', async () => {
   const { renderListingRedoPage } = await import('../src/listing-redo-page.mjs');
   const page = renderListingRedoPage();
-  for (const id of ['redo-back', 'artwork_id', 'redo-library', 'redo-make', 'redo-keep-photos', 'seo_generator_output', 'apply-seo-btn', 'ai-seo-btn',
+  for (const id of ['redo-back', 'artwork_id', 'redo-lib-count', 'redo-make', 'redo-keep-photos', 'seo_generator_output', 'apply-seo-btn', 'ai-seo-btn',
     'title', 'seo_description', 'listing_style', 'tags', 'redo-template', 'shipping_profile_id', 'readiness_state_id', 'shop_section_id',
     'return_policy_id', 'production_partner_id', 'who_made', 'when_made', 'is_supply', 'should_auto_renew', 'mg-preview-list', 'redo-update'])
     assert.ok(page.includes('id="' + id + '"'), id);
@@ -134,18 +134,21 @@ test('mockups tagged vertical or horizontal suit portrait or landscape artwork, 
   assert.match(server, /const ids=presetMockupIds\(preset,layout,\{media,orders\}\);/);
 });
 
-test('the Redo page picks mockups from the saved PSD library, like the Product Creator', async () => {
+test('the Redo page makes every PSD template for the shape on its own, like the Product Creator', async () => {
   const { renderListingRedoPage } = await import('../src/listing-redo-page.mjs');
   const page = renderListingRedoPage();
-  for (const id of ['redo-library', 'redo-lib-first', 'redo-lib-none', 'redo-lib-count', 'redo-make']) assert.ok(page.includes('id="' + id + '"'), id);
-  // No presets: the Product Creator does not use them.
-  assert.ok(!page.includes('redo-preset'));
+  for (const id of ['redo-lib-count', 'redo-make']) assert.ok(page.includes('id="' + id + '"'), id);
+  assert.ok(!page.includes('redo-preset') && !page.includes('redo-library'), 'no presets and nothing to tick');
   const client = readFileSync(new URL('../src/listing-redo-client.js', import.meta.url), 'utf8');
-  assert.match(client, /request\(base\+'redo-mockups',\{templateIds:ids\}\)/);
-  assert.doesNotMatch(client, /redo-preset/);
+  assert.match(client, /request\(base\+'redo-mockups',\{\}\)/);
+  // Started when the page opens (after any artwork replacement), and again once a new artwork is in.
+  assert.match(client, /load\(\)\.then\(async\(\)=>\{if\(!info\?\.artworkId\)return;await resumeReplace\(\);autoMockups\(\);\}\);/);
+  assert.match(client, /info\.lastJob=null;void startAllMockups\(\);/);
+  assert.match(client, /if\(info\.lastJob\)return followJob\(/);
   const server = readFileSync(new URL('../src/server.mjs', import.meta.url), 'utf8');
-  // Only ready templates of the artwork's shape, checked again when the mockups start.
+  // Every ready template of the artwork's shape; a run of all of them from this master is reused.
   assert.match(server, /templates\.filter\(t=>t\.status==='ready'&&templateMatchesArtwork\(t,shape\)\)/);
-  assert.match(server, /const odd=ids\.find\(id=>!usable\.has\(id\)\);/);
+  assert.match(server, /const ids=\(await listMockupTemplates\(\)\)\.filter\(t=>t\.status==='ready'&&templateMatchesArtwork\(t,shape\)\)\.map\(t=>String\(t\.id\)\)\.slice\(0,150\);/);
+  assert.match(server, /job\.sourceMasterKey!==art\.manifest\.master\.key/);
   assert.match(server, /mockupJobFromArtwork\(\{artworkId:art\.artworkId,templateIds:ids\}\)/);
 });

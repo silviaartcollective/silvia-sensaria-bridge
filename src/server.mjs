@@ -6164,11 +6164,20 @@ const server = http.createServer(async (req, res) => {
         const library=templates.filter(t=>t.status==='ready'&&templateMatchesArtwork(t,shape)).map(t=>({id:String(t.id),name:String(t.name||''),
           folder:String(t.localPath||'').split('/').slice(0,-1).join(' / '),preview:'/api/batch/template-preview/'+encodeURIComponent(t.id)}));
         const shapes={};for(const t of templates){const k=t.status&&t.status!=='ready'?'not ready':String(t.orientation||'unclassified').toLowerCase();shapes[k]=(shapes[k]||0)+1;}
+        // A run already made from this master with every template (the page
+        // opened before, or the Product Creator): reused instead of a new one.
+        let lastJob=null;
+        for(const jobId of [...(art.manifest.mockupJobIds||[])].reverse().slice(0,8)){
+          const job=await getMockupJob(String(jobId)).catch(()=>null);
+          if(!job||job.deleted||job.artworkId!==art.artworkId||job.sourceMasterKey!==art.manifest.master.key)continue;
+          const ids=new Set((job.templates||[]).map(t=>String(t.id)));
+          if(library.length&&library.every(t=>ids.has(t.id))){lastJob={id:job.id,total:job.templates.length};break;}
+        }
         const preview=art.manifest.preview;
         // The page starts from what the listing has now; the template fills the rest.
         return sendJson(res,200,{ok:true,listingId:id,state:String(fresh.state||''),artworkId:art.artworkId,layout:art.layout,
           layoutName:LAYOUT_NAMES[art.layout]||art.layout,picture:preview?.galleryKey?libraryPicture(art.artworkId,'gallery',preview.madeAt):'',
-          templateCount:templates.length,library,shapes,limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
+          templateCount:templates.length,library,shapes,lastJob,limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
           photos:images.slice(0,ETSY_PHOTO_LIMIT).map(image=>String(image.url_570xN||image.url_fullxfull||'')).filter(Boolean),
           current:{title:String(fresh.title||''),tags:fresh.tags||[],shop_section_id:Number(fresh.shop_section_id)||0,
             shipping_profile_id:Number(fresh.shipping_profile_id)||0,return_policy_id:Number(fresh.return_policy_id)||0,
@@ -6182,13 +6191,10 @@ const server = http.createServer(async (req, res) => {
           const art=await redoArtwork(id,fresh);
           if(!art.artworkId)return sendJson(res,400,{ok:false,error:art.reason});
           if(action==='redo-mockups'){
-            // The ticked PSD templates, as in the Product Creator.
-            const ids=[...new Set((Array.isArray(input.templateIds)?input.templateIds:[]).map(String))];
-            if(!ids.length||ids.length>60)return sendJson(res,400,{ok:false,error:'Tick 1 to 60 PSD templates.'});
+            // Every ready PSD template for the artwork's shape, as in the Product Creator.
             const shape=mockupOrientationOf(art.manifest);
-            const usable=new Set((await listMockupTemplates()).filter(t=>t.status==='ready'&&templateMatchesArtwork(t,shape)).map(t=>String(t.id)));
-            const odd=ids.find(id=>!usable.has(id));
-            if(odd)return sendJson(res,400,{ok:false,error:'A ticked template is not a ready '+(LAYOUT_NAMES[art.layout]||art.layout).toLowerCase()+' template any more. Reload the page.'});
+            const ids=(await listMockupTemplates()).filter(t=>t.status==='ready'&&templateMatchesArtwork(t,shape)).map(t=>String(t.id)).slice(0,150);
+            if(!ids.length)return sendJson(res,400,{ok:false,error:'No '+(LAYOUT_NAMES[art.layout]||art.layout).toLowerCase()+' PSD templates are ready. Set their orientation in the Product Creator\'s PSD library.'});
             // Rendered first, like the Product Creator's: someone is waiting on this page.
             const job=await mockupJobFromArtwork({artworkId:art.artworkId,templateIds:ids});
             return sendJson(res,200,{ok:true,jobId:job.id,total:job.templates.length,workerOnline:Boolean(cropWorkerStatus().online)});
