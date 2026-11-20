@@ -7,7 +7,7 @@ const CONFIRM='REDO SILVIA LISTING';
 const $=id=>document.getElementById(id);
 const listingId=Number(new URL(location.href).searchParams.get('listing'))||0;
 const base='/api/master-listings/'+listingId+'/';
-let info=null,jobId='',preset='',finished=false,limit=20,pollTimer=0,applying=false;
+let info=null,jobId='',finished=false,limit=20,pollTimer=0,applying=false;
 const mockups=new Map(),order=[];
 
 async function request(path,body){
@@ -82,7 +82,7 @@ function fillOptions(d,data){
   'No '+data.layoutName+' template yet: the listing\'s own settings.',Object.keys(template).length?'ok':'');
 }
 
-// Mockups: made from a preset on the PC; the finished ones show on the right.
+// Mockups: made from the ticked PSD templates on the PC; the finished ones show on the right.
 function renderPreview(){
  const list=$('mg-preview-list'),keep=$('redo-keep-photos').checked;
  list.replaceChildren();
@@ -119,7 +119,7 @@ $('mg-select-all').addEventListener('click',()=>{order.forEach((id,i)=>{mockups.
 $('mg-deselect-all').addEventListener('click',()=>{for(const m of mockups.values())m.chosen=false;renderPreview();});
 $('redo-keep-photos').addEventListener('change',()=>{$('redo-mockup-tools').style.display=$('redo-keep-photos').checked?'none':'';renderPreview();});
 // The PSD library for this artwork's shape, as in the Product Creator: tick the
-// templates to use. A preset ticks its own; the last choice is remembered.
+// templates to use. The last choice is remembered.
 const pickKey=()=>'redo-templates-'+(info?.layout||'');
 function rememberPick(ids){try{localStorage.setItem(pickKey(),JSON.stringify(ids));}catch{}}
 function rememberedPick(){try{return JSON.parse(localStorage.getItem(pickKey())||'[]');}catch{return [];}}
@@ -127,13 +127,10 @@ function tickedIds(){return [...$('redo-library').querySelectorAll('input:checke
 function countTicked(){const n=tickedIds().length;$('redo-lib-count').textContent=n+' of '+(info?.library?.length||0)+' ticked';$('redo-make').disabled=!n||replacing;}
 function tick(ids){const want=new Set(ids.map(String));for(const box of $('redo-library').querySelectorAll('input'))box.checked=want.has(box.value);countTicked();}
 function fillMockupChoices(data){
- const presets=$('redo-preset');presets.replaceChildren();
- option(presets,'',data.presets.length?'No preset — tick templates below':'No preset folders (tick templates below)');
- for(const p of data.presets)option(presets,p.name,p.name+' ('+p.count+' mockups)');
  const list=$('redo-library');list.replaceChildren();
  for(const t of data.library||[]){
   const item=document.createElement('label');item.title=t.folder?t.folder+' / '+t.name:t.name;
-  const box=document.createElement('input');box.type='checkbox';box.value=t.id;box.addEventListener('change',()=>{presets.value='';countTicked();});
+  const box=document.createElement('input');box.type='checkbox';box.value=t.id;box.addEventListener('change',countTicked);
   const img=document.createElement('img');img.loading='lazy';img.alt='';img.src=t.preview;img.onerror=()=>{img.style.visibility='hidden';};
   const name=document.createElement('span');name.textContent=t.name.replace(/\.psd$/i,'');
   item.append(box,img,name);
@@ -146,29 +143,21 @@ function fillMockupChoices(data){
    '. Set their orientation in the Product Creator\'s PSD library (or keep them in a folder named after the shape on the PC), or keep the listing\'s current photos.','warn');
   $('redo-make').disabled=true;$('redo-lib-count').textContent='';return;
  }
- const chosen=data.presets.find(p=>p.name===data.chosen);
- const remembered=rememberedPick().filter(id=>data.library.some(t=>t.id===id));
- if(remembered.length){presets.value='';tick(remembered);}
- else if(chosen){presets.value=chosen.name;tick(chosen.templateIds);}
- else{presets.value='';tick([]);}
+ tick(rememberedPick().filter(id=>data.library.some(t=>t.id===id)));
  status('redo-mockup-status','','');
 }
-$('redo-preset').addEventListener('change',()=>{
- const p=info?.presets?.find(x=>x.name===$('redo-preset').value);
- if(p)tick(p.templateIds);
-});
-$('redo-lib-first').addEventListener('click',()=>{$('redo-preset').value='';tick((info?.library||[]).slice(0,limit).map(t=>t.id));});
-$('redo-lib-none').addEventListener('click',()=>{$('redo-preset').value='';tick([]);});
+$('redo-lib-first').addEventListener('click',()=>{tick((info?.library||[]).slice(0,limit).map(t=>t.id));});
+$('redo-lib-none').addEventListener('click',()=>tick([]));
 $('redo-make').addEventListener('click',async()=>{
- const ids=tickedIds(),name=$('redo-preset').value;if(!info?.artworkId)return;
+ const ids=tickedIds();if(!info?.artworkId)return;
  if(!ids.length)return status('redo-mockup-status','Tick the PSD templates to make mockups from.','warn');
  if(jobId&&!finished&&!confirm('Mockups are still being made. Start again with the ticked templates?'))return;
  clearTimeout(pollTimer);jobId='';finished=false;mockups.clear();order.length=0;renderPreview();
  const btn=$('redo-make');btn.disabled=true;status('redo-mockup-status','Starting '+ids.length+' mockups…');
  try{
-  const started=await request(base+'redo-mockups',{templateIds:ids,preset:name});
+  const started=await request(base+'redo-mockups',{templateIds:ids});
   rememberPick(ids);
-  jobId=started.jobId;preset=name;$('redo-progress').hidden=false;$('redo-progress').firstElementChild.style.width='0';
+  jobId=started.jobId;$('redo-progress').hidden=false;$('redo-progress').firstElementChild.style.width='0';
   $('redo-worker').style.display=started.workerOnline?'none':'block';
   status('redo-mockup-status','Making '+started.total+' mockups on the PC…');renderPreview();poll(jobId);
  }catch(error){status('redo-mockup-status',String(error.message||error),'warn');}
@@ -232,7 +221,7 @@ $('redo-template').addEventListener('change',()=>{$('readiness_state_id').disabl
 // Update Etsy listing.
 function plan(){
  const keep=$('redo-keep-photos').checked,num=id=>$(id).value?Number($(id).value):'';
- return {confirm:CONFIRM,photos:!keep,mockupJobId:jobId,templateIds:chosenIds(),preset,template:$('redo-template').checked,
+ return {confirm:CONFIRM,photos:!keep,mockupJobId:jobId,templateIds:chosenIds(),template:$('redo-template').checked,
   seo:{title:$('title').value.trim(),tags:tagList(),description:$('seo_description').value.trim(),sectionId:$('shop_section_id').value,style:$('listing_style').value},
   settings:{shipping_profile_id:num('shipping_profile_id'),readiness_state_id:num('readiness_state_id'),return_policy_id:num('return_policy_id'),
    production_partner_id:num('production_partner_id'),who_made:$('who_made').value,when_made:$('when_made').value,

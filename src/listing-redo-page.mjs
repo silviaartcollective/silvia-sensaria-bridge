@@ -75,7 +75,6 @@ ${CREATOR_STYLES}
             <div class="uploadmeta">New mockups from your saved PSD templates, made on the PC as for a new listing. Pick the ones to use on the right; the preset photos and video are added as for a new listing.</div></div>
           <label class="redo-check"><input type="checkbox" id="redo-keep-photos"> Keep the listing's current photos</label>
           <div id="redo-mockup-tools" class="stack">
-            <label>Mockup preset <span class="hint">optional — ticks the preset's templates below</span><select id="redo-preset"></select></label>
             <div class="redo-lib-head"><strong>PSD templates</strong><span class="hint" id="redo-lib-count"></span>
               <span class="redo-lib-actions"><button class="btn secondary" type="button" id="redo-lib-first">Select first 20</button><button class="btn secondary" type="button" id="redo-lib-none">None</button></span></div>
             <div id="redo-library" class="redo-lib" aria-label="PSD templates for this artwork"></div>
