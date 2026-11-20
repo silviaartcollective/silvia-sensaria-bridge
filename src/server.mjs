@@ -52,7 +52,7 @@ import {receivedEtsyImageIds,verifyEtsyImageReceipts} from './etsy-media-verific
 import {reserveRegularMockups,confirmRegularMockups} from './regular-mockup-uploads.mjs';
 import {mockupObjectKey,masterObjectKey} from './production.mjs';
 import { handleMockupAPI, mockupJobFromArtwork, mockupJobFromStaged } from './mockup-api.mjs';
-import { mockupOrientationOf } from './mockup-orientation.mjs';
+import { mockupOrientationOf, templateMatchesArtwork } from './mockup-orientation.mjs';
 import { addToBatch, batchStatus, batchRunning, stopBatch, resumeBatch, retryItem, resumeAfterRestart, setPublish, publishBatch, closeBatch, startOver, batchDraftBody, MAX_BATCH, mockupPresets, presetKey, templateSuits, photoOrderKey, orderForArtwork } from './batch-poster.mjs';
 import {canonicalWallArtStyle,styleAttributes,ETSY_WALL_ART_STYLES} from './etsy-style.mjs';
 import {assertSeoShopSection} from './seo-shop-section.mjs';
@@ -6160,8 +6160,15 @@ const server = http.createServer(async (req, res) => {
         const [templates,saved,images,media,orders]=await Promise.all([listMockupTemplates(),getJsonObject(REPOST_PRESET_KEY).catch(()=>null),
           getEtsyListingImages({listingId:id,...credentials}).catch(()=>[]),presetMediaStatus(),loadPhotoOrders()]);
         // Counted as Make mockups will pick them (the preset's arranged order, else orientation).
-        const counted=mockupPresets(templates.filter(t=>t.status==='ready')).map(p=>({name:p.name,
-          count:presetMockupIds(p,art.layout,{media,orders}).length}));
+        const counted=mockupPresets(templates.filter(t=>t.status==='ready')).map(p=>{
+          const ids=presetMockupIds(p,art.layout,{media,orders});return {name:p.name,count:ids.length,templateIds:ids};
+        });
+        // The saved PSD library, as in the Product Creator: the ready templates
+        // made for this artwork's shape (a mockup job takes only those).
+        const shape=mockupOrientationOf(art.manifest);
+        const library=templates.filter(t=>t.status==='ready'&&templateMatchesArtwork(t,shape)).map(t=>({id:String(t.id),name:String(t.name||''),
+          folder:String(t.localPath||'').split('/').slice(0,-1).join(' / '),preview:'/api/batch/template-preview/'+encodeURIComponent(t.id)}));
+        const shapes={};for(const t of templates){const k=t.status&&t.status!=='ready'?'not ready':String(t.orientation||'unclassified').toLowerCase();shapes[k]=(shapes[k]||0)+1;}
         const presets=counted.filter(p=>p.count),emptyPresets=counted.filter(p=>!p.count).map(p=>p.name);
         // What each preset holds, by template orientation, for the page to explain an empty list.
         const presetShapes=presets.length?[]:mockupPresets(templates).map(p=>{
@@ -6173,7 +6180,7 @@ const server = http.createServer(async (req, res) => {
         // The page starts from what the listing has now; the template fills the rest.
         return sendJson(res,200,{ok:true,listingId:id,state:String(fresh.state||''),artworkId:art.artworkId,layout:art.layout,
           layoutName:LAYOUT_NAMES[art.layout]||art.layout,picture:preview?.galleryKey?libraryPicture(art.artworkId,'gallery',preview.madeAt):'',
-          presets,emptyPresets,presetShapes,templateCount:templates.length,chosen:chosen?.name||'',limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
+          presets,emptyPresets,presetShapes,templateCount:templates.length,library,shapes,chosen:chosen?.name||'',limit:ETSY_PHOTO_LIMIT,workerOnline:Boolean(cropWorkerStatus().online),
           photos:images.slice(0,ETSY_PHOTO_LIMIT).map(image=>String(image.url_570xN||image.url_fullxfull||'')).filter(Boolean),
           current:{title:String(fresh.title||''),tags:fresh.tags||[],shop_section_id:Number(fresh.shop_section_id)||0,
             shipping_profile_id:Number(fresh.shipping_profile_id)||0,return_policy_id:Number(fresh.return_policy_id)||0,
@@ -6187,6 +6194,17 @@ const server = http.createServer(async (req, res) => {
           const art=await redoArtwork(id,fresh);
           if(!art.artworkId)return sendJson(res,400,{ok:false,error:art.reason});
           if(action==='redo-mockups'){
+            if(Array.isArray(input.templateIds)){
+              const ids=[...new Set(input.templateIds.map(String))];
+              if(!ids.length||ids.length>60)return sendJson(res,400,{ok:false,error:'Choose 1 to 60 mockup templates.'});
+              const shape=mockupOrientationOf(art.manifest);
+              const usable=new Set((await listMockupTemplates()).filter(t=>t.status==='ready'&&templateMatchesArtwork(t,shape)).map(t=>String(t.id)));
+              const odd=ids.find(id=>!usable.has(id));
+              if(odd)return sendJson(res,400,{ok:false,error:'A chosen template is not a ready '+(LAYOUT_NAMES[art.layout]||art.layout).toLowerCase()+' template any more. Reload the page.'});
+              // Rendered first, like the Product Creator's: someone is waiting on this page.
+              const job=await mockupJobFromArtwork({artworkId:art.artworkId,templateIds:ids});
+              return sendJson(res,200,{ok:true,jobId:job.id,total:job.templates.length,workerOnline:Boolean(cropWorkerStatus().online)});
+            }
             const started=await batchDeps().startMockups({artworkId:art.artworkId,orientation:art.layout,preset:String(input.preset||'')});
             return sendJson(res,200,{ok:true,...started,workerOnline:Boolean(cropWorkerStatus().online)});
           }

@@ -22,8 +22,9 @@ export function checkRedoInput(input, { confirm }) {
     const ids = Array.isArray(input.templateIds) ? [...new Set(input.templateIds.map(String))] : [];
     if (!ids.length) throw Error('Choose at least one mockup for the listing.');
     if (ids.length > MAX_PHOTOS || ids.some(id => !JOB_ID.test(id))) throw Error('Choose up to ' + MAX_PHOTOS + ' mockups.');
+    // The preset (when the mockups came from one) sets the photo order; else the usual order.
     const preset = String(input.preset || '').trim();
-    if (!preset || preset.length > 200) throw Error('Choose the mockup preset.');
+    if (preset.length > 200) throw Error('Choose the mockup preset.');
     photos = { mockupJobId: jobId, templateIds: ids, preset };
   }
   const raw = input.seo && typeof input.seo === 'object' ? input.seo : {};
